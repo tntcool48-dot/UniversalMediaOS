@@ -1,0 +1,182 @@
+<Window x:Class="UniversalMediaOS.WPF.PlaybackTheater"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vlc="clr-namespace:LibVLCSharp.WPF;assembly=LibVLCSharp.WPF"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Title="Playback Theater" Height="760" Width="1350"
+        Background="#0B0F19" Foreground="White" FontFamily="Segoe UI"
+        WindowStartupLocation="CenterScreen">
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- Player Panel -->
+        <Grid Grid.Column="0">
+            <!-- The players -->
+            <vlc:VideoView x:Name="VlcPlayer" Visibility="Visible" MouseDoubleClick="VlcPlayer_MouseDoubleClick" />
+            <wv2:WebView2 x:Name="WebViewPlayer" Visibility="Hidden" />
+
+            <!-- AniSkip Overlay -->
+            <Border x:Name="AniSkipOverlay" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,30,90" 
+                    Background="#E60F172A" BorderBrush="#334155" BorderThickness="1" CornerRadius="12" Padding="15" Visibility="Collapsed">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Skip Intro" Foreground="White" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,12,0" FontSize="14"/>
+                    <Button Content="Skip ⏩" Background="#3B82F6" Foreground="White" FontWeight="Bold" BorderThickness="0" Padding="15,6" Cursor="Hand" Click="SkipButton_Click" ToolTip="Skip past the current intro segment"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Controls Overlay (Only for VLC) -->
+            <Border x:Name="ControlsOverlay" VerticalAlignment="Bottom" Background="#CC0F172A" BorderBrush="#334155" BorderThickness="0,1,0,0" Padding="15,10" Visibility="Visible">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="10"/>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="10"/>
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    
+                    <StackPanel Orientation="Horizontal">
+                        <Button x:Name="PlayPauseBtn" Content="⏸" FontSize="20" Background="Transparent" Foreground="White" BorderThickness="0" Width="40" Cursor="Hand" Click="PlayPauseBtn_Click" ToolTip="Pause or resume playback"/>
+                    </StackPanel>
+
+                    <Slider x:Name="TimeSlider" Grid.Column="2" VerticalAlignment="Center" Margin="10,0" 
+                            Maximum="100" Minimum="0" Value="0" Thumb.DragStarted="TimeSlider_DragStarted" Thumb.DragCompleted="TimeSlider_DragCompleted" ToolTip="Drag to seek time"/>
+
+                    <StackPanel Grid.Column="4" Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock Text="🔊 " Foreground="White" VerticalAlignment="Center" FontSize="16"/>
+                        <Slider x:Name="VolumeSlider" Width="100" VerticalAlignment="Center" Maximum="100" Minimum="0" Value="100" ValueChanged="VolumeSlider_ValueChanged" ToolTip="Adjust audio volume"/>
+                        <Button Content="⛶" FontSize="20" Background="Transparent" Foreground="White" BorderThickness="0" Margin="15,0,0,0" Cursor="Hand" Click="FullscreenBtn_Click" ToolTip="Toggle fullscreen theater mode"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- Right Panel: "Who is That?" Pause Overlay & Watch Party Sidebar -->
+        <Border Grid.Column="1" x:Name="SidebarOverlay" Width="360" Background="#0F172A" BorderBrush="#334155" BorderThickness="1,0,0,0" Visibility="Collapsed">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- Sidebar Header -->
+                <Border Padding="15" BorderBrush="#334155" BorderThickness="0,0,0,1">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="🎬 WHO IS THAT?" FontSize="18" FontWeight="Black" Foreground="#3B82F6"/>
+                        <Button Grid.Column="1" Content="✕" Background="Transparent" Foreground="#64748B" BorderThickness="0" FontSize="16" Cursor="Hand" Click="CloseSidebar_Click" ToolTip="Dismiss overlay"/>
+                    </Grid>
+                </Border>
+
+                <!-- Scrollable Character Mapping View -->
+                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="15">
+                    <StackPanel>
+                        <!-- Active Characters List -->
+                        <TextBlock Text="In This Episode" Foreground="#64748B" FontSize="11" FontWeight="Bold" Margin="0,0,0,10"/>
+                        <ItemsControl x:Name="CharactersList">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="#1E293B" CornerRadius="12" Padding="10" Margin="0,0,0,10" ToolTip="Click Voice Actor to see other roles they voice">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="60"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="60"/>
+                                            </Grid.ColumnDefinitions>
+                                            
+                                            <!-- Character Photo -->
+                                            <Border CornerRadius="8" ClipToBounds="True" Width="48" Height="60" VerticalAlignment="Center">
+                                                <Image Source="{Binding CharacterImageUrl}" Stretch="UniformToFill"/>
+                                            </Border>
+                                            
+                                            <!-- Mapping text -->
+                                            <StackPanel Grid.Column="1" Margin="10,0" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding CharacterName}" FontSize="13" FontWeight="Bold" Foreground="White"/>
+                                                <TextBlock Text="voiced by" FontSize="10" Foreground="#64748B" Margin="0,2"/>
+                                                <Button Content="{Binding VoiceActorName}" Background="Transparent" Foreground="#3B82F6" Padding="0" BorderThickness="0" FontSize="12" FontWeight="SemiBold" Cursor="Hand" HorizontalAlignment="Left" Click="VoiceActor_Click" Tag="{Binding VoiceActorName}"/>
+                                            </StackPanel>
+
+                                            <!-- VA Photo -->
+                                            <Border Grid.Column="2" CornerRadius="8" ClipToBounds="True" Width="48" Height="60" VerticalAlignment="Center">
+                                                <Image Source="{Binding VoiceActorImageUrl}" Stretch="UniformToFill"/>
+                                            </Border>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <!-- Character Swap Gallery (Hidden by default, populated when VA clicked) -->
+                        <Grid x:Name="SwapGalleryPanel" Visibility="Collapsed" Margin="0,15,0,0">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            <Border BorderBrush="#334155" BorderThickness="0,1,0,0" Padding="0,15,0,5">
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Stretch">
+                                    <TextBlock Text="🎭 Character Swap Gallery" Foreground="#F59E0B" FontSize="11" FontWeight="Bold"/>
+                                    <Button Content="✕" Background="Transparent" Foreground="#64748B" BorderThickness="0" FontSize="11" Margin="150,0,0,0" Cursor="Hand" Click="CloseSwapGallery_Click" ToolTip="Close swap catalog"/>
+                                </StackPanel>
+                            </Border>
+                            <ItemsControl Grid.Row="1" x:Name="SwapGalleryList">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="#1E293B" CornerRadius="8" Padding="10" Margin="0,5,0,5">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="40"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
+                                                <Image Source="{Binding CharacterImageUrl}" Stretch="UniformToFill" Width="30" Height="40"/>
+                                                <StackPanel Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding CharacterName}" FontSize="12" FontWeight="Bold" Foreground="White"/>
+                                                    <TextBlock Text="{Binding ShowTitle}" FontSize="10" Foreground="#94A3B8" TextTrimming="CharacterEllipsis"/>
+                                                </StackPanel>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </Grid>
+                    </StackPanel>
+                </ScrollViewer>
+
+                <!-- Watch Party sync settings inside player -->
+                <Border Grid.Row="2" Background="#1E293B" BorderBrush="#334155" BorderThickness="0,1,0,0" Padding="15">
+                    <StackPanel>
+                        <TextBlock Text="👥 Watch Party Sync" FontSize="12" FontWeight="Bold" Foreground="#10B981" Margin="0,0,0,10"/>
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="10"/>
+                                <ColumnDefinition Width="80"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="PartyRoomTxt" Text="party123" Background="#0F172A" Foreground="White" Padding="6" BorderBrush="#334155" FontSize="11" ToolTip="Enter lobby code"/>
+                            <TextBlock Text="Lobby Code" IsHitTestVisible="False" VerticalAlignment="Center" Margin="10,0,0,0" Foreground="#64748B" FontSize="11">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Text, ElementName=PartyRoomTxt}" Value="">
+                                                <Setter Property="Visibility" Value="Visible"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                            <Button Grid.Column="2" x:Name="PartyJoinBtn" Content="Join" Background="#10B981" Foreground="White" Padding="10,5" BorderThickness="0" Click="PartyJoin_Click" ToolTip="Connect to sync lobby"/>
+                        </Grid>
+                        <TextBlock x:Name="PartyStatusTxt" Text="Status: Offline" Foreground="#64748B" FontSize="11"/>
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>
