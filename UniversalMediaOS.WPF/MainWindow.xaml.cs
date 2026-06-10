@@ -70,9 +70,21 @@ namespace UniversalMediaOS.WPF
         }
 
         // ── Lifecycle ────────────────────────────────────────────
-        private void MainWindow_Closed(object? sender, EventArgs e)
+        private async void MainWindow_Closed(object sender, EventArgs e)
         {
-            _svcMgr?.Dispose();
+            string host = _swapper.GetSetting("QBitHost") ?? "localhost";
+            string port = _swapper.GetSetting("QBitPort") ?? "8080";
+            string user = _swapper.GetSetting("QBitUsername") ?? "admin";
+            string pass = _swapper.GetSetting("QBitPassword") ?? "adminadmin";
+            
+            var qbit = new UniversalMediaOS.Core.Routing.QBitLogicGate($"http://{host}:{port}");
+            if (await qbit.AuthenticateAsync(null, user, pass))
+            {
+                await qbit.ShutdownAsync();
+                await Task.Delay(2000); // Allow qBittorrent time to flush fastresume data
+            }
+
+            _svcMgr?.StopAll();
             _epubReader.CleanCache();
         }
 
@@ -223,7 +235,10 @@ namespace UniversalMediaOS.WPF
         {
             try
             {
-                if (!int.TryParse(QBitPortTxt.Text.Trim(), out _)) throw new Exception("QBittorrent Port must be a valid number.");
+                if (!int.TryParse(QBitPortTxt.Text.Trim(), out int port) || port < 1 || port > 65535) 
+                {
+                    throw new Exception("QBittorrent Port must be a valid number between 1 and 65535.");
+                }
 
                 // qBittorrent Config
                 _swapper.SetSetting("QBitPort", QBitPortTxt.Text.Trim());
@@ -459,7 +474,7 @@ namespace UniversalMediaOS.WPF
             }
         }
 
-        private void PlayInstalledFile_Click(object sender, RoutedEventArgs e)
+        private async void PlayInstalledFile_Click(object sender, RoutedEventArgs e)
         {
             if (sender is Button btn && btn.Tag is string path && File.Exists(path))
             {
@@ -470,7 +485,7 @@ namespace UniversalMediaOS.WPF
 
                 // Extract clean filename without extension for display
                 string fileName = Path.GetFileNameWithoutExtension(path);
-                player.InitializeMedia(0, 0, fileName, "1", "");
+                await player.InitializeMediaAsync(0, 0, fileName, "1", "");
                 player.Show();
                 player.PlayLocalOrHttp(path);
             }
@@ -495,57 +510,68 @@ namespace UniversalMediaOS.WPF
         }
 
         // ── Search Hub Logic (Anime Search / Manga Search Selector) ──
-        private async void ExecuteSearch()
+        private async Task ExecuteSearchAsync()
         {
             string query = SearchBox.Text.Trim();
+            bool isStorefront = StorefrontTab.Tag?.ToString() == "Active";
+            bool isManga = MangaTab.Tag?.ToString() == "Active";
 
-            // Storefront Tab: Search Anime
-            if (StorefrontTab.Tag?.ToString() == "Active")
+            try
             {
-                if (string.IsNullOrWhiteSpace(query))
-                {
-                    WelcomeText.Text = "Trending Today";
-                    try { SearchResultsList.ItemsSource = await _searchService.SearchAnimeAsync(""); } catch (Exception ex) { Log($"Failed to load trending: {ex.Message}"); }
-                    return;
-                }
+                SearchBox.IsEnabled = false;
 
-                WelcomeText.Text = "Search Results";
-                Log($"Searching AniList GQL for anime '{query}'...");
-
-                try
+                if (isStorefront)
                 {
+                    if (string.IsNullOrWhiteSpace(query))
+                    {
+                        WelcomeText.Text = "Trending Today";
+                        try { SearchResultsList.ItemsSource = await _searchService.SearchAnimeAsync(""); } catch (Exception ex) { Log($"Failed to load trending: {ex.Message}"); }
+                        return;
+                    }
+
+                    WelcomeText.Text = "Searching...";
+                    SearchResultsList.ItemsSource = null;
+                    Log($"Searching AniList GQL for anime '{query}'...");
+
                     var results = await _searchService.SearchAnimeAsync(query);
+                    WelcomeText.Text = "Search Results";
                     SearchResultsList.ItemsSource = results;
                     Log($"Found {results.Count} titles.");
                 }
-                catch (Exception ex)
+                else if (isManga)
                 {
-                    Log($"Search failed: {ex.Message}");
-                    MessageBox.Show($"Search Failed:\n{ex.Message}", "API Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                }
-            }
-            // Manga & Books Tab: Search Manga
-            else if (MangaTab.Tag?.ToString() == "Active")
-            {
-                if (string.IsNullOrWhiteSpace(query)) return;
+                    if (string.IsNullOrWhiteSpace(query)) return;
 
-                Log($"Searching MangaDex API for manga '{query}'...");
-                try
-                {
+                    MangaResultsList.ItemsSource = null;
+                    Log($"Searching MangaDex API for manga '{query}'...");
+                    
                     var results = await _mangaService.SearchMangaAsync(query);
                     MangaResultsList.ItemsSource = results;
                     Log($"Found {results.Count} manga titles.");
                 }
-                catch (Exception ex)
+            }
+            catch (Exception ex)
+            {
+                Log($"Search failed: {ex.Message}");
+                if (isStorefront)
                 {
-                    Log($"Manga search failed: {ex.Message}");
+                    WelcomeText.Text = "Search Failed";
+                    MessageBox.Show($"Search Failed:\n{ex.Message}", "API Error", MessageBoxButton.OK, MessageBoxImage.Error);
                 }
+            }
+            finally
+            {
+                SearchBox.IsEnabled = true;
+                SearchBox.Focus();
             }
         }
 
-        private void SearchBox_KeyDown(object sender, KeyEventArgs e)
+        private async void SearchBox_KeyDown(object sender, KeyEventArgs e)
         {
-            if (e.Key == Key.Enter) ExecuteSearch();
+            if (e.Key == Key.Enter) 
+            {
+                await ExecuteSearchAsync();
+            }
         }
 
         // ── Anime Watch Trigger Handler ──────────────────────────────
@@ -661,7 +687,7 @@ namespace UniversalMediaOS.WPF
                     player.Owner = this;
                     
                     // Wire Casting cache overlay, AniSkip and Resume states!
-                    player.InitializeMedia(mediaId, target.IdMal, target.OfficialTitle, episodeNum, audioPref);
+                    await player.InitializeMediaAsync(mediaId, target.IdMal, target.OfficialTitle, episodeNum, audioPref);
 
                     if (source.Tier == UniversalMediaOS.Core.Routing.SourceTier.Tier1_LocalP2P)
                     {
@@ -766,7 +792,7 @@ namespace UniversalMediaOS.WPF
                 if (chapter.Pages == 0 && !string.IsNullOrEmpty(chapter.ExternalUrl))
                 {
                     Log($"Loading external chapter source viewer: {chapter.ExternalUrl}...");
-                    MangaPagesScroll.Visibility = Visibility.Collapsed;
+                    MangaPagesList.Visibility = Visibility.Collapsed;
                     MangaWebBrowser.Visibility = Visibility.Visible;
                     
                     try
@@ -782,11 +808,14 @@ namespace UniversalMediaOS.WPF
                 {
                     Log($"Fetching pages for chapter: {item.Content}...");
                     MangaWebBrowser.Visibility = Visibility.Collapsed;
-                    MangaPagesScroll.Visibility = Visibility.Visible;
+                    MangaPagesList.Visibility = Visibility.Visible;
 
                     try
                     {
-                        MangaPagesScroll.ScrollToHome();
+                        if (MangaPagesList.Items.Count > 0)
+                        {
+                            MangaPagesList.ScrollIntoView(MangaPagesList.Items[0]);
+                        }
                         MangaPagesList.ItemsSource = null;
 
                         var pages = await _mangaService.GetPageUrlsAsync(chapter.Id);
@@ -940,7 +969,7 @@ namespace UniversalMediaOS.WPF
                 {
                     var player = new PlaybackTheater();
                     player.Owner = this;
-                    player.InitializeMedia(mediaId, 0, title, episode, audioPref);
+                    await player.InitializeMediaAsync(mediaId, 0, title, episode, audioPref);
                     player.Show();
                     
                     if (source.Tier == UniversalMediaOS.Core.Routing.SourceTier.Tier3_WebViewEmbed)

@@ -93,7 +93,20 @@ namespace UniversalMediaOS.Core.Routing
             return false;
         }
 
-
+        public async Task ShutdownAsync()
+        {
+            if (string.IsNullOrEmpty(Cookie)) return;
+            try
+            {
+                var request = new HttpRequestMessage(HttpMethod.Post, $"{_qbitUrl}/api/v2/app/shutdown");
+                request.Headers.Add("Cookie", Cookie);
+                await _httpClient.SendAsync(request);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Failed to gracefully shutdown qBittorrent: {ex.Message}");
+            }
+        }
 
         /// <summary>
         /// Polls the qBittorrent WebUI for download progress until the torrent completes or times out.

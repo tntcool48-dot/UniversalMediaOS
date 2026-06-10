@@ -73,7 +73,7 @@ namespace UniversalMediaOS.WPF
             Closed += PlaybackTheater_Closed;
         }
 
-        public async void InitializeMedia(int mediaId, int idMal, string showTitle, string episodeNo, string audioPref)
+        public async Task InitializeMediaAsync(int mediaId, int idMal, string showTitle, string episodeNo, string audioPref)
         {
             _mediaId = mediaId;
             _idMal = idMal;
@@ -423,7 +423,11 @@ namespace UniversalMediaOS.WPF
         private void VolumeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
             if (_mediaPlayer != null)
-                _mediaPlayer.Volume = (int)e.NewValue;
+            {
+                // Human hearing is logarithmic; squaring the normalized value creates an approximate audio taper
+                double normalized = e.NewValue / 100.0;
+                _mediaPlayer.Volume = (int)(Math.Pow(normalized, 2) * 100);
+            }
         }
 
         private void FullscreenBtn_Click(object sender, RoutedEventArgs e)

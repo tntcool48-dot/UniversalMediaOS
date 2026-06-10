@@ -188,7 +188,7 @@ namespace UniversalMediaOS.Core.Routing
                     if (string.IsNullOrEmpty(consumetBase)) consumetBase = "http://localhost:3000";
                     string searchUrl = $"{consumetBase.TrimEnd('/')}/anime/gogoanime/{Uri.EscapeDataString(query)}";
                     Log($"> [Tier 2] Searching: {searchUrl}");
-                    var searchResp = await _httpClient.GetAsync(searchUrl);
+                    var searchResp = await GetWithRetriesAsync(searchUrl, Log);
 
                     if (searchResp.IsSuccessStatusCode)
                     {
@@ -213,7 +213,7 @@ namespace UniversalMediaOS.Core.Routing
                             if (string.IsNullOrEmpty(consumetBase2)) consumetBase2 = "http://localhost:3000";
                             string watchUrl = $"{consumetBase2.TrimEnd('/')}/anime/gogoanime/watch/{Uri.EscapeDataString(resolvedEpisodeId)}";
                             Log($"> [Tier 2] Fetching stream: {watchUrl}");
-                            var watchResp = await _httpClient.GetAsync(watchUrl);
+                            var watchResp = await GetWithRetriesAsync(watchUrl, Log);
 
                             if (watchResp.IsSuccessStatusCode)
                             {
@@ -498,6 +498,35 @@ namespace UniversalMediaOS.Core.Routing
             if (match.Success) return int.Parse(match.Groups[1].Value);
 
             return 1; // Default to Season 1
+        }
+
+        private async Task<HttpResponseMessage> GetWithRetriesAsync(string url, Action<string> log)
+        {
+            int maxRetries = 3;
+            for (int i = 0; i < maxRetries; i++)
+            {
+                try
+                {
+                    var response = await _httpClient.GetAsync(url);
+                    if (response.IsSuccessStatusCode)
+                        return response;
+                        
+                    log($"> [Tier 2] HTTP {response.StatusCode} for {url}. Retrying...");
+                }
+                catch (Exception ex)
+                {
+                    log($"> [Tier 2] Exception for {url}: {ex.Message}. Retrying...");
+                }
+
+                if (i < maxRetries - 1)
+                {
+                    int delayMs = (int)Math.Pow(2, i) * 1000;
+                    await Task.Delay(delayMs);
+                }
+            }
+            
+            // Final attempt to return whatever response we have, or a failed message
+            return await _httpClient.GetAsync(url);
         }
     }
 }
