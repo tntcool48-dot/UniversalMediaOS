@@ -1,0 +1,18 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:po="http://schemas.microsoft.com/winfx/2006/xaml/presentation/options">
+
+    <!-- Unified Duration Tokens -->
+    <Duration x:Key="MotionFast">0:0:0.140</Duration>
+    <Duration x:Key="MotionStandard">0:0:0.240</Duration>
+    <Duration x:Key="MotionEmphasized">0:0:0.420</Duration>
+
+    <!-- Smooth, physical KeySpline for entrance animations -->
+    <KeySpline x:Key="EntranceKeySpline" ControlPoint1="0.25,1" ControlPoint2="0.5,1" po:Freeze="True" />
+    
+    <!-- Standard easing curves -->
+    <KeySpline x:Key="StandardEasing" ControlPoint1="0.25,0.1" ControlPoint2="0.25,1" po:Freeze="True" />
+    <KeySpline x:Key="DecelerationEasing" ControlPoint1="0.0,0.0" ControlPoint2="0.2,1" po:Freeze="True" />
+    <KeySpline x:Key="AccelerationEasing" ControlPoint1="0.4,0.0" ControlPoint2="1,1" po:Freeze="True" />
+
+</ResourceDictionary>

@@ -1,0 +1,833 @@
+<Window x:Class="UniversalMediaOS.WPF.LegacyMainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Title="Universal Media OS" Height="880" Width="1450"
+        WindowStartupLocation="CenterScreen"
+        Background="#0A0D17" Foreground="#F8FAFC" FontFamily="Segoe UI">
+    <Window.Resources>
+        <Storyboard x:Key="ShimmerAnimation" RepeatBehavior="Forever">
+            <DoubleAnimation Storyboard.TargetProperty="Opacity" From="0.3" To="0.7" Duration="0:0:1.0" AutoReverse="True"/>
+        </Storyboard>
+        <Style x:Key="ProgressiveImageStyle" TargetType="Image">
+            <Setter Property="Opacity" Value="0"/>
+            <Setter Property="RenderOptions.BitmapScalingMode" Value="HighQuality"/>
+            <Style.Triggers>
+                <EventTrigger RoutedEvent="Binding.TargetUpdated">
+                    <BeginStoryboard>
+                        <Storyboard>
+                            <DoubleAnimation Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.5"/>
+                        </Storyboard>
+                    </BeginStoryboard>
+                </EventTrigger>
+                <!-- Fallback if TargetUpdated doesn't fire -->
+                <EventTrigger RoutedEvent="Loaded">
+                    <BeginStoryboard>
+                        <Storyboard>
+                            <DoubleAnimation Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.8"/>
+                        </Storyboard>
+                    </BeginStoryboard>
+                </EventTrigger>
+            </Style.Triggers>
+        </Style>
+        <!-- Sleek Modern Aesthetic Themes -->
+        <LinearGradientBrush x:Key="SidebarBrush" StartPoint="0,0" EndPoint="0,1">
+            <GradientStop Color="#0D1324" Offset="0"/>
+            <GradientStop Color="#090C16" Offset="1"/>
+        </LinearGradientBrush>
+        
+        <LinearGradientBrush x:Key="HeroOverlayBrush" StartPoint="0,0" EndPoint="1,0">
+            <GradientStop Color="#FF0B0F19" Offset="0"/>
+            <GradientStop Color="#B30B0F19" Offset="0.5"/>
+            <GradientStop Color="#000B0F19" Offset="1"/>
+        </LinearGradientBrush>
+
+        <!-- Search Box Premium Style -->
+        <Style x:Key="SearchTextBoxStyle" TargetType="TextBox">
+            <Setter Property="Background" Value="#111827" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="CaretBrush" Value="#8B5CF6" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="BorderBrush" Value="#1F2937" />
+            <Setter Property="FontSize" Value="16" />
+            <Setter Property="Padding" Value="18,12" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border Background="{TemplateBinding Background}" 
+                                CornerRadius="22" 
+                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
+                            <ScrollViewer x:Name="PART_ContentHost" Margin="0"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsKeyboardFocused" Value="True">
+                    <Setter Property="BorderBrush" Value="#8B5CF6" />
+                    <Setter Property="Background" Value="#1F1A3A" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- Play/Action Premium Neon Button -->
+        <Style x:Key="PlayButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="#8B5CF6" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Padding" Value="18,10" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="RenderTransformOrigin" Value="0.5,0.5"/>
+            <Setter Property="RenderTransform">
+                <Setter.Value>
+                    <ScaleTransform ScaleX="1" ScaleY="1"/>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bg" Background="{TemplateBinding Background}" CornerRadius="14">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <EventTrigger RoutedEvent="MouseEnter">
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleX" To="1.05" Duration="0:0:0.15"/>
+                                        <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleY" To="1.05" Duration="0:0:0.15"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
+                            <EventTrigger RoutedEvent="MouseLeave">
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleX" To="1" Duration="0:0:0.15"/>
+                                        <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleY" To="1" Duration="0:0:0.15"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bg" Property="Background" Value="#A78BFA" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="bg" Property="Background" Value="#4B5563"/>
+                                <Setter Property="Foreground" Value="#9CA3AF"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Secondary Outline Button -->
+        <Style x:Key="SecondaryButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="#E2E8F0" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="BorderBrush" Value="#4B5563" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Padding" Value="15,8" />
+            <Setter Property="RenderTransformOrigin" Value="0.5,0.5"/>
+            <Setter Property="RenderTransform">
+                <Setter.Value>
+                    <ScaleTransform ScaleX="1" ScaleY="1"/>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="bg" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="10">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <EventTrigger RoutedEvent="MouseEnter">
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleX" To="1.05" Duration="0:0:0.15"/>
+                                        <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleY" To="1.05" Duration="0:0:0.15"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
+                            <EventTrigger RoutedEvent="MouseLeave">
+                                <BeginStoryboard>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleX" To="1" Duration="0:0:0.15"/>
+                                        <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleY" To="1" Duration="0:0:0.15"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bg" Property="Background" Value="#1F2937" />
+                                <Setter TargetName="bg" Property="BorderBrush" Value="#E2E8F0" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Sidebar Tab TextBlock Style -->
+        <Style x:Key="SidebarTabStyle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#64748B"/>
+            <Setter Property="FontSize" Value="16"/>
+            <Setter Property="Margin" Value="10,14,0,14"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Style.Triggers>
+                <Trigger Property="Tag" Value="Active">
+                    <Setter Property="Foreground" Value="#C084FC"/>
+                </Trigger>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Foreground" Value="#E9D5FF"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- Premium Anime Card Style with Hover Neon Glow -->
+        <Style x:Key="AnimeCardStyle" TargetType="Border">
+            <Setter Property="Background" Value="#0D1324" />
+            <Setter Property="BorderBrush" Value="#1F2937" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="16" />
+            <Setter Property="Margin" Value="0,0,22,25" />
+            <Setter Property="Width" Value="255" />
+            <Setter Property="Height" Value="430" />
+            <Setter Property="ClipToBounds" Value="True" />
+            <Setter Property="RenderTransformOrigin" Value="0.5,0.5"/>
+            <Setter Property="RenderTransform">
+                <Setter.Value>
+                    <ScaleTransform ScaleX="1" ScaleY="1"/>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="Effect">
+                <Setter.Value>
+                    <DropShadowEffect Color="Black" Opacity="0.4" BlurRadius="15" ShadowDepth="4"/>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <EventTrigger RoutedEvent="MouseEnter">
+                    <BeginStoryboard>
+                        <Storyboard>
+                            <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleX" To="1.03" Duration="0:0:0.2"/>
+                            <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleY" To="1.03" Duration="0:0:0.2"/>
+                        </Storyboard>
+                    </BeginStoryboard>
+                </EventTrigger>
+                <EventTrigger RoutedEvent="MouseLeave">
+                    <BeginStoryboard>
+                        <Storyboard>
+                            <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleX" To="1" Duration="0:0:0.2"/>
+                            <DoubleAnimation Storyboard.TargetProperty="RenderTransform.ScaleY" To="1" Duration="0:0:0.2"/>
+                        </Storyboard>
+                    </BeginStoryboard>
+                </EventTrigger>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="BorderBrush" Value="#8B5CF6" />
+                    <Setter Property="Background" Value="#111930" />
+                    <Setter Property="Effect">
+                        <Setter.Value>
+                            <DropShadowEffect Color="#8B5CF6" Opacity="0.35" BlurRadius="25" ShadowDepth="0"/>
+                        </Setter.Value>
+                    </Setter>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <!-- Themed ComboBox Style -->
+        <Style x:Key="ThemedComboBoxStyle" TargetType="ComboBox">
+            <Setter Property="Background" Value="#111827" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="BorderBrush" Value="#1F2937" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="8,4" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid>
+                            <ToggleButton x:Name="ToggleButton" 
+                                          BorderBrush="{TemplateBinding BorderBrush}" 
+                                          Background="{TemplateBinding Background}" 
+                                          BorderThickness="{TemplateBinding BorderThickness}" 
+                                          Focusable="false"
+                                          IsChecked="{Binding Path=IsDropDownOpen,Mode=TwoWay,RelativeSource={RelativeSource TemplatedParent}}"
+                                          ClickMode="Press">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="6">
+                                            <Path x:Name="Arrow" Fill="White" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0" Data="M 0 0 L 4 4 L 8 0 Z"/>
+                                        </Border>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+                            <ContentPresenter x:Name="ContentSite" IsHitTestVisible="False" Content="{TemplateBinding SelectionBoxItem}" ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}" ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}" Margin="10,3,23,3" VerticalAlignment="Center" HorizontalAlignment="Left" />
+                            <Popup x:Name="Popup" Placement="Bottom" IsOpen="{TemplateBinding IsDropDownOpen}" AllowsTransparency="True" Focusable="False" PopupAnimation="Slide">
+                                <Grid x:Name="DropDown" SnapsToDevicePixels="True" MinWidth="{TemplateBinding ActualWidth}" MaxHeight="{TemplateBinding MaxDropDownHeight}">
+                                    <Border x:Name="DropDownBorder" Background="#111827" BorderThickness="1" BorderBrush="#1F2937" CornerRadius="6" Margin="0,4,0,0">
+                                        <ScrollViewer Margin="4,6,4,6" SnapsToDevicePixels="True">
+                                            <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Contained" />
+                                        </ScrollViewer>
+                                    </Border>
+                                </Grid>
+                            </Popup>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="BorderBrush" Value="#8B5CF6"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="280"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- Sidebar Navigation (Glassmorphic Midnight Style) -->
+        <Border Grid.Column="0" Background="{StaticResource SidebarBrush}" BorderBrush="#111827" BorderThickness="0,0,1,0">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                
+                <StackPanel Margin="25,45,25,0">
+                    <TextBlock Text="UNIVERSAL" FontSize="26" FontWeight="Black" Foreground="#F8FAFC"/>
+                    <TextBlock Text="MEDIA OS" FontSize="18" FontWeight="SemiBold" Foreground="#8B5CF6" Margin="0,-4,0,45"/>
+                    
+                    <TextBlock Text="NAVIGATION" Foreground="#475569" FontSize="11" FontWeight="Bold" Margin="0,0,0,15"/>
+                    <TextBlock x:Name="StorefrontTab" Text="✨ Anime Showcase" Style="{StaticResource SidebarTabStyle}" Tag="Active" MouseLeftButtonUp="StorefrontTab_Click" ToolTip="Browse trending shows and search metadata"/>
+                    <TextBlock x:Name="MangaTab" Text="📖 Manga &amp; Books" Style="{StaticResource SidebarTabStyle}" MouseLeftButtonUp="MangaTab_Click" ToolTip="Read dynamic MangaDex releases and local EPUB books"/>
+                    <TextBlock x:Name="InstalledTab" Text="💾 Offline Library" Style="{StaticResource SidebarTabStyle}" MouseLeftButtonUp="InstalledTab_Click" ToolTip="Manage downloaded episodes offline"/>
+                    <TextBlock x:Name="MalTab" Text="🌐 MAL Web" Style="{StaticResource SidebarTabStyle}" MouseLeftButtonUp="MalTab_Click" ToolTip="Browse MyAnimeList directly"/>
+                    
+                    <TextBlock Text="CONTROL ROOM" Foreground="#475569" FontSize="11" FontWeight="Bold" Margin="0,35,0,15"/>
+                    <TextBlock x:Name="ConfigTab" Text="⚙️ App Settings" Style="{StaticResource SidebarTabStyle}" MouseLeftButtonUp="ConfigTab_Click" ToolTip="Dynamic custom scrapers, torrent settings, and diagnostic status logs"/>
+                </StackPanel>
+                
+                <StackPanel Grid.Row="1" Margin="25,0,25,25">
+                    <TextBlock Text="MAINTENANCE" Foreground="#475569" FontSize="11" FontWeight="Bold" Margin="0,0,0,8"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="5"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Button Content="Clean Cache" Style="{StaticResource SecondaryButtonStyle}" FontSize="11" Click="CleanCache_Click" ToolTip="Purge local book caches"/>
+                        <Button Grid.Column="2" Content="Diagnostics" Style="{StaticResource SecondaryButtonStyle}" FontSize="11" Click="Diagnostics_Click" ToolTip="Update dynamic system diagnostic charts"/>
+                    </Grid>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Main Window Container -->
+        <Grid Grid.Column="1">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="120"/>
+            </Grid.RowDefinitions>
+            
+            <!-- Global Floating Search Header Bar -->
+            <Grid x:Name="SearchBarPanel" Margin="40,30,40,15">
+                <TextBox x:Name="SearchBox" Style="{StaticResource SearchTextBoxStyle}" TextChanged="SearchBox_TextChanged" ToolTip="Enter show title or search query..."/>
+                <TextBlock x:Name="SearchPlaceholderText" Text="Fuzzy search titles... (e.g. Frieren, Demon Slayer)" IsHitTestVisible="False" VerticalAlignment="Center" Margin="25,0,0,0" Foreground="#4B5563" FontSize="16">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding Text, ElementName=SearchBox}" Value="">
+                                    <Setter Property="Visibility" Value="Visible"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+            </Grid>
+            
+            <!-- ================= TAB 1: Modern Anime Site Showcase ================= -->
+            <ScrollViewer x:Name="StorefrontView" Grid.Row="1" Margin="40,0,40,0" VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    
+                    <!-- PREMIUM HERO SPOTLIGHT CAROUSEL -->
+                    <Border x:Name="HeroCarousel" CornerRadius="20" Height="260" Margin="0,0,0,30" ClipToBounds="True" Background="#0B0F19" BorderBrush="#8B5CF6" BorderThickness="1">
+                        <Border.Effect>
+                            <DropShadowEffect Color="#8B5CF6" Opacity="0.25" BlurRadius="30" ShadowDepth="0"/>
+                        </Border.Effect>
+                        <Grid>
+                            <!-- Hero Background Image (translucent mockup) -->
+                            <Image x:Name="HeroBannerImage" Source="https://images.unsplash.com/photo-1578632767115-351597cf2477?w=1200" Stretch="UniformToFill" Opacity="0.65"/>
+                            <Border Background="{StaticResource HeroOverlayBrush}"/>
+                            
+                            <!-- Hero Info -->
+                            <StackPanel VerticalAlignment="Center" Margin="40,0,0,0" HorizontalAlignment="Left" MaxWidth="650">
+                                <Border Background="#8B5CF6" CornerRadius="8" Padding="10,4" HorizontalAlignment="Left" Margin="0,0,0,10">
+                                    <TextBlock Text="FEATURED SPOTLIGHT" FontSize="10" FontWeight="Black" Foreground="White"/>
+                                </Border>
+                                <TextBlock x:Name="HeroTitle" Text="Frieren: Beyond Journey's End" FontSize="32" FontWeight="Black" Foreground="White" Margin="0,0,0,8"/>
+                                <TextBlock x:Name="HeroDescription" Text="For decade-long companions, a journey of ten years is merely a blink of an eye. After defeating the Demon King, mage Frieren begins a new journey to understand the hearts of mortals." 
+                                           FontSize="13" Foreground="#94A3B8" TextWrapping="Wrap" MaxHeight="60" Margin="0,0,0,18" TextTrimming="CharacterEllipsis"/>
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Content="Watch Episode 1" Style="{StaticResource PlayButtonStyle}" Padding="20,10" Click="PlayHero_Click" ToolTip="Quick-stream Spotlight Episode 1"/>
+                                    <Button Content="Read Manga" Style="{StaticResource SecondaryButtonStyle}" Margin="10,0,0,0" Padding="20,10" Click="ReadHeroManga_Click" ToolTip="Read the manga source"/>
+                                    <!-- Simple card provider tag -->
+                                    <ComboBox x:Name="HeroProviderCombo" Style="{StaticResource ThemedComboBoxStyle}" Foreground="White" FontSize="11" Width="130" Margin="10,0,0,0" Loaded="ItemProviderCombo_Loaded" ToolTip="Select spotlight search engine"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                    
+                    <!-- Trending Section Header -->
+                    <TextBlock x:Name="WelcomeText" Text="Trending Shows" FontSize="24" FontWeight="Bold" Foreground="White" Margin="0,5,0,20"/>
+                    
+                    <!-- Skeleton Loader Grid -->
+                    <WrapPanel x:Name="SkeletonLoaderGrid" Visibility="Collapsed" Margin="0,0,0,20">
+                        <Border Width="160" Height="240" Background="#1E293B" CornerRadius="12" Margin="0,0,20,20">
+                            <Border.Triggers>
+                                <EventTrigger RoutedEvent="Loaded">
+                                    <BeginStoryboard Storyboard="{StaticResource ShimmerAnimation}"/>
+                                </EventTrigger>
+                            </Border.Triggers>
+                        </Border>
+                        <Border Width="160" Height="240" Background="#1E293B" CornerRadius="12" Margin="0,0,20,20">
+                            <Border.Triggers>
+                                <EventTrigger RoutedEvent="Loaded">
+                                    <BeginStoryboard Storyboard="{StaticResource ShimmerAnimation}"/>
+                                </EventTrigger>
+                            </Border.Triggers>
+                        </Border>
+                        <Border Width="160" Height="240" Background="#1E293B" CornerRadius="12" Margin="0,0,20,20">
+                            <Border.Triggers>
+                                <EventTrigger RoutedEvent="Loaded">
+                                    <BeginStoryboard Storyboard="{StaticResource ShimmerAnimation}"/>
+                                </EventTrigger>
+                            </Border.Triggers>
+                        </Border>
+                        <Border Width="160" Height="240" Background="#1E293B" CornerRadius="12" Margin="0,0,20,20">
+                            <Border.Triggers>
+                                <EventTrigger RoutedEvent="Loaded">
+                                    <BeginStoryboard Storyboard="{StaticResource ShimmerAnimation}"/>
+                                </EventTrigger>
+                            </Border.Triggers>
+                        </Border>
+                    </WrapPanel>
+
+                    <TextBlock x:Name="SearchEmptyText" Text="No results found. Try adjusting your search terms." Foreground="#64748B" FontSize="16" HorizontalAlignment="Center" Margin="0,40,0,0" Visibility="Collapsed"/>
+
+                    <!-- Anime Cards Grid -->
+                    <ItemsControl x:Name="SearchResultsList">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Style="{StaticResource AnimeCardStyle}" ToolTip="Watch or download this title">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="250"/>
+                                            <RowDefinition Height="*"/>
+                                        </Grid.RowDefinitions>
+                                        
+                                        <!-- Poster Image -->
+                                        <Image Source="{Binding CoverImageUrl, NotifyOnTargetUpdated=True, IsAsync=True}" Stretch="UniformToFill" Style="{StaticResource ProgressiveImageStyle}"/>
+                                        
+
+                                        
+                                        <Border Grid.Row="0">
+                                            <Border.Background>
+                                                <LinearGradientBrush StartPoint="0,0.5" EndPoint="0,1">
+                                                    <GradientStop Color="#000D1324" Offset="0"/>
+                                                    <GradientStop Color="#FF0D1324" Offset="1"/>
+                                                </LinearGradientBrush>
+                                            </Border.Background>
+                                        </Border>
+
+                                        <!-- Card Info Area -->
+                                        <StackPanel Grid.Row="1" Margin="15,10,15,15" VerticalAlignment="Stretch">
+                                            <TextBlock Text="{Binding OfficialTitle}" FontSize="15" FontWeight="Bold" Foreground="White" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"/>
+                                            <TextBlock Text="{Binding Synopsis}" FontSize="11" Foreground="#64748B" TextWrapping="Wrap" Height="48" Margin="0,4,0,8" TextTrimming="CharacterEllipsis"/>
+                                            
+                                            <!-- Provider Dropdown and Ep Box -->
+                                            <Grid Margin="0,0,0,10">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="5"/>
+                                                    <ColumnDefinition Width="55"/>
+                                                </Grid.ColumnDefinitions>
+                                                <ComboBox x:Name="ItemProviderCombo" SelectedValuePath="Tag" SelectedValue="{Binding TargetProviderDomain, Mode=TwoWay}" Style="{StaticResource ThemedComboBoxStyle}" Foreground="White" FontSize="11" ToolTip="Select streaming provider for WebView2 embeds" Loaded="ItemProviderCombo_Loaded"/>
+                                                <TextBox x:Name="EpisodeInput" Grid.Column="2" Text="{Binding TargetEpisode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Background="#111827" Foreground="White" BorderBrush="#1F2937" BorderThickness="1" TextAlignment="Center" VerticalContentAlignment="Center" FontSize="11" FontWeight="Bold" ToolTip="Enter episode number"/>
+                                            </Grid>
+
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="8"/>
+                                                    <ColumnDefinition Width="85"/>
+                                                </Grid.ColumnDefinitions>
+                                                <Button Grid.Column="0" Content="⚡ Watch Now" Style="{StaticResource PlayButtonStyle}" Click="PlayButton_Click" Tag="{Binding Id}" ToolTip="Stream or download instantly"/>
+                                                <Button Grid.Column="2" Content="📥 Season" Style="{StaticResource SecondaryButtonStyle}" Click="DownloadSeason_Click" Tag="{Binding Id}" ToolTip="Batch download the entire season"/>
+                                            </Grid>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- ================= TAB 2: Premium Manga & Book Split Reader ================= -->
+            <Grid x:Name="MangaReaderView" Grid.Row="1" Margin="40,0,40,0" Visibility="Collapsed">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="340"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- Sidebar Selector Panel -->
+                <Border Background="#0D1324" BorderBrush="#1F2937" BorderThickness="1" CornerRadius="16" Padding="20" Margin="0,0,20,0">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        
+                        <TextBlock Text="📖 Reader Dashboard" FontSize="20" FontWeight="Black" Foreground="White" Margin="0,0,0,20"/>
+                        
+                        <Button Grid.Row="1" Content="📁 Import Local EPUB Book" Style="{StaticResource PlayButtonStyle}" FontSize="13" Padding="15,10" Cursor="Hand" Click="LoadEpub_Click" ToolTip="Open an EPUB ebook from your hard drive"/>
+                        
+                        <Grid Grid.Row="2" Margin="0,20,0,0">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            <TextBlock Text="MANGADEX RELEASES" Foreground="#475569" FontSize="11" FontWeight="Bold" Margin="0,0,0,10"/>
+                            
+                            <TextBlock x:Name="MangaEmptyText" Text="No manga found. Try adjusting your search terms." Foreground="#64748B" FontSize="14" HorizontalAlignment="Center" Margin="0,20,0,0" Visibility="Collapsed" Grid.Row="1"/>
+
+                            <ListBox x:Name="MangaResultsList" Grid.Row="1" Background="Transparent" BorderThickness="0" SelectionChanged="MangaResultsList_SelectionChanged" ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="#111827" BorderBrush="#1F2937" BorderThickness="1" CornerRadius="12" Padding="12" Margin="0,0,0,10" ToolTip="Click to view chapter indices">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="45"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
+                                                <Border CornerRadius="6" ClipToBounds="True">
+                                                    <Image Source="{Binding CoverUrl, NotifyOnTargetUpdated=True, IsAsync=True}" Stretch="UniformToFill" Height="55" Width="40" Style="{StaticResource ProgressiveImageStyle}"/>
+                                                </Border>
+                                                <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding Title}" FontSize="13" FontWeight="Bold" Foreground="White" TextTrimming="CharacterEllipsis" MaxWidth="200"/>
+                                                    <TextBlock Text="MangaDex Online" FontSize="11" Foreground="#4B5563" Margin="0,4,0,0"/>
+                                                </StackPanel>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </Grid>
+                    </Grid>
+                </Border>
+
+                <!-- Book / Reader Frame -->
+                <Border Grid.Column="1" Background="#0D1324" BorderBrush="#1F2937" BorderThickness="1" CornerRadius="16" Padding="20">
+                    <Grid>
+                        <!-- No Book loaded state -->
+                        <Grid x:Name="MangaReaderEmptyState" HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <StackPanel HorizontalAlignment="Center">
+                                <TextBlock Text="📖" FontSize="64" HorizontalAlignment="Center" Margin="0,0,0,15"/>
+                                <TextBlock Text="Premium Reader Room" FontSize="22" FontWeight="Black" HorizontalAlignment="Center" Margin="0,0,0,6"/>
+                                <TextBlock Text="Use the top search bar to find manga, or import an EPUB book to read." Foreground="#475569" TextAlignment="Center" FontSize="13"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- Epub Book Reader frame -->
+                        <Grid x:Name="EpubReaderFrame" Visibility="Collapsed">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            <Grid Margin="0,0,0,15">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Button Content="◀ Chapter Back" Style="{StaticResource SecondaryButtonStyle}" Click="EpubBack_Click" ToolTip="Go to previous chapter"/>
+                                <TextBlock x:Name="EpubBookTitle" Grid.Column="1" Text="Epub Book Title" FontSize="16" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                <Button Grid.Column="2" Content="Next Chapter ▶" Style="{StaticResource SecondaryButtonStyle}" Click="EpubNext_Click" ToolTip="Go to next chapter"/>
+                            </Grid>
+                            
+                            <Border Grid.Row="1" CornerRadius="12" ClipToBounds="True" Background="White">
+                                <wv2:WebView2 x:Name="EpubWebBrowser"/>
+                            </Border>
+                        </Grid>
+
+                        <!-- Manga Reader Frame -->
+                        <Grid x:Name="MangaReaderFrame" Visibility="Collapsed">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            <Grid Margin="0,0,0,15">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="15"/>
+                                    <ColumnDefinition Width="170"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock x:Name="MangaShowTitle" Text="Manga Title" FontSize="18" FontWeight="Bold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                                <ComboBox x:Name="MangaChapterCombo" Style="{StaticResource ThemedComboBoxStyle}" Grid.Column="2" Foreground="White" FontSize="12" SelectionChanged="MangaChapterCombo_SelectionChanged" ToolTip="Select chapter to read"/>
+                            </Grid>
+                            
+                            <!-- Virtualized image viewer for local Manga chapters -->
+                            <ListBox Grid.Row="1" x:Name="MangaPagesList" 
+                                     Background="Transparent" BorderThickness="0"
+                                     VirtualizingPanel.IsVirtualizing="True"
+                                     VirtualizingPanel.VirtualizationMode="Recycling"
+                                     ScrollViewer.CanContentScroll="True"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                     ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                <ListBox.ItemContainerStyle>
+                                    <Style TargetType="ListBoxItem">
+                                        <Setter Property="Template">
+                                            <Setter.Value>
+                                                <ControlTemplate TargetType="ListBoxItem">
+                                                    <ContentPresenter />
+                                                </ControlTemplate>
+                                            </Setter.Value>
+                                        </Setter>
+                                    </Style>
+                                </ListBox.ItemContainerStyle>
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border BorderBrush="#1F2937" BorderThickness="0,0,0,12" HorizontalAlignment="Center">
+                                            <Image Source="{Binding NotifyOnTargetUpdated=True, IsAsync=True}" Stretch="Uniform" Margin="0,0,0,12" Style="{StaticResource ProgressiveImageStyle}"/>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+
+                            <!-- Embedded WebBrowser for Manga Dex external links redirects -->
+                            <wv2:WebView2 x:Name="MangaWebBrowser" Grid.Row="1" Visibility="Collapsed"/>
+                        </Grid>
+                    </Grid>
+                </Border>
+            </Grid>
+
+            <!-- ================= TAB 3: Offline Library View ================= -->
+            <ScrollViewer x:Name="InstalledView" Grid.Row="1" Margin="40,0,40,0" VerticalScrollBarVisibility="Auto" Visibility="Collapsed">
+                <StackPanel>
+                    <TextBlock Text="💾 Offline Library" FontSize="32" FontWeight="Bold" Foreground="#10B981" Margin="0,0,0,20"/>
+                    <TextBlock x:Name="InstalledEmptyText" Text="No episodes downloaded yet. Offline downloads will appear here automatically once Tier 1 finishes." 
+                               Foreground="#475569" FontSize="16" TextWrapping="Wrap" Margin="0,20,0,0" Visibility="Collapsed"/>
+                    <ItemsControl x:Name="InstalledFilesList">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="#0D1324" BorderBrush="#1F2937" BorderThickness="1" CornerRadius="16" Padding="18" Margin="0,0,0,12" ToolTip="Play locally or delete file">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="🎬" FontSize="26" VerticalAlignment="Center" Margin="0,0,18,0"/>
+                                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding FileName}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxWidth="600"/>
+                                            <TextBlock Text="{Binding FileSizeText}" FontSize="12" Foreground="#475569" Margin="0,4,0,0"/>
+                                        </StackPanel>
+                                        <Button Grid.Column="2" Content="▶ Play" Style="{StaticResource PlayButtonStyle}" Click="PlayInstalledFile_Click" Tag="{Binding FullPath}" Margin="10,0,5,0" ToolTip="Play video locally"/>
+                                        <Button Grid.Column="3" Content="🗑 Purge" Style="{StaticResource PlayButtonStyle}" Background="#EF4444" Click="DeleteInstalledFile_Click" Tag="{Binding FullPath}" ToolTip="Delete file permanently" Margin="0"/>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- ================= TAB 4: Inline Configuration View ================= -->
+            <ScrollViewer x:Name="ConfigView" Grid.Row="1" Margin="40,0,40,0" VerticalScrollBarVisibility="Auto" Visibility="Collapsed">
+                <StackPanel Margin="0,0,0,30">
+                    <TextBlock Text="⚙️ Dynamic Configuration" FontSize="32" FontWeight="Bold" Foreground="White" Margin="0,0,0,20"/>
+
+                    <!-- Custom Dynamic Sources -->
+                    <Border Background="#0D1324" BorderBrush="#1F2937" BorderThickness="1" CornerRadius="16" Padding="22" Margin="0,0,0,15">
+                        <StackPanel>
+                            <TextBlock Text="DYNAMIC PROVIDER SOURCES" FontSize="14" FontWeight="Bold" Foreground="#8B5CF6" Margin="0,0,0,8"/>
+                            <TextBlock Text="Create, modify, or remove custom scraping URL patterns." Foreground="#64748B" FontSize="12" Margin="0,0,0,18" TextWrapping="Wrap"/>
+                            
+                            <!-- Custom Source Editor Fields -->
+                            <Grid Margin="0,0,0,18">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="150"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBox x:Name="NewSourceNameTxt" Background="#111827" Foreground="White" Padding="8" BorderBrush="#1F2937" FontSize="13" ToolTip="Enter source name (e.g. AnimeZone)"/>
+                                <TextBlock Text="Source Name" IsHitTestVisible="False" VerticalAlignment="Center" Margin="10,0,0,0" Foreground="#4B5563" FontSize="13">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Text, ElementName=NewSourceNameTxt}" Value="">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+
+                                <TextBox x:Name="NewSourceUrlTxt" Grid.Column="1" Background="#111827" Foreground="White" Padding="8" BorderBrush="#1F2937" FontSize="13" Margin="10,0,0,0" ToolTip="Enter search pattern containing {query}"/>
+                                <TextBlock Grid.Column="1" Text="Search URL Pattern (must contain {query})" IsHitTestVisible="False" VerticalAlignment="Center" Margin="20,0,0,0" Foreground="#4B5563" FontSize="13">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Text, ElementName=NewSourceUrlTxt}" Value="">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+
+                                <Button Grid.Column="2" Content="➕ Add Source" Background="#10B981" Foreground="White" FontWeight="Bold" Padding="15,8" BorderThickness="0" Cursor="Hand" Margin="10,0,0,0" Click="AddCustomSource_Click" ToolTip="Add to Dynamic Custom Sources catalog"/>
+                            </Grid>
+
+                            <!-- Sources List Grid -->
+                            <DataGrid x:Name="CustomSourcesGrid" AutoGenerateColumns="False" CanUserAddRows="False" Background="#111827" Foreground="White" RowBackground="#0D1324" AlternatingRowBackground="#151A29" BorderThickness="1" BorderBrush="#1F2937" HeadersVisibility="Column" GridLinesVisibility="None" Padding="10">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Source Name" Binding="{Binding Name}" Width="150" IsReadOnly="True"/>
+                                    <DataGridTextColumn Header="Search URL Pattern" Binding="{Binding Url}" Width="*" IsReadOnly="True"/>
+                                    <DataGridTemplateColumn Width="80">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <Button Content="🗑 Delete" Background="#EF4444" Foreground="White" FontSize="11" Padding="4" BorderThickness="0" Click="DeleteCustomSource_Click" Tag="{Binding Name}" ToolTip="Delete this source"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- qBittorrent Configuration -->
+                    <Border Background="#0D1324" BorderBrush="#1F2937" BorderThickness="1" CornerRadius="16" Padding="22" Margin="0,0,0,15">
+                        <StackPanel>
+                            <TextBlock Text="QBITTORRENT PIPELINE" FontSize="14" FontWeight="Bold" Foreground="#10B981" Margin="0,0,0,15"/>
+                            <TextBlock Text="Detected Path:" Foreground="#64748B" Margin="0,0,0,5"/>
+                            <TextBox x:Name="QBitPathTxt" Background="#111827" Foreground="#475569" Padding="10" BorderBrush="#1F2937" FontSize="14" IsReadOnly="True" ToolTip="Automatically verified local path"/>
+                            <Grid Margin="0,12,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="10"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="10"/>
+                                    <ColumnDefinition Width="180"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="WebUI Port:" Foreground="#64748B" Margin="0,0,0,5"/>
+                                    <TextBox x:Name="QBitPortTxt" Background="#111827" Foreground="White" Padding="10" BorderBrush="#1F2937" FontSize="14" ToolTip="WebUI Local Host Port"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="2">
+                                    <TextBlock Text="Username:" Foreground="#64748B" Margin="0,0,0,5"/>
+                                    <TextBox x:Name="QBitUserTxt" Background="#111827" Foreground="White" Padding="10" BorderBrush="#1F2937" FontSize="14" ToolTip="WebUI login username"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="4">
+                                    <TextBlock Text="Password:" Foreground="#64748B" Margin="0,0,0,5"/>
+                                    <PasswordBox x:Name="QBitPassTxt" Background="#111827" Foreground="White" Padding="10" BorderBrush="#1F2937" FontSize="14" ToolTip="WebUI login password"/>
+                                </StackPanel>
+                            </Grid>
+                            <TextBlock Text="Download Directory:" Foreground="#64748B" Margin="0,12,0,5"/>
+                            <TextBox x:Name="DownloadDirTxt" Background="#111827" Foreground="White" Padding="10" BorderBrush="#1F2937" FontSize="14" ToolTip="Local disk path for offline videos"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- MAL Sync -->
+                    <Border Background="#0D1324" BorderBrush="#1F2937" BorderThickness="1" CornerRadius="16" Padding="22" Margin="0,0,0,15">
+                        <StackPanel>
+                            <TextBlock Text="MYANIMELIST TRACKING" FontSize="14" FontWeight="Bold" Foreground="#EF4444" Margin="0,0,0,15"/>
+                            <TextBlock Text="OAuth Access Token:" Foreground="#64748B" Margin="0,0,0,5"/>
+                            <TextBox x:Name="MalTokenTxt" Background="#111827" Foreground="White" Padding="10" BorderBrush="#1F2937" FontSize="14" ToolTip="OAuth Token enables progress updates on completing 90% watched ratio"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Playback Options -->
+                    <Border Background="#0D1324" BorderBrush="#1F2937" BorderThickness="1" CornerRadius="16" Padding="22" Margin="0,0,0,15">
+                        <StackPanel>
+                            <TextBlock Text="PLAYBACK OPTIMIZATIONS" FontSize="14" FontWeight="Bold" Foreground="#8B5CF6" Margin="0,0,0,15"/>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="Default Audio Preference:" Foreground="#64748B" Margin="0,0,0,5"/>
+                                    <ComboBox x:Name="AudioPrefCombo" Style="{StaticResource ThemedComboBoxStyle}" Foreground="White" FontSize="14" ToolTip="Select preference">
+                                        <ComboBoxItem Content="Subbed (Original)"/>
+                                        <ComboBoxItem Content="Dubbed (English)"/>
+                                    </ComboBox>
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Margin="15,0,0,0">
+                                    <TextBlock Text="Auto-Play on Completion:" Foreground="#64748B" Margin="0,0,0,5"/>
+                                    <CheckBox x:Name="AutoPlayCheck" Content="Enabled" Foreground="White" FontSize="14" IsChecked="True" ToolTip="Start video instantly once P2P completes"/>
+                                </StackPanel>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- diagnostics -->
+                    <Border Background="#0D1324" BorderBrush="#1F2937" BorderThickness="1" CornerRadius="16" Padding="22" Margin="0,0,0,20">
+                        <StackPanel>
+                            <TextBlock Text="SYSTEM DIAGNOSTICS" FontSize="14" FontWeight="Bold" Foreground="#F59E0B" Margin="0,0,0,15"/>
+                            <TextBlock x:Name="SystemStatusTxt" Text="Loading..." Foreground="#64748B" FontFamily="Consolas" FontSize="13" TextWrapping="Wrap" ToolTip="Diagnostic logs"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Save Config Button -->
+                    <Button Content="💾 Save All Configuration" 
+                            Style="{StaticResource PlayButtonStyle}" FontSize="16"
+                            Click="SaveSettings_Click" ToolTip="Persist settings to disk"/>
+                </StackPanel>
+            </ScrollViewer>
+            
+            <!-- ================= TAB 5: MAL Web View ================= -->
+            <Border x:Name="MalView" Grid.Row="1" Margin="40,0,40,20" CornerRadius="12" ClipToBounds="True" Background="White" Visibility="Collapsed">
+                <wv2:WebView2 x:Name="MalWebBrowser" Source="https://myanimelist.net/"/>
+            </Border>
+            
+            <!-- Live Status Console (Scrollable Debug Log) -->
+            <Border Grid.Row="2" Background="#0A0D17" BorderBrush="#111827" BorderThickness="0,1,0,0" Padding="20,12">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <Grid Margin="0,0,0,5">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="LIVE PLATFORM LOGS" FontSize="10" FontWeight="Bold" Foreground="#475569" VerticalAlignment="Center"/>
+                            <Button Content="Wipe Log" Background="Transparent" Foreground="#475569" FontSize="10" FontWeight="Bold" BorderThickness="0" Cursor="Hand" Margin="15,0,0,0" Click="ClearConsole_Click" ToolTip="Wipe all lines in the live log"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <TextBlock Text="⬇ DL: " Foreground="#10B981" FontSize="11" FontWeight="Bold"/>
+                            <TextBlock x:Name="DlSpeedTxt" Text="0 KB/s" Foreground="#10B981" FontSize="11" Width="70"/>
+                            <TextBlock Text="⬆ UL: " Foreground="#3B82F6" FontSize="11" FontWeight="Bold" Margin="10,0,0,0"/>
+                            <TextBlock x:Name="UlSpeedTxt" Text="0 KB/s" Foreground="#3B82F6" FontSize="11" Width="70"/>
+                        </StackPanel>
+                    </Grid>
+                    <ScrollViewer x:Name="ConsoleScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                        <TextBlock x:Name="StatusConsole" Text="[System] Connected. Ready." FontFamily="Consolas" Foreground="#8B5CF6" FontSize="13" TextWrapping="Wrap"/>
+                    </ScrollViewer>
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</Window>

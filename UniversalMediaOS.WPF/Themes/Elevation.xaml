@@ -1,0 +1,29 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:po="http://schemas.microsoft.com/winfx/2006/xaml/presentation/options">
+
+    <DropShadowEffect x:Key="ContentPlane" 
+                      Color="#000000" 
+                      Opacity="0.15" 
+                      BlurRadius="8" 
+                      ShadowDepth="2" 
+                      Direction="270" 
+                      po:Freeze="True" />
+
+    <DropShadowEffect x:Key="ElevatedPlane" 
+                      Color="#000000" 
+                      Opacity="0.25" 
+                      BlurRadius="16" 
+                      ShadowDepth="4" 
+                      Direction="270" 
+                      po:Freeze="True" />
+
+    <DropShadowEffect x:Key="TransientPlane" 
+                      Color="#000000" 
+                      Opacity="0.40" 
+                      BlurRadius="24" 
+                      ShadowDepth="8" 
+                      Direction="270" 
+                      po:Freeze="True" />
+
+</ResourceDictionary>

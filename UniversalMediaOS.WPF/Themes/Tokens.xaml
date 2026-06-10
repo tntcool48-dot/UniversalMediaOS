@@ -1,0 +1,38 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:po="http://schemas.microsoft.com/winfx/2006/xaml/presentation/options">
+    
+    <!-- Semantic Colors -->
+    <!-- Semi-transparent to let DWM Mica shine through -->
+    <SolidColorBrush x:Key="BgBase" Color="#800B0B0D" po:Freeze="True" />
+    <SolidColorBrush x:Key="BgSurface" Color="#B316161A" po:Freeze="True" />
+    <SolidColorBrush x:Key="AccentPrimary" Color="#6200EE" po:Freeze="True" />
+    <SolidColorBrush x:Key="TextPrimary" Color="#FFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="TextMuted" Color="#94A3B8" po:Freeze="True" />
+    <SolidColorBrush x:Key="Success" Color="#10B981" po:Freeze="True" />
+    <SolidColorBrush x:Key="Warning" Color="#F59E0B" po:Freeze="True" />
+    <SolidColorBrush x:Key="Error" Color="#EF4444" po:Freeze="True" />
+    <SolidColorBrush x:Key="HoverOverlay" Color="#1AFFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="BorderSubtle" Color="#2A2A35" po:Freeze="True" />
+    <SolidColorBrush x:Key="FocusBorder" Color="#8E4BFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="SurfaceOverlay" Color="#0CFFFFFF" po:Freeze="True" />
+    
+    <!-- 8-Point Grid System Thicknesses -->
+    <Thickness x:Key="SpaceXs">4</Thickness>
+    <Thickness x:Key="SpaceSm">8</Thickness>
+    <Thickness x:Key="SpaceMd">16</Thickness>
+    <Thickness x:Key="SpaceLg">24</Thickness>
+    <Thickness x:Key="SpaceXl">32</Thickness>
+
+    <!-- Corner Radius Tokens -->
+    <CornerRadius x:Key="RadiusSm">4</CornerRadius>
+    <CornerRadius x:Key="RadiusMd">8</CornerRadius>
+    <CornerRadius x:Key="RadiusLg">12</CornerRadius>
+    
+    <!-- Opacity Constants (Doubles) -->
+    <system:Double x:Key="OpacityDisabled" xmlns:system="clr-namespace:System;assembly=mscorlib">0.38</system:Double>
+    <system:Double x:Key="OpacityOverlay" xmlns:system="clr-namespace:System;assembly=mscorlib">0.50</system:Double>
+    <system:Double x:Key="OpacityHover" xmlns:system="clr-namespace:System;assembly=mscorlib">0.08</system:Double>
+    <system:Double x:Key="OpacityAtmosphere" xmlns:system="clr-namespace:System;assembly=mscorlib">0.03</system:Double>
+
+</ResourceDictionary>
