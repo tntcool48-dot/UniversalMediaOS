@@ -37,7 +37,7 @@ namespace UniversalMediaOS.Core.Tracking
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"AniSkip failed: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"AniSkip failed: {ex.Message}");
             }
             return null;
         }

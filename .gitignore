@@ -431,6 +431,7 @@ FodyWeavers.xsd
 # Custom Exclusions
 cache/
 *.txt
+!requirements.txt
 validation_debug.txt
 services/node.exe
 services/qbittorrent.exe

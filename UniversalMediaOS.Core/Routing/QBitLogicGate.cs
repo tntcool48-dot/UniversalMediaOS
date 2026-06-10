@@ -8,6 +8,7 @@ namespace UniversalMediaOS.Core.Routing
 {
     public class QBitLogicGate
     {
+        private static readonly HttpClient _httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
         private readonly string _qbitUrl;
         public string Cookie { get; private set; } = string.Empty;
 
@@ -18,18 +19,16 @@ namespace UniversalMediaOS.Core.Routing
 
         public async Task<bool> AuthenticateAsync(Action<string> logger = null, string username = "admin", string password = "adminadmin")
         {
-            void Log(string msg) { logger?.Invoke(msg); Console.WriteLine(msg); }
+            void Log(string msg) { logger?.Invoke(msg); System.Diagnostics.Debug.WriteLine(msg); }
             try
             {
-                using var client = new HttpClient();
-                client.Timeout = TimeSpan.FromSeconds(5);
                 var content = new FormUrlEncodedContent(new[]
                 {
                     new KeyValuePair<string, string>("username", username),
                     new KeyValuePair<string, string>("password", password)
                 });
 
-                var response = await client.PostAsync($"{_qbitUrl}/api/v2/auth/login", content);
+                var response = await _httpClient.PostAsync($"{_qbitUrl}/api/v2/auth/login", content);
                 if (response.IsSuccessStatusCode && response.Headers.TryGetValues("Set-Cookie", out var cookies))
                 {
                     foreach (var c in cookies)
@@ -64,8 +63,8 @@ namespace UniversalMediaOS.Core.Routing
 
             try
             {
-                using var client = new HttpClient();
-                client.DefaultRequestHeaders.Add("Cookie", Cookie);
+                var request = new HttpRequestMessage(HttpMethod.Post, $"{_qbitUrl}/api/v2/torrents/add");
+                request.Headers.Add("Cookie", Cookie);
 
                 var content = new MultipartFormDataContent();
                 content.Add(new StringContent(magnetLink), "urls");
@@ -75,12 +74,18 @@ namespace UniversalMediaOS.Core.Routing
                     content.Add(new StringContent(savePath), "savepath");
                 }
 
-                var response = await client.PostAsync($"{_qbitUrl}/api/v2/torrents/add", content);
-                return response.IsSuccessStatusCode;
+                request.Content = content;
+                var response = await _httpClient.SendAsync(request);
+                if (response.IsSuccessStatusCode)
+                {
+                    var body = await response.Content.ReadAsStringAsync();
+                    return body.Trim().Equals("Ok.", StringComparison.OrdinalIgnoreCase);
+                }
+                return false;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Failed to add magnet: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Failed to add magnet: {ex.Message}");
             }
             return false;
         }
@@ -90,14 +95,15 @@ namespace UniversalMediaOS.Core.Routing
             if (string.IsNullOrEmpty(Cookie)) return false;
             try
             {
-                using var client = new HttpClient();
-                client.DefaultRequestHeaders.Add("Cookie", Cookie);
+                var request = new HttpRequestMessage(HttpMethod.Post, $"{_qbitUrl}/api/v2/torrents/delete");
+                request.Headers.Add("Cookie", Cookie);
                 var content = new FormUrlEncodedContent(new[]
                 {
                     new KeyValuePair<string, string>("hashes", infoHash),
                     new KeyValuePair<string, string>("deleteFiles", "true")
                 });
-                var response = await client.PostAsync($"{_qbitUrl}/api/v2/torrents/delete", content);
+                request.Content = content;
+                var response = await _httpClient.SendAsync(request);
                 return response.IsSuccessStatusCode;
             }
             catch { return false; }
@@ -108,7 +114,7 @@ namespace UniversalMediaOS.Core.Routing
         /// </summary>
         public async Task<bool> MonitorDownloadAsync(string infoHash, Action<string> logger, int timeoutSeconds = 300)
         {
-            void Log(string msg) { logger?.Invoke(msg); Console.WriteLine(msg); }
+            void Log(string msg) { logger?.Invoke(msg); System.Diagnostics.Debug.WriteLine(msg); }
             if (string.IsNullOrEmpty(Cookie)) return false;
 
             var deadline = DateTime.UtcNow.AddSeconds(timeoutSeconds);
@@ -117,11 +123,10 @@ namespace UniversalMediaOS.Core.Routing
             {
                 try
                 {
-                    using var client = new HttpClient();
-                    client.DefaultRequestHeaders.Add("Cookie", Cookie);
-                    client.Timeout = TimeSpan.FromSeconds(10);
+                    var request = new HttpRequestMessage(HttpMethod.Get, $"{_qbitUrl}/api/v2/torrents/info?hashes={infoHash}");
+                    request.Headers.Add("Cookie", Cookie);
 
-                    var response = await client.GetAsync($"{_qbitUrl}/api/v2/torrents/info?hashes={infoHash}");
+                    var response = await _httpClient.SendAsync(request);
                     if (response.IsSuccessStatusCode)
                     {
                         var json = await response.Content.ReadAsStringAsync();
@@ -168,11 +173,10 @@ namespace UniversalMediaOS.Core.Routing
 
             try
             {
-                using var client = new HttpClient();
-                client.DefaultRequestHeaders.Add("Cookie", Cookie);
-                client.Timeout = TimeSpan.FromSeconds(10);
+                var request = new HttpRequestMessage(HttpMethod.Get, $"{_qbitUrl}/api/v2/torrents/files?hash={infoHash}");
+                request.Headers.Add("Cookie", Cookie);
 
-                var response = await client.GetAsync($"{_qbitUrl}/api/v2/torrents/files?hash={infoHash}");
+                var response = await _httpClient.SendAsync(request);
                 if (response.IsSuccessStatusCode)
                 {
                     var json = await response.Content.ReadAsStringAsync();
@@ -189,7 +193,7 @@ namespace UniversalMediaOS.Core.Routing
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Failed to get torrent files: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Failed to get torrent files: {ex.Message}");
             }
 
             return files;

@@ -31,7 +31,7 @@ namespace UniversalMediaOS.Core.Services
             string nodePath = Path.Combine(_servicesDir, "node.exe");
             if (File.Exists(nodePath)) return;
 
-            Console.WriteLine("Downloading portable Node.js...");
+            System.Diagnostics.Debug.WriteLine("Downloading portable Node.js...");
             using var client = new HttpClient();
             var nodeBytes = await client.GetByteArrayAsync("https://nodejs.org/dist/v20.11.1/win-x64/node.exe");
             await File.WriteAllBytesAsync(nodePath, nodeBytes);
@@ -51,12 +51,12 @@ namespace UniversalMediaOS.Core.Services
                 if (File.Exists(path))
                 {
                     DetectedQBitPath = path;
-                    Console.WriteLine($"qBittorrent detected at: {path}");
+                    System.Diagnostics.Debug.WriteLine($"qBittorrent detected at: {path}");
                     return;
                 }
             }
 
-            Console.WriteLine("qBittorrent not found on this system. P2P tier will rely on WebUI or OS shell handler.");
+            System.Diagnostics.Debug.WriteLine("qBittorrent not found on this system. P2P tier will rely on WebUI or OS shell handler.");
             DetectedQBitPath = null;
         }
     }

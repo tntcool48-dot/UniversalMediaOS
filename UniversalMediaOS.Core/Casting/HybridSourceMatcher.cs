@@ -37,11 +37,11 @@ namespace UniversalMediaOS.Core.Casting
 
                 if (cached.Count > 0)
                 {
-                    Console.WriteLine($"[Casting] Cache HIT for mediaId {mediaId} — loaded {cached.Count} VAs.");
+                    System.Diagnostics.Debug.WriteLine($"[Casting] Cache HIT for mediaId {mediaId} — loaded {cached.Count} VAs.");
                     return cached;
                 }
 
-                Console.WriteLine($"[Casting] Cache MISS for mediaId {mediaId} — fetching from AniList GraphQL...");
+                System.Diagnostics.Debug.WriteLine($"[Casting] Cache MISS for mediaId {mediaId} — fetching from AniList GraphQL...");
                 
                 using var client = new HttpClient();
                 client.DefaultRequestHeaders.Add("User-Agent", UserAgent);
@@ -126,14 +126,14 @@ namespace UniversalMediaOS.Core.Casting
                         if (castList.Count > 0)
                         {
                             await _db.SaveChangesAsync();
-                            Console.WriteLine($"[Casting] Saved {castList.Count} VAs to SQLite db.");
+                            System.Diagnostics.Debug.WriteLine($"[Casting] Saved {castList.Count} VAs to SQLite db.");
                         }
                     }
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Casting service error: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Casting service error: {ex.Message}");
             }
 
             // Stub fallback if network down

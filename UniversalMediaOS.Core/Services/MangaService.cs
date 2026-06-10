@@ -10,7 +10,6 @@ namespace UniversalMediaOS.Core.Services
     {
         public string Id { get; set; } = string.Empty;
         public string Title { get; set; } = string.Empty;
-        public string Description { get; set; } = string.Empty;
         public string CoverUrl { get; set; } = string.Empty;
     }
 
@@ -69,19 +68,6 @@ namespace UniversalMediaOS.Core.Services
                             }
                         }
 
-                        string desc = "";
-                        if (attrs.TryGetProperty("description", out var descObj))
-                        {
-                            if (descObj.TryGetProperty("en", out var enProp)) desc = enProp.GetString() ?? "";
-                            else
-                            {
-                                foreach (var prop in descObj.EnumerateObject())
-                                {
-                                    desc = prop.Value.GetString() ?? "";
-                                    break;
-                                }
-                            }
-                        }
 
                         // Parse cover art
                         string coverFileName = "";
@@ -109,7 +95,6 @@ namespace UniversalMediaOS.Core.Services
                         {
                             Id = id,
                             Title = title,
-                            Description = desc,
                             CoverUrl = coverUrl
                         });
                     }
@@ -117,7 +102,7 @@ namespace UniversalMediaOS.Core.Services
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Manga Search Error: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Manga Search Error: {ex.Message}");
             }
 
             return results;
@@ -175,7 +160,7 @@ namespace UniversalMediaOS.Core.Services
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Manga Chapters Error: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Manga Chapters Error: {ex.Message}");
             }
 
             return chapters;
@@ -220,7 +205,7 @@ namespace UniversalMediaOS.Core.Services
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Manga Pages Error: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Manga Pages Error: {ex.Message}");
             }
 
             return pages;

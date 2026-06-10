@@ -13,6 +13,7 @@ namespace UniversalMediaOS.Core.Routing
     {
         public SourceTier Tier { get; set; }
         public string UrlOrPath { get; set; } = string.Empty;
+        public string EmbedOrigin { get; set; } = string.Empty;
     }
 
     public enum SourceTier

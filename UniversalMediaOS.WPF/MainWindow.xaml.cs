@@ -38,12 +38,11 @@ namespace UniversalMediaOS.WPF
         {
             InitializeComponent();
             _searchService = new FuzzyShieldSearch();
-            _routingEngine = new UniversalMediaOS.Core.Routing.TripleNetHandoff();
-            _mangaService = new MangaService();
-            _epubReader = new EpubReaderService();
-
             string configPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "config.json");
             _swapper = new DomainHotSwapper(configPath);
+            _routingEngine = new UniversalMediaOS.Core.Routing.TripleNetHandoff(_swapper);
+            _mangaService = new MangaService();
+            _epubReader = new EpubReaderService();
 
             Loaded += MainWindow_Loaded;
             Closed += MainWindow_Closed;
@@ -182,8 +181,14 @@ namespace UniversalMediaOS.WPF
             string consumetPath = Path.Combine(baseDir, "services", "consumet", "index.js");
             string qbitDetected = DependencyBootstrapper.DetectedQBitPath;
 
+            bool isScraperActive = false;
+            try { 
+                using var client = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(1) };
+                isScraperActive = client.GetAsync("http://localhost:3000/").Result.IsSuccessStatusCode;
+            } catch { }
+
             string status = $"Node.js Portable: {(File.Exists(nodePath) ? "✅ Active" : "❌ Missing")}\n" +
-                           $"Local Scraper Server: {(File.Exists(consumetPath) ? "✅ Active" : "❌ Offline")}\n" +
+                           $"Local Scraper Server: {(isScraperActive ? "✅ Active" : "❌ Offline")}\n" +
                            $"qBittorrent client: {((!string.IsNullOrEmpty(qbitDetected) && File.Exists(qbitDetected)) ? $"✅ Detected at {qbitDetected}" : "⚠ WebUI fallback mode")}\n" +
                            $"SQLite tracking database: {(File.Exists(Path.Combine(baseDir, "media_os.db")) ? "✅ Connected" : "⚠ Auto-recreates on launch")}\n" +
                            $"Media Download Directory: {DownloadDirTxt.Text}\n" +
@@ -196,6 +201,8 @@ namespace UniversalMediaOS.WPF
         {
             try
             {
+                if (!int.TryParse(QBitPortTxt.Text.Trim(), out _)) throw new Exception("QBittorrent Port must be a valid number.");
+
                 // qBittorrent Config
                 _swapper.SetSetting("QBitPort", QBitPortTxt.Text.Trim());
                 _swapper.SetSetting("QBitUsername", QBitUserTxt.Text.Trim());
@@ -209,8 +216,16 @@ namespace UniversalMediaOS.WPF
                 _swapper.SetSetting("DefaultAudioPref", AudioPrefCombo.SelectedIndex == 1 ? "Dub" : "Sub");
                 _swapper.SetSetting("AutoPlayAfterDownload", AutoPlayCheck.IsChecked == true ? "true" : "false");
 
-                MessageBox.Show("All configuration settings have been successfully applied and rewritten to config.json!", "Configuration Saved", MessageBoxButton.OK, MessageBoxImage.Information);
-                Log("Configuration saved successfully.");
+                bool saved = _swapper.SaveConfig();
+                if (saved)
+                {
+                    MessageBox.Show("All configuration settings have been successfully applied and rewritten to config.json!", "Configuration Saved", MessageBoxButton.OK, MessageBoxImage.Information);
+                    Log("Configuration saved successfully.");
+                }
+                else
+                {
+                    throw new Exception("Failed to write to config.json.");
+                }
                 RefreshDiagnosticsText();
             }
             catch (Exception ex)
@@ -433,7 +448,7 @@ namespace UniversalMediaOS.WPF
 
                 // Extract clean filename without extension for display
                 string fileName = Path.GetFileNameWithoutExtension(path);
-                player.InitializeMedia(0, fileName, "1", "");
+                player.InitializeMedia(0, 0, fileName, "1", "");
                 player.Show();
                 player.PlayLocalOrHttp(path);
             }
@@ -468,7 +483,7 @@ namespace UniversalMediaOS.WPF
                 if (string.IsNullOrWhiteSpace(query))
                 {
                     WelcomeText.Text = "Trending Today";
-                    try { SearchResultsList.ItemsSource = await _searchService.SearchAnimeAsync(""); } catch { }
+                    try { SearchResultsList.ItemsSource = await _searchService.SearchAnimeAsync(""); } catch (Exception ex) { Log($"Failed to load trending: {ex.Message}"); }
                     return;
                 }
 
@@ -538,7 +553,7 @@ namespace UniversalMediaOS.WPF
 
                 // Fetch episode input
                 string episodeNum = "1";
-                var parentPanel = btn.Parent as StackPanel;
+                var parentPanel = (btn.Parent as Grid)?.Parent as StackPanel;
                 
                 // Card panel might nest differently
                 TextBox? epBox = null;
@@ -576,8 +591,10 @@ namespace UniversalMediaOS.WPF
                 Log($"▶ Resolving: {target.OfficialTitle} Ep {episodeNum}{audioPref}");
                 UniversalMediaOS.Core.Routing.PlaybackSource? source = null;
 
+                var torrents = await _routingEngine.GetTorrentsAsync(target.OfficialTitle + audioPref, episodeNum, logger);
+
                 // Load switchboard selection dialog
-                var selectionWindow = new SourceSelectionWindow(null);
+                var selectionWindow = new SourceSelectionWindow(torrents);
                 selectionWindow.Owner = this;
                 if (selectionWindow.ShowDialog() == true)
                 {
@@ -622,7 +639,7 @@ namespace UniversalMediaOS.WPF
                     player.Owner = this;
                     
                     // Wire Casting cache overlay, AniSkip and Resume states!
-                    player.InitializeMedia(mediaId, target.OfficialTitle, episodeNum, audioPref);
+                    player.InitializeMedia(mediaId, target.IdMal, target.OfficialTitle, episodeNum, audioPref);
 
                     player.Show();
 
@@ -630,7 +647,7 @@ namespace UniversalMediaOS.WPF
                     {
                         if (File.Exists(source.UrlOrPath))
                         {
-                            player.PlayLocalOrHttp(source.UrlOrPath);
+                            player.PlayLocalOrHttp(source.UrlOrPath, source.EmbedOrigin);
                         }
                         else
                         {
@@ -641,7 +658,7 @@ namespace UniversalMediaOS.WPF
                     else if (source.Tier == UniversalMediaOS.Core.Routing.SourceTier.Tier2_ConsumetHttp)
                     {
                         Log("Opening VLC engine for HTTP m3u8 stream...");
-                        player.PlayLocalOrHttp(source.UrlOrPath);
+                        player.PlayLocalOrHttp(source.UrlOrPath, source.EmbedOrigin);
                     }
                     else if (source.Tier == UniversalMediaOS.Core.Routing.SourceTier.Tier3_WebViewEmbed)
                     {
@@ -843,7 +860,14 @@ namespace UniversalMediaOS.WPF
         {
             try
             {
-                _epubReader.CleanCache();
+                if (_currentEpubBook != null && _epubReader != null)
+                {
+                    _epubReader.CleanCache(Path.GetDirectoryName(_currentEpubBook.ChapterFiles.FirstOrDefault()));
+                }
+                else
+                {
+                    _epubReader.CleanCache();
+                }
                 Log("Local EPUB zipped chapter caches wiped clean.");
                 MessageBox.Show("Local EPUB reader directory caches wiped clean.", "Cache Cleared", MessageBoxButton.OK, MessageBoxImage.Information);
             }
@@ -859,6 +883,10 @@ namespace UniversalMediaOS.WPF
 
         private async void PlayHero_Click(object sender, RoutedEventArgs e)
         {
+            var btn = sender as Button;
+            if (btn != null) { btn.IsEnabled = false; btn.Content = "Loading..."; }
+            try
+            {
             // Spotlights Frieren Ep 1
             string title = "Frieren: Beyond Journey's End";
             string episode = "1";
@@ -879,7 +907,7 @@ namespace UniversalMediaOS.WPF
                 {
                     var player = new PlaybackTheater();
                     player.Owner = this;
-                    player.InitializeMedia(mediaId, title, episode, audioPref);
+                    player.InitializeMedia(mediaId, 0, title, episode, audioPref);
                     player.Show();
                     
                     if (source.Tier == UniversalMediaOS.Core.Routing.SourceTier.Tier3_WebViewEmbed)
@@ -888,7 +916,7 @@ namespace UniversalMediaOS.WPF
                     }
                     else
                     {
-                        player.PlayLocalOrHttp(source.UrlOrPath);
+                        player.PlayLocalOrHttp(source.UrlOrPath, source.EmbedOrigin);
                     }
                 }
                 else
@@ -897,6 +925,7 @@ namespace UniversalMediaOS.WPF
                 }
             }
             catch (Exception ex) { Log($"Spotlight Play failed: {ex.Message}"); }
+            finally { if (btn != null) { btn.IsEnabled = true; btn.Content = "Watch Hero"; } }
         }
 
         private void DownloadSeason_Click(object sender, RoutedEventArgs e)
@@ -926,8 +955,8 @@ namespace UniversalMediaOS.WPF
                 {
                     try
                     {
-                        var downloader = new UniversalMediaOS.Core.Archiving.SeasonDownloader();
-                        await downloader.DownloadSeasonAsync(
+                        var downloader = new UniversalMediaOS.Core.Archiving.SeasonDownloader(_swapper);
+                        bool success = await downloader.DownloadSeasonAsync(
                             target.OfficialTitle, 
                             msg => Log(msg), 
                             pct => {
@@ -938,7 +967,7 @@ namespace UniversalMediaOS.WPF
                         // Re-enable button on UI thread when done
                         Dispatcher.Invoke(() =>
                         {
-                            btn.Content = "Done ✔";
+                            btn.Content = success ? "Done ✔" : "Failed";
                             btn.IsEnabled = true;
                         });
                     }

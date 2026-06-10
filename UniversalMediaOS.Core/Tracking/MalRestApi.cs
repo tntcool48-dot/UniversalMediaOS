@@ -28,7 +28,7 @@ namespace UniversalMediaOS.Core.Tracking
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"MAL Update failed: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"MAL Update failed: {ex.Message}");
                 return false;
             }
         }

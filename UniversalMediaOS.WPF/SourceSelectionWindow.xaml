@@ -11,9 +11,10 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
-        
-        <TextBlock Text="Master Routing Switchboard" FontSize="26" FontWeight="Black" Foreground="#F8FAFC" Margin="0,0,0,10"/>
-        <TextBlock Text="Select the architecture tier you want to use for this request." FontSize="14" Foreground="#94A3B8" Margin="0,0,0,20"/>
+        <StackPanel Grid.Row="0" Margin="0,0,0,10">
+            <TextBlock Text="Master Routing Switchboard" FontSize="26" FontWeight="Black" Foreground="#F8FAFC" Margin="0,0,0,10"/>
+            <TextBlock Text="Select the architecture tier you want to use for this request." FontSize="14" Foreground="#94A3B8" Margin="0,0,0,20"/>
+        </StackPanel>
         
         <!-- Tier 1: Nyaa P2P -->
         <Border Grid.Row="1" Background="#1E293B" CornerRadius="12" Padding="15" Margin="0,0,0,15">

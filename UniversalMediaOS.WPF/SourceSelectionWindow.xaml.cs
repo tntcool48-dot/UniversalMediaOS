@@ -42,6 +42,10 @@ namespace UniversalMediaOS.WPF
                 SelectedTier = SelectedSourceTier.Tier1_Torrent;
                 DialogResult = true;
             }
+            else
+            {
+                MessageBox.Show("Please select a torrent first.", "Selection Required", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
         }
 
         private void ConsumetButton_Click(object sender, RoutedEventArgs e)
