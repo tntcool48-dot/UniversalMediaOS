@@ -37,11 +37,11 @@ namespace UniversalMediaOS.Core.Casting
 
                 if (cached.Count > 0)
                 {
-                    Console.WriteLine($"[Casting] Cache HIT for mediaId {mediaId} — loaded {cached.Count} VAs.");
+                    System.Diagnostics.Debug.WriteLine($"[Casting] Cache HIT for mediaId {mediaId} — loaded {cached.Count} VAs.");
                     return cached;
                 }
 
-                Console.WriteLine($"[Casting] Cache MISS for mediaId {mediaId} — fetching from AniList GraphQL...");
+                System.Diagnostics.Debug.WriteLine($"[Casting] Cache MISS for mediaId {mediaId} — fetching from AniList GraphQL...");
                 
                 using var client = new HttpClient();
                 client.DefaultRequestHeaders.Add("User-Agent", UserAgent);
@@ -126,30 +126,17 @@ namespace UniversalMediaOS.Core.Casting
                         if (castList.Count > 0)
                         {
                             await _db.SaveChangesAsync();
-                            Console.WriteLine($"[Casting] Saved {castList.Count} VAs to SQLite db.");
+                            System.Diagnostics.Debug.WriteLine($"[Casting] Saved {castList.Count} VAs to SQLite db.");
                         }
                     }
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Casting service error: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Casting service error: {ex.Message}");
             }
 
-            // Stub fallback if network down
-            if (castList.Count == 0)
-            {
-                var stub = new DubCastHash
-                {
-                    MediaId = mediaId,
-                    ShowTitle = string.IsNullOrEmpty(showTitle) ? "Cowboy Bebop" : showTitle,
-                    CharacterName = "Spike Spiegel",
-                    CharacterImageUrl = "https://images.unsplash.com/photo-1541562232579-512a21360020?w=100",
-                    VoiceActorName = "Steve Blum",
-                    VoiceActorImageUrl = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100"
-                };
-                castList.Add(stub);
-            }
+
 
             return castList;
         }

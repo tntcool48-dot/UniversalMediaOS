@@ -17,7 +17,7 @@ namespace UniversalMediaOS.Core.Routing
 
         public async Task<List<TorrentResult>> SearchAsync(string query, Action<string> logger = null)
         {
-            void Log(string msg) { logger?.Invoke(msg); Console.WriteLine(msg); }
+            void Log(string msg) { logger?.Invoke(msg); System.Diagnostics.Debug.WriteLine(msg); }
             var results = new List<TorrentResult>();
 
             try 
@@ -31,9 +31,13 @@ namespace UniversalMediaOS.Core.Routing
                 }
                 Log("> [Tier 1] Nyaa returned 0 results.");
             }
+            catch (TaskCanceledException ex)
+            {
+                Log($"> [Tier 1] Nyaa search timed out: {ex.Message}");
+            }
             catch (Exception ex)
             {
-                Log($"> [Tier 1] Nyaa search failed or timed out: {ex.Message}");
+                Log($"> [Tier 1] Nyaa search failed: {ex.Message}");
             }
 
             try 
@@ -49,9 +53,13 @@ namespace UniversalMediaOS.Core.Routing
                     Log("> [Tier 1] AnimeTosho returned 0 results.");
                 }
             }
+            catch (TaskCanceledException ex)
+            {
+                Log($"> [Tier 1] AnimeTosho search timed out: {ex.Message}");
+            }
             catch (Exception ex)
             {
-                Log($"> [Tier 1] AnimeTosho search failed or timed out: {ex.Message}");
+                Log($"> [Tier 1] AnimeTosho search failed: {ex.Message}");
             }
 
             return results;
@@ -100,6 +108,29 @@ namespace UniversalMediaOS.Core.Routing
                 {
                     var magnetLink = item.Links.FirstOrDefault(l => l.Uri.ToString().StartsWith("magnet:"));
                     if (magnetLink != null) magnet = magnetLink.Uri.ToString();
+
+                    // Parse seeders from summary text (e.g. "Seeders: 15")
+                    if (item.Summary != null && !string.IsNullOrEmpty(item.Summary.Text))
+                    {
+                        var match = System.Text.RegularExpressions.Regex.Match(item.Summary.Text, @"Seeders:\s*(\d+)");
+                        if (match.Success)
+                        {
+                            int.TryParse(match.Groups[1].Value, out seeders);
+                        }
+                    }
+                    
+                    // Fallback to torznab seeders if available
+                    foreach (var ext in item.ElementExtensions)
+                    {
+                        if (ext.OuterName == "attr")
+                        {
+                            var el = ext.GetObject<XElement>();
+                            if (el.Attribute("name")?.Value == "seeders")
+                            {
+                                int.TryParse(el.Attribute("value")?.Value, out seeders);
+                            }
+                        }
+                    }
                 }
 
                 results.Add(new TorrentResult 
@@ -122,6 +153,5 @@ namespace UniversalMediaOS.Core.Routing
         public string InfoHash { get; set; } = string.Empty;
         public int Seeders { get; set; }
         public string Source { get; set; } = string.Empty;
-        public string? DownloadedFilePath { get; set; }
     }
 }

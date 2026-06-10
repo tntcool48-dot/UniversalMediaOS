@@ -1,8 +1,10 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Text.Json;
 using System.Collections.Generic;
+using System.Security.Cryptography;
 
 namespace UniversalMediaOS.Core.Configuration
 {
@@ -48,69 +50,63 @@ namespace UniversalMediaOS.Core.Configuration
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Failed to load config: {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine($"Failed to load config: {ex.Message}");
                     _domainMap = BuildDefaults();
                 }
             }
         }
 
-        public void SaveConfig()
+        public bool SaveConfig()
         {
             try
             {
                 string json = JsonSerializer.Serialize(_domainMap, new JsonSerializerOptions { WriteIndented = true });
                 File.WriteAllText(_configPath, json);
+                return true;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Failed to save config: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Failed to save config: {ex.Message}");
+                return false;
             }
-        }
-
-        public string GetDomain(string key)
-        {
-            return _domainMap.TryGetValue(key, out var val) ? val : string.Empty;
-        }
-
-        public void UpdateDomain(string providerName, string newDomain)
-        {
-            if (_domainMap.ContainsKey(providerName))
-            {
-                _domainMap[providerName] = newDomain;
-            }
-            else
-            {
-                _domainMap.Add(providerName, newDomain);
-            }
-            SaveConfig();
-        }
-
-        /// <summary>
-        /// Returns provider domain entries based on dynamic CustomSources list.
-        /// Keeps backward compatibility for existing callers.
-        /// </summary>
-        public Dictionary<string, string> GetAllDomains()
-        {
-            var dict = new Dictionary<string, string>();
-            dict["ConsumetApiBase"] = GetSetting("ConsumetApiBase");
-            dict["PythonScraperBase"] = GetSetting("PythonScraperBase");
-
-            var sources = GetCustomSources();
-            foreach (var src in sources)
-            {
-                dict[src.Name + "Base"] = src.Url;
-            }
-
-            return dict;
         }
 
         public string GetSetting(string key)
         {
-            return _domainMap.TryGetValue(key, out var val) ? val : string.Empty;
+            if (_domainMap.TryGetValue(key, out var val))
+            {
+                if (key == "QBitPassword" || key == "MalOAuthToken")
+                {
+                    if (string.IsNullOrEmpty(val) || val == "adminadmin") return val;
+                    try
+                    {
+                        var decrypted = ProtectedData.Unprotect(Convert.FromBase64String(val), null, DataProtectionScope.CurrentUser);
+                        return Encoding.UTF8.GetString(decrypted);
+                    }
+                    catch
+                    {
+                        return string.Empty;
+                    }
+                }
+                return val;
+            }
+            return string.Empty;
         }
 
         public void SetSetting(string key, string value)
         {
+            if (key == "QBitPassword" || key == "MalOAuthToken")
+            {
+                if (!string.IsNullOrEmpty(value) && value != "adminadmin")
+                {
+                    try
+                    {
+                        var encrypted = ProtectedData.Protect(Encoding.UTF8.GetBytes(value), null, DataProtectionScope.CurrentUser);
+                        value = Convert.ToBase64String(encrypted);
+                    }
+                    catch { }
+                }
+            }
             _domainMap[key] = value;
             SaveConfig();
         }
@@ -148,17 +144,16 @@ namespace UniversalMediaOS.Core.Configuration
         {
             var defaults = new Dictionary<string, string>
             {
-                { "ConsumetApiBase", "http://localhost:3000" },
                 { "PythonScraperBase", "http://localhost:8000" },
                 
                 // Serialized dynamic CustomSources
                 { "CustomSources", "[{\"Name\":\"GogoAnime\",\"Url\":\"https://gogoanime3.co/search.html?keyword={query}\"},{\"Name\":\"AnimePahe\",\"Url\":\"https://animepahe.ru/anime/{query}\"},{\"Name\":\"Zoro\",\"Url\":\"https://hianime.to/search?keyword={query}\"}]" },
 
                 // qBittorrent settings
+                { "QBitHost", "localhost" },
                 { "QBitPort", "8080" },
                 { "QBitUsername", "admin" },
                 { "QBitPassword", "adminadmin" },
-                { "QBitPath", "" },
 
                 // MAL integration
                 { "MalOAuthToken", "" },

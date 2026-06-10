@@ -67,7 +67,7 @@ namespace UniversalMediaOS.Core.Services
                         $"At least {MinAvailableRamMB:F0} MB required.");
                 }
 
-                string statusMsg = $"RAM: {availableGB:F1} GB available / CPU: OK";
+                string statusMsg = $"RAM: {availableGB:F1} GB available";
                 return (true, statusMsg);
             }
             catch (Exception ex)

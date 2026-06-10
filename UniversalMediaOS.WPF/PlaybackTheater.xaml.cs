@@ -8,7 +8,6 @@ using System.Windows.Controls;
 using LibVLCSharp.Shared;
 using UniversalMediaOS.Core.Casting;
 using UniversalMediaOS.Core.Data;
-using UniversalMediaOS.Core.Social;
 using UniversalMediaOS.Core.Tracking;
 using UniversalMediaOS.Core.Configuration;
 
@@ -26,6 +25,7 @@ namespace UniversalMediaOS.WPF
 
         // Playback context tracking
         private int _mediaId;
+        private int _idMal;
         private string _showTitle = string.Empty;
         private string _episodeNo = "1";
         private string _audioPref = "";
@@ -44,10 +44,6 @@ namespace UniversalMediaOS.WPF
 
         // MAL progress sync
         private bool _malSynced = false;
-
-        // Watch Party Sync
-        private WatchPartySync? _partySync;
-        private bool _isRemoteCommand = false;
 
         public PlaybackTheater()
         {
@@ -77,9 +73,10 @@ namespace UniversalMediaOS.WPF
             Closed += PlaybackTheater_Closed;
         }
 
-        public async void InitializeMedia(int mediaId, string showTitle, string episodeNo, string audioPref)
+        public async Task InitializeMediaAsync(int mediaId, int idMal, string showTitle, string episodeNo, string audioPref)
         {
             _mediaId = mediaId;
+            _idMal = idMal;
             _showTitle = showTitle;
             _episodeNo = episodeNo;
             _audioPref = audioPref;
@@ -88,7 +85,7 @@ namespace UniversalMediaOS.WPF
             try
             {
                 var skipService = new AniSkipIntegration();
-                var skipTimes = await skipService.GetSkipTimesAsync(mediaId, int.TryParse(episodeNo, out int ep) ? ep : 1);
+                var skipTimes = await skipService.GetSkipTimesAsync(idMal, int.TryParse(episodeNo, out int ep) ? ep : 1);
                 if (skipTimes != null)
                 {
                     if (skipTimes.Intro != null)
@@ -101,12 +98,12 @@ namespace UniversalMediaOS.WPF
                         _outroStart = skipTimes.Outro.Start * 1000;
                         _outroEnd = skipTimes.Outro.End * 1000;
                     }
-                    Console.WriteLine($"[AniSkip] Loaded OP: {_introStart/1000}s - {_introEnd/1000}s | ED: {_outroStart/1000}s - {_outroEnd/1000}s");
+                    System.Diagnostics.Debug.WriteLine($"[AniSkip] Loaded OP: {_introStart/1000}s - {_introEnd/1000}s | ED: {_outroStart/1000}s - {_outroEnd/1000}s");
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[AniSkip] Fetch failed: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"[AniSkip] Fetch failed: {ex.Message}");
             }
 
             // Warm up Casting cache in background
@@ -118,25 +115,21 @@ namespace UniversalMediaOS.WPF
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[Casting] Cache warm up failed: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"[Casting] Cache warm up failed: {ex.Message}");
             }
         }
 
         private void PlaybackTheater_Closed(object? sender, EventArgs e)
         {
+            _progressTimer.Stop();
+            _malTimer.Stop();
+
             // Save final resume timestamp
             SavePlaybackPosition(force: true);
 
             _mediaPlayer.Stop();
             _mediaPlayer.Dispose();
             _libVLC.Dispose();
-            _progressTimer.Stop();
-            _malTimer.Stop();
-
-            if (_partySync != null)
-            {
-                _partySync = null;
-            }
         }
 
         private async System.Threading.Tasks.Task EnsureWebViewAsync()
@@ -148,7 +141,7 @@ namespace UniversalMediaOS.WPF
             }
         }
 
-        public void PlayLocalOrHttp(string url)
+        public void PlayLocalOrHttp(string url, string referer = null)
         {
             _mediaUrlOrPath = url;
             WebViewPlayer.Visibility = Visibility.Hidden;
@@ -158,8 +151,14 @@ namespace UniversalMediaOS.WPF
             bool isLocal = File.Exists(url);
             var mediaType = isLocal ? FromType.FromPath : FromType.FromLocation;
             
-            _mediaPlayer.Play(new Media(_libVLC, url, mediaType));
-            Console.WriteLine($"[VLC] PlayLocalOrHttp. isLocal={isLocal} | path={url}");
+            var media = new Media(_libVLC, url, mediaType);
+            if (!isLocal && !string.IsNullOrEmpty(referer))
+            {
+                media.AddOption($":http-referrer={referer}");
+            }
+            
+            _mediaPlayer.Play(media);
+            System.Diagnostics.Debug.WriteLine($"[VLC] PlayLocalOrHttp. isLocal={isLocal} | path={url} | referer={referer}");
         }
 
         public async System.Threading.Tasks.Task PlayEmbedAsync(string embedUrl)
@@ -182,7 +181,7 @@ namespace UniversalMediaOS.WPF
             if (_hasPromptedResume || _mediaPlayer.Length <= 0) return;
             _hasPromptedResume = true;
 
-            Dispatcher.Invoke(() =>
+            Dispatcher.BeginInvoke(() =>
             {
                 try
                 {
@@ -201,13 +200,13 @@ namespace UniversalMediaOS.WPF
                         if (result == MessageBoxResult.Yes)
                         {
                             _mediaPlayer.Time = (long)(savedSecs * 1000);
-                            Console.WriteLine($"[Auto-Resume] Restored position to {savedSecs}s.");
+                            System.Diagnostics.Debug.WriteLine($"[Auto-Resume] Restored position to {savedSecs}s.");
                         }
                     }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[Auto-Resume] Error prompting: {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine($"[Auto-Resume] Error prompting: {ex.Message}");
                 }
             });
         }
@@ -230,7 +229,7 @@ namespace UniversalMediaOS.WPF
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[Auto-Resume] Save error: {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine($"[Auto-Resume] Save error: {ex.Message}");
                 }
             }
         }
@@ -244,12 +243,12 @@ namespace UniversalMediaOS.WPF
                 PromptAndResumePlayback();
             }
 
-            Dispatcher.Invoke(() =>
+            Dispatcher.BeginInvoke(() =>
             {
                 // AniSkip OP / ED Trigger Logic
                 long time = e.Time;
-                bool inIntro = (_introStart > 0 && _introEnd > 0 && time >= _introStart && time <= _introEnd);
-                bool inOutro = (_outroStart > 0 && _outroEnd > 0 && time >= _outroStart && time <= _outroEnd);
+                bool inIntro = (_introStart >= 0 && _introEnd > 0 && time >= _introStart && time <= _introEnd);
+                bool inOutro = (_outroStart >= 0 && _outroEnd > 0 && time >= _outroStart && time <= _outroEnd);
 
                 if (inIntro || inOutro)
                 {
@@ -267,38 +266,35 @@ namespace UniversalMediaOS.WPF
 
         private void MediaPlayer_EndReached(object? sender, EventArgs e)
         {
-            // Clear resume state on 100% complete
-            try
+            Dispatcher.BeginInvoke(() =>
             {
-                using var db = new DatabaseContext();
-                db.SaveResumeState(_mediaId.ToString(), _episodeNo, 0);
-            }
-            catch { }
+                // Clear resume state on 100% complete
+                try
+                {
+                    using var db = new DatabaseContext();
+                    db.SaveResumeState(_mediaId.ToString(), _episodeNo, 0);
+                }
+                catch { }
 
-            Dispatcher.Invoke(() => Close());
+                Close();
+            });
         }
 
         private void MediaPlayer_Paused(object? sender, EventArgs e)
         {
             // Immediate UI adjustments on the UI thread
-            Dispatcher.Invoke(() =>
+            Dispatcher.BeginInvoke(() =>
             {
                 SidebarOverlay.Visibility = Visibility.Visible;
                 PlayPauseBtn.Content = "▶";
             });
 
-            // Perform database and Watch Party network actions in background task
+            // Perform database network actions in background task
             int mediaId = _mediaId;
             string showTitle = _showTitle;
-            bool shouldSyncParty = (_partySync != null && !_isRemoteCommand);
 
             System.Threading.Tasks.Task.Run(async () =>
             {
-                if (shouldSyncParty && _partySync != null)
-                {
-                    try { await _partySync.SendPlayPauseAsync(false); } catch { }
-                }
-
                 try
                 {
                     using var db = new DatabaseContext();
@@ -306,14 +302,14 @@ namespace UniversalMediaOS.WPF
                     var cast = await matcher.FetchAndCacheCastAsync(mediaId, showTitle);
                     
                     // Dispatch casting list back to the UI thread
-                    Dispatcher.Invoke(() =>
+                    Dispatcher.BeginInvoke(() =>
                     {
                         CharactersList.ItemsSource = cast;
                     });
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[Casting Overlay] Error populating cast: {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine($"[Casting Overlay] Error populating cast: {ex.Message}");
                 }
             });
         }
@@ -321,20 +317,11 @@ namespace UniversalMediaOS.WPF
         private void MediaPlayer_Playing(object? sender, EventArgs e)
         {
             // Immediate UI adjustments on the UI thread
-            Dispatcher.Invoke(() =>
+            Dispatcher.BeginInvoke(() =>
             {
                 SidebarOverlay.Visibility = Visibility.Collapsed;
                 PlayPauseBtn.Content = "⏸";
             });
-
-            // Signal Watch Party play state in background task
-            if (_partySync != null && !_isRemoteCommand)
-            {
-                System.Threading.Tasks.Task.Run(async () =>
-                {
-                    try { await _partySync.SendPlayPauseAsync(true); } catch { }
-                });
-            }
         }
 
         private void ProgressTimer_Tick(object? sender, EventArgs e)
@@ -356,25 +343,24 @@ namespace UniversalMediaOS.WPF
             double ratio = (double)_mediaPlayer.Time / _mediaPlayer.Length;
             if (ratio >= 0.90) // 90% completion
             {
-                _malSynced = true;
                 _malTimer.Stop();
 
-                var swapper = new DomainHotSwapper(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "config.json"));
-                string malToken = swapper.GetSetting("MalOAuthToken");
-
-                if (!string.IsNullOrEmpty(malToken))
+                try
                 {
-                    Console.WriteLine($"[MAL Sync] 90% watched threshold hit. Triggering progress sync...");
-                    try
+                    var token = new UniversalMediaOS.Core.Configuration.DomainHotSwapper(System.IO.Path.Combine(System.AppDomain.CurrentDomain.BaseDirectory, "config.json")).GetSetting("MalOAuthToken");
+                    if (!string.IsNullOrEmpty(token) && _idMal > 0)
                     {
-                        var mal = new MalRestApi(malToken);
-                        bool ok = await mal.UpdateProgressAsync(_mediaId, int.TryParse(_episodeNo, out int ep) ? ep : 1);
-                        Console.WriteLine(ok ? "[MAL Sync] Success!" : "[MAL Sync] Update failed (unauthorized token).");
+                        var mal = new UniversalMediaOS.Core.Tracking.MalRestApi(token);
+                        bool ok = await mal.UpdateProgressAsync(_idMal, int.TryParse(_episodeNo, out int ep) ? ep : 1);
+                        if (ok)
+                        {
+                            _malSynced = true;
+                        }
                     }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"[MAL Sync] Error: {ex.Message}");
-                    }
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[MAL Sync] Error: {ex.Message}");
                 }
             }
         }
@@ -385,11 +371,11 @@ namespace UniversalMediaOS.WPF
             long seekTime = 0;
             long currentTime = _mediaPlayer.Time;
 
-            if (_introStart > 0 && currentTime >= _introStart && currentTime <= _introEnd)
+            if (_introStart >= 0 && currentTime >= _introStart && currentTime <= _introEnd)
             {
                 seekTime = (long)_introEnd;
             }
-            else if (_outroStart > 0 && currentTime >= _outroStart && currentTime <= _outroEnd)
+            else if (_outroStart >= 0 && currentTime >= _outroStart && currentTime <= _outroEnd)
             {
                 seekTime = (long)_outroEnd;
             }
@@ -398,13 +384,7 @@ namespace UniversalMediaOS.WPF
             {
                 _mediaPlayer.Time = seekTime;
                 AniSkipOverlay.Visibility = Visibility.Collapsed;
-                Console.WriteLine($"[AniSkip] Skipped segment to {seekTime/1000}s.");
-                
-                // Broadcast party seek
-                if (_partySync != null)
-                {
-                    _partySync.SendSeekAsync(seekTime);
-                }
+                System.Diagnostics.Debug.WriteLine($"[AniSkip] Skipped segment to {seekTime/1000}s.");
             }
         }
 
@@ -430,17 +410,24 @@ namespace UniversalMediaOS.WPF
             long seekTime = (long)TimeSlider.Value;
             _mediaPlayer.Time = seekTime;
             _isDraggingSlider = false;
+        }
 
-            if (_partySync != null)
+        private void TimeSlider_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            if (!_isDraggingSlider)
             {
-                await _partySync.SendSeekAsync(seekTime);
+                _mediaPlayer.Time = (long)TimeSlider.Value;
             }
         }
 
         private void VolumeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
             if (_mediaPlayer != null)
-                _mediaPlayer.Volume = (int)e.NewValue;
+            {
+                // Human hearing is logarithmic; squaring the normalized value creates an approximate audio taper
+                double normalized = e.NewValue / 100.0;
+                _mediaPlayer.Volume = (int)(Math.Pow(normalized, 2) * 100);
+            }
         }
 
         private void FullscreenBtn_Click(object sender, RoutedEventArgs e)
@@ -471,6 +458,7 @@ namespace UniversalMediaOS.WPF
         // ── Sidebar Controls ─────────────────────────────────────────
         private void CloseSidebar_Click(object sender, RoutedEventArgs e)
         {
+            SidebarOverlay.Visibility = Visibility.Collapsed;
             _mediaPlayer.Play();
         }
 
@@ -496,7 +484,7 @@ namespace UniversalMediaOS.WPF
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[Swap Gallery] Error: {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine($"[Swap Gallery] Error: {ex.Message}");
                 }
             }
         }
@@ -504,74 +492,6 @@ namespace UniversalMediaOS.WPF
         private void CloseSwapGallery_Click(object sender, RoutedEventArgs e)
         {
             SwapGalleryPanel.Visibility = Visibility.Collapsed;
-        }
-
-        // ── Watch Party Lobby Sync ──────────────────────────────────
-        private async void PartyJoin_Click(object sender, RoutedEventArgs e)
-        {
-            string room = PartyRoomTxt.Text.Trim();
-            if (string.IsNullOrEmpty(room))
-            {
-                MessageBox.Show("Please enter a valid Lobby Room Code.", "Lobby Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                return;
-            }
-
-            PartyJoinBtn.IsEnabled = false;
-            PartyStatusTxt.Text = "Status: Connecting...";
-
-            try
-            {
-                _partySync = new WatchPartySync();
-                _partySync.RemotePlayPauseRequested += PartySync_RemotePlayPauseRequested;
-                _partySync.RemoteSeekRequested += PartySync_RemoteSeekRequested;
-
-                // Sync URL from config setting, fallback to standard localhost hub
-                var swapper = new DomainHotSwapper(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "config.json"));
-                string syncHub = swapper.GetSetting("PythonScraperBase");
-                if (string.IsNullOrEmpty(syncHub)) syncHub = "http://localhost:8000";
-                
-                string hubUrl = $"{syncHub.TrimEnd('/')}/partyHub?room={Uri.EscapeDataString(room)}";
-
-                await _partySync.ConnectAsync(hubUrl);
-                
-                PartyStatusTxt.Text = $"Status: Active | Room: {room}";
-                PartyJoinBtn.Content = "Connected";
-            }
-            catch (Exception ex)
-            {
-                PartyStatusTxt.Text = "Status: Connection Failed";
-                PartyJoinBtn.IsEnabled = true;
-                MessageBox.Show($"Failed to connect to SignalR watch party lobby:\n{ex.Message}", "Sync Failure", MessageBoxButton.OK, MessageBoxImage.Warning);
-            }
-        }
-
-        private void PartySync_RemoteSeekRequested(object? sender, long timeTicks)
-        {
-            Dispatcher.Invoke(() =>
-            {
-                _isRemoteCommand = true;
-                _mediaPlayer.Time = timeTicks;
-                _isRemoteCommand = false;
-                Console.WriteLine($"[Party Sync] Received remote seek instruction: {timeTicks/1000}s.");
-            });
-        }
-
-        private void PartySync_RemotePlayPauseRequested(object? sender, bool isPlaying)
-        {
-            Dispatcher.Invoke(() =>
-            {
-                _isRemoteCommand = true;
-                if (isPlaying && !_mediaPlayer.IsPlaying)
-                {
-                    _mediaPlayer.Play();
-                }
-                else if (!isPlaying && _mediaPlayer.IsPlaying)
-                {
-                    _mediaPlayer.Pause();
-                }
-                _isRemoteCommand = false;
-                Console.WriteLine($"[Party Sync] Received remote state change: isPlaying={isPlaying}.");
-            });
         }
     }
 }

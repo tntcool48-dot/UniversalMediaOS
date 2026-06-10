@@ -11,9 +11,10 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
-        
-        <TextBlock Text="Master Routing Switchboard" FontSize="26" FontWeight="Black" Foreground="#F8FAFC" Margin="0,0,0,10"/>
-        <TextBlock Text="Select the architecture tier you want to use for this request." FontSize="14" Foreground="#94A3B8" Margin="0,0,0,20"/>
+        <StackPanel Grid.Row="0" Margin="0,0,0,10">
+            <TextBlock Text="Master Routing Switchboard" FontSize="26" FontWeight="Black" Foreground="#F8FAFC" Margin="0,0,0,10"/>
+            <TextBlock Text="Select the architecture tier you want to use for this request." FontSize="14" Foreground="#94A3B8" Margin="0,0,0,20"/>
+        </StackPanel>
         
         <!-- Tier 1: Nyaa P2P -->
         <Border Grid.Row="1" Background="#1E293B" CornerRadius="12" Padding="15" Margin="0,0,0,15">
@@ -21,9 +22,10 @@
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
-                <TextBlock Text="Tier 1: P2P Torrent (Nyaa)" FontSize="18" FontWeight="Bold" Foreground="#10B981" Margin="0,0,0,10"/>
-                <ListBox x:Name="TorrentsList" Grid.Row="1" Background="#0F172A" Foreground="White" BorderThickness="0" Height="150" Margin="0,0,0,10">
+                <TextBlock Grid.Row="0" Text="Tier 1: P2P Torrent (Nyaa)" FontSize="18" FontWeight="Bold" Foreground="#10B981" Margin="0,0,0,10"/>
+                <ListBox x:Name="TorrentsList" Grid.Row="1" Background="#0F172A" Foreground="White" BorderThickness="0" Margin="0,0,0,10">
                     <ListBox.ItemTemplate>
                         <DataTemplate>
                             <Border BorderBrush="#334155" BorderThickness="0,0,0,1" Padding="5">
@@ -39,7 +41,7 @@
                         </DataTemplate>
                     </ListBox.ItemTemplate>
                 </ListBox>
-                <Button Grid.Row="1" VerticalAlignment="Bottom" Content="Inject Selected Torrent" Background="#10B981" Foreground="Black" FontWeight="Bold" Padding="10" BorderThickness="0" Click="SelectTorrent_Click"/>
+                <Button Grid.Row="2" VerticalAlignment="Bottom" Content="Inject Selected Torrent" Background="#10B981" Foreground="Black" FontWeight="Bold" Padding="10" BorderThickness="0" Click="SelectTorrent_Click"/>
             </Grid>
         </Border>
 

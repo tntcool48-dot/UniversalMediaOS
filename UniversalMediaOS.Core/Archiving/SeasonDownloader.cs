@@ -23,9 +23,9 @@ namespace UniversalMediaOS.Core.Archiving
         private const int DownloadTimeoutSeconds = 3600; // 60 min max for full season
         private const int MetadataTimeoutSeconds = 60;
 
-        public SeasonDownloader()
+        public SeasonDownloader(DomainHotSwapper config)
         {
-            _config = new DomainHotSwapper(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "config.json"));
+            _config = config;
             
             string dDir = _config.GetSetting("DownloadDirectory");
             _downloadDir = string.IsNullOrEmpty(dDir) ? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Downloads") : dDir;
@@ -113,7 +113,7 @@ namespace UniversalMediaOS.Core.Archiving
                             var relativePaths = await _qbit.GetTorrentFilesAsync(infoHash);
                             foreach (var p in relativePaths)
                             {
-                                string fullPath = Path.Combine(_downloadDir, p);
+                                string fullPath = Path.Combine(_downloadDir, p.Name);
                                 downloadedFiles.Add(fullPath);
                             }
                             downloadComplete = true;
@@ -284,31 +284,29 @@ namespace UniversalMediaOS.Core.Archiving
 
             if (seasonMatched.Count == 0) return null;
 
-            // Prioritize titles containing batch markers
-            var batches = seasonMatched.Where(t => 
+            // 3. Filter by User Audio Preference
+            string audioPref = _config.GetSetting("AudioPreference");
+            var candidates = seasonMatched;
+            if (audioPref == "Dubbed (English)")
+            {
+                var dubs = seasonMatched.Where(t => t.Title.IndexOf("Dub", StringComparison.OrdinalIgnoreCase) >= 0 || t.Title.IndexOf("Dual Audio", StringComparison.OrdinalIgnoreCase) >= 0).ToList();
+                if (dubs.Count > 0) candidates = dubs;
+            }
+            else // Subbed preference
+            {
+                var subs = seasonMatched.Where(t => t.Title.IndexOf("Sub", StringComparison.OrdinalIgnoreCase) >= 0).ToList();
+                if (subs.Count > 0) candidates = subs;
+            }
+
+            // 4. Prioritize titles containing batch markers
+            var batches = candidates.Where(t => 
                 t.Title.IndexOf("Batch", StringComparison.OrdinalIgnoreCase) >= 0 ||
                 t.Title.IndexOf("Complete", StringComparison.OrdinalIgnoreCase) >= 0 ||
                 t.Title.IndexOf("Season", StringComparison.OrdinalIgnoreCase) >= 0 ||
                 Regex.IsMatch(t.Title, @"01\s*[-~]\s*\d+")
             ).ToList();
 
-            // Fallback to all season-matched torrents if no obvious batch marker is matched
-            var candidates = batches.Count > 0 ? batches : seasonMatched;
-
-            // 3. Filter by audio preference (Sub vs Dub)
-            string audioPref = _config.GetSetting("DefaultAudioPref");
-            if (string.IsNullOrEmpty(audioPref)) audioPref = "Sub";
-
-            bool IsDubTitle(string title)
-            {
-                return title.IndexOf("dub", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                       title.IndexOf("dual audio", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                       title.IndexOf("dual-audio", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                       title.IndexOf("multi-audio", StringComparison.OrdinalIgnoreCase) >= 0;
-            }
-
-            var audioMatched = candidates.Where(t => IsDubTitle(t.Title) == (audioPref == "Dub")).ToList();
-            var finalCandidates = audioMatched.Count > 0 ? audioMatched : candidates;
+            var finalCandidates = batches.Count > 0 ? batches : candidates;
 
             // Pick the candidate with the highest seeders
             return finalCandidates.OrderByDescending(t => t.Seeders).FirstOrDefault();
@@ -321,7 +319,7 @@ namespace UniversalMediaOS.Core.Archiving
             if (match.Success) return int.Parse(match.Groups[1].Value);
 
             // 2. Check "S X" (e.g. S1, S2, S01, S02) with word boundary
-            match = Regex.Match(title, @"\bS(\d+)\b", RegexOptions.IgnoreCase);
+            match = Regex.Match(title, @"\bS(\d+)(?=E\d|\b)", RegexOptions.IgnoreCase);
             if (match.Success) return int.Parse(match.Groups[1].Value);
 
             // 3. Check "Xnd Season" ordinals (e.g. 2nd Season, 3rd Season)
@@ -380,12 +378,15 @@ namespace UniversalMediaOS.Core.Archiving
                         if (progress >= 100.0) break;
                     }
 
-                    log("[MonoTorrent] Torrent download complete!");
-
-                    foreach (var f in manager.Files)
+                    if (manager.Progress >= 100.0)
                     {
-                        string fullPath = f.FullPath;
-                        downloadedFiles.Add(fullPath);
+                        log("[MonoTorrent] Torrent download complete!");
+
+                        foreach (var f in manager.Files)
+                        {
+                            string fullPath = f.FullPath;
+                            downloadedFiles.Add(fullPath);
+                        }
                     }
 
                     await manager.StopAsync();
@@ -403,20 +404,15 @@ namespace UniversalMediaOS.Core.Archiving
         /// </summary>
         private async Task<bool> ValidateMediaFileAsync(string filePath)
         {
-            string debugPath = @"C:\Users\user\animeapp\validation_debug.txt";
             try
             {
-                File.AppendAllText(debugPath, $"--- Validating: '{filePath}' ---\n");
                 bool exists = File.Exists(filePath);
-                File.AppendAllText(debugPath, $"File.Exists: {exists}\n");
                 if (!exists) return false;
 
                 var info = new FileInfo(filePath);
-                File.AppendAllText(debugPath, $"File Length: {info.Length} bytes\n");
 
                 if (info.Length < 1024 * 1024 * 5)
                 {
-                    File.AppendAllText(debugPath, "Length too small (< 5MB), returning false.\n");
                     return false;
                 }
 
@@ -437,34 +433,25 @@ namespace UniversalMediaOS.Core.Archiving
                     string error = (await proc.StandardError.ReadToEndAsync()).Trim();
                     await proc.WaitForExitAsync();
 
-                    File.AppendAllText(debugPath, $"ffprobe ExitCode: {proc.ExitCode}\n");
-                    File.AppendAllText(debugPath, $"ffprobe Output: '{output}'\n");
-                    File.AppendAllText(debugPath, $"ffprobe Error: '{error}'\n");
-
                     if (proc.ExitCode == 0 && !string.IsNullOrEmpty(output))
                     {
-                        File.AppendAllText(debugPath, "Validation successful (hevc/h264 found).\n");
                         return true;
                     }
                     else
                     {
                         bool fallback = info.Length > 1024 * 1024 * 5;
-                        File.AppendAllText(debugPath, $"ffprobe failed, fallback validation (Length > 5MB): {fallback}\n");
                         return fallback;
                     }
                 }
                 else
                 {
-                    File.AppendAllText(debugPath, "Process.Start returned null.\n");
                     return false;
                 }
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                File.AppendAllText(debugPath, $"Exception: {ex.Message}\n{ex.StackTrace}\n");
                 var info = new FileInfo(filePath);
                 bool fallback = info.Length > 1024 * 1024 * 5;
-                File.AppendAllText(debugPath, $"Exception caught, fallback: {fallback}\n");
                 return fallback;
             }
         }

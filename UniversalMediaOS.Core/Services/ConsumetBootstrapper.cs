@@ -24,7 +24,7 @@ namespace UniversalMediaOS.Core.Services
                 string serverJsPath = Path.Combine(_consumetDir, "index.js");
 
                 // Always regenerate the server file to pick up scraper updates.
-                Console.WriteLine("Generating GogoAnime scraper microservice...");
+                System.Diagnostics.Debug.WriteLine("Generating GogoAnime scraper microservice...");
                 string serverCode = GetServerCode();
                 await File.WriteAllTextAsync(serverJsPath, serverCode);
 
@@ -32,7 +32,7 @@ namespace UniversalMediaOS.Core.Services
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error bootstrapping scraper server: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Error bootstrapping scraper server: {ex.Message}");
                 return false;
             }
         }
@@ -62,7 +62,7 @@ function fetch(targetUrl, opts = {}) {
     const parsed = new URL(targetUrl);
     const options = {
       hostname: parsed.hostname,
-      port: parsed.port || 443,
+      port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
       path: parsed.pathname + parsed.search,
       method: opts.method || 'GET',
       headers: {
@@ -266,7 +266,7 @@ async function handleInfo(animeId, res) {
     const movieIdMatch = /class=[""']movie_id[""']\s+value=[""'](\d+)[""']/i.exec(html)
       || /input[^>]*id=[""']movie_id[""'][^>]*value=[""'](\d+)[""']/i.exec(html);
     const lastEpMatch = /class=[""']active[""']\s+ep_start=[""']\d+[""']\s+ep_end=[""'](\d+)[""']/i.exec(html)
-      || /ep_end=[""'](\d+)[""']/gi;
+      || /ep_end=[""'](\d+)[""']/i.exec(html);
 
     // Get alias/default_ep
     const aliasMatch = /class=[""']alias_anime[""']\s+value=[""']([^""']*)[""']/i.exec(html)
@@ -570,6 +570,13 @@ const server = http.createServer(async (req, res) => {
   } catch (err) {
     console.error('Unhandled error:', err.message);
     jsonResponse(res, 500, { error: 'internal server error', details: err.message });
+  }
+});
+
+server.on('error', (e) => {
+  if (e.code === 'EADDRINUSE') {
+    console.error(`[UniversalMediaOS Scraper] FATAL: Port ${PORT} is already in use.`);
+    process.exit(1);
   }
 });
 

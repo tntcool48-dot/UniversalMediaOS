@@ -43,7 +43,7 @@
                     </StackPanel>
 
                     <Slider x:Name="TimeSlider" Grid.Column="2" VerticalAlignment="Center" Margin="10,0" 
-                            Maximum="100" Minimum="0" Value="0" Thumb.DragStarted="TimeSlider_DragStarted" Thumb.DragCompleted="TimeSlider_DragCompleted" ToolTip="Drag to seek time"/>
+                            Maximum="100" Minimum="0" Value="0" IsMoveToPointEnabled="True" PreviewMouseLeftButtonUp="TimeSlider_PreviewMouseLeftButtonUp" Thumb.DragStarted="TimeSlider_DragStarted" Thumb.DragCompleted="TimeSlider_DragCompleted" ToolTip="Drag to seek time"/>
 
                     <StackPanel Grid.Column="4" Orientation="Horizontal" VerticalAlignment="Center">
                         <TextBlock Text="🔊 " Foreground="White" VerticalAlignment="Center" FontSize="16"/>
@@ -148,34 +148,6 @@
                     </StackPanel>
                 </ScrollViewer>
 
-                <!-- Watch Party sync settings inside player -->
-                <Border Grid.Row="2" Background="#1E293B" BorderBrush="#334155" BorderThickness="0,1,0,0" Padding="15">
-                    <StackPanel>
-                        <TextBlock Text="👥 Watch Party Sync" FontSize="12" FontWeight="Bold" Foreground="#10B981" Margin="0,0,0,10"/>
-                        <Grid Margin="0,0,0,10">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="10"/>
-                                <ColumnDefinition Width="80"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBox x:Name="PartyRoomTxt" Text="party123" Background="#0F172A" Foreground="White" Padding="6" BorderBrush="#334155" FontSize="11" ToolTip="Enter lobby code"/>
-                            <TextBlock Text="Lobby Code" IsHitTestVisible="False" VerticalAlignment="Center" Margin="10,0,0,0" Foreground="#64748B" FontSize="11">
-                                <TextBlock.Style>
-                                    <Style TargetType="TextBlock">
-                                        <Setter Property="Visibility" Value="Collapsed"/>
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding Text, ElementName=PartyRoomTxt}" Value="">
-                                                <Setter Property="Visibility" Value="Visible"/>
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </TextBlock.Style>
-                            </TextBlock>
-                            <Button Grid.Column="2" x:Name="PartyJoinBtn" Content="Join" Background="#10B981" Foreground="White" Padding="10,5" BorderThickness="0" Click="PartyJoin_Click" ToolTip="Connect to sync lobby"/>
-                        </Grid>
-                        <TextBlock x:Name="PartyStatusTxt" Text="Status: Offline" Foreground="#64748B" FontSize="11"/>
-                    </StackPanel>
-                </Border>
             </Grid>
         </Border>
     </Grid>

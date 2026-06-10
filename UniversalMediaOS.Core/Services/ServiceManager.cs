@@ -28,11 +28,11 @@ namespace UniversalMediaOS.Core.Services
                 
                 process.OutputDataReceived += (sender, args) => 
                 {
-                    if (args.Data != null) Console.WriteLine($"[{Path.GetFileName(executablePath)}] {args.Data}");
+                    if (args.Data != null) System.Diagnostics.Debug.WriteLine($"[{Path.GetFileName(executablePath)}] {args.Data}");
                 };
                 process.ErrorDataReceived += (sender, args) => 
                 {
-                    if (args.Data != null) Console.WriteLine($"[{Path.GetFileName(executablePath)} ERROR] {args.Data}");
+                    if (args.Data != null) System.Diagnostics.Debug.WriteLine($"[{Path.GetFileName(executablePath)} ERROR] {args.Data}");
                 };
 
                 process.Start();
@@ -40,11 +40,11 @@ namespace UniversalMediaOS.Core.Services
                 process.BeginErrorReadLine();
 
                 _managedProcesses.Add(process);
-                Console.WriteLine($"Started service: {executablePath} {arguments}");
+                System.Diagnostics.Debug.WriteLine($"Started service: {executablePath} {arguments}");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Failed to start service {executablePath}: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Failed to start service {executablePath}: {ex.Message}");
             }
         }
 
@@ -56,13 +56,13 @@ namespace UniversalMediaOS.Core.Services
                 {
                     if (!process.HasExited)
                     {
-                        process.Kill();
+                        process.Kill(entireProcessTree: true);
                         process.WaitForExit();
                     }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Failed to kill process: {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine($"Failed to kill process: {ex.Message}");
                 }
             }
             _managedProcesses.Clear();

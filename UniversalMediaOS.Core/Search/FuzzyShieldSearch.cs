@@ -20,6 +20,7 @@ namespace UniversalMediaOS.Core.Search
                 Page(page: 1, perPage: 15) {
                     media(search: $search, type: ANIME, sort: POPULARITY_DESC) {
                         id
+                        idMal
                         title {
                             romaji
                             english
@@ -41,6 +42,7 @@ namespace UniversalMediaOS.Core.Search
                     Page(page: 1, perPage: 15) {
                         media(type: ANIME, sort: TRENDING_DESC) {
                             id
+                            idMal
                             title { romaji english }
                             coverImage { extraLarge large }
                             description(asHtml: false)
@@ -62,6 +64,17 @@ namespace UniversalMediaOS.Core.Search
                 var content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
                 var response = await client.PostAsync(AniListUrl, content);
                 
+                if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+                {
+                    int delay = 2;
+                    if (response.Headers.TryGetValues("Retry-After", out var values) && int.TryParse(values.FirstOrDefault(), out int parsedDelay))
+                    {
+                        delay = parsedDelay;
+                    }
+                    await Task.Delay(TimeSpan.FromSeconds(delay));
+                    response = await client.PostAsync(AniListUrl, new StringContent(jsonBody, Encoding.UTF8, "application/json"));
+                }
+
                 string responseJson = await response.Content.ReadAsStringAsync();
                 
                 if (response.IsSuccessStatusCode)
@@ -87,6 +100,7 @@ namespace UniversalMediaOS.Core.Search
                             results.Add(new MediaResult
                             {
                                 Id = item.GetProperty("id").GetInt32(),
+                                IdMal = item.TryGetProperty("idMal", out var idMal) && idMal.ValueKind == JsonValueKind.Number ? idMal.GetInt32() : 0,
                                 OfficialTitle = !string.IsNullOrEmpty(englishTitle) ? englishTitle : (!string.IsNullOrEmpty(romajiTitle) ? romajiTitle : "Unknown Title"),
                                 CoverImageUrl = coverUrl,
                                 Synopsis = CleanHtml(synopsis)
@@ -101,7 +115,7 @@ namespace UniversalMediaOS.Core.Search
             }
             catch (Exception ex)
             {
-                throw new Exception($"Search execution failed: {ex.Message}");
+                throw new Exception($"Search execution failed: {ex.Message}", ex);
             }
 
             return results;
@@ -110,13 +124,15 @@ namespace UniversalMediaOS.Core.Search
         private string CleanHtml(string input)
         {
             if (string.IsNullOrEmpty(input)) return string.Empty;
-            return input.Replace("<br>", "\n").Replace("<i>", "").Replace("</i>", "");
+            string withNewlines = input.Replace("<br>", "\n").Replace("<br/>", "\n").Replace("<br />", "\n");
+            return System.Text.RegularExpressions.Regex.Replace(withNewlines, "<[^>]*>", string.Empty);
         }
     }
 
     public class MediaResult
     {
         public int Id { get; set; }
+        public int IdMal { get; set; }
         public string OfficialTitle { get; set; } = string.Empty;
         public string CoverImageUrl { get; set; } = string.Empty;
         public string Synopsis { get; set; } = string.Empty;

@@ -2,6 +2,6 @@
 # Ensure you have installed pyinstaller: pip install pyinstaller
 
 # Run from within services\python_scraper
-pyinstaller --name "python_scraper" --onefile --windowed main.py
+pyinstaller --name "python_scraper" --onefile main.py
 
 # The executable will be in the 'dist' folder

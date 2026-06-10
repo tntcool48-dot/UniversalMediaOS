@@ -12,27 +12,44 @@ using MonoTorrent.Client;
 
 namespace UniversalMediaOS.Core.Routing
 {
-    public class TripleNetHandoff : ITripleNetHandoff
+    public class PlaybackSource
+    {
+        public SourceTier Tier { get; set; }
+        public string UrlOrPath { get; set; } = string.Empty;
+        public string EmbedOrigin { get; set; } = string.Empty;
+    }
+
+    public enum SourceTier
+    {
+        Tier1_LocalP2P,
+        Tier2_ConsumetHttp,
+        Tier3_WebViewEmbed
+    }
+
+    public class TripleNetHandoff
     {
         private readonly DualTrackerRssParser _rssParser;
         private readonly QBitLogicGate _qbit;
-        private readonly string _downloadDir;
         private readonly Configuration.DomainHotSwapper _config;
+        private readonly string _downloadDir;
+        private static readonly System.Net.Http.HttpClient _httpClient = new System.Net.Http.HttpClient { Timeout = System.TimeSpan.FromSeconds(10) };
 
         // Timeouts
         private const int MetadataTimeoutSeconds = 60;
         private const int DownloadTimeoutSeconds = 1800; // 30 min max
 
-        public TripleNetHandoff()
+        public TripleNetHandoff(Configuration.DomainHotSwapper config)
         {
             _rssParser = new DualTrackerRssParser();
             
-            _config = new Configuration.DomainHotSwapper(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "config.json"));
+            _config = config;
             
             // Read qBit config from config.json
             string qbitPort = _config.GetSetting("QBitPort");
             if (string.IsNullOrEmpty(qbitPort)) qbitPort = "8080";
-            _qbit = new QBitLogicGate($"http://localhost:{qbitPort}");
+            string qbitHost = _config.GetSetting("QBitHost");
+            if (string.IsNullOrEmpty(qbitHost)) qbitHost = "localhost";
+            _qbit = new QBitLogicGate($"http://{qbitHost}:{qbitPort}");
             
             string dDir = _config.GetSetting("DownloadDirectory");
             _downloadDir = string.IsNullOrEmpty(dDir) ? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Downloads") : dDir;
@@ -76,7 +93,7 @@ namespace UniversalMediaOS.Core.Routing
 
         public async Task<PlaybackSource?> InjectTorrentAsync(TorrentResult bestTorrent, Action<string>? onStatusUpdate = null)
         {
-            void Log(string msg) { onStatusUpdate?.Invoke(msg); Console.WriteLine(msg); }
+            void Log(string msg) { onStatusUpdate?.Invoke(msg); System.Diagnostics.Debug.WriteLine(msg); }
 
             if (bestTorrent == null || string.IsNullOrEmpty(bestTorrent.MagnetLink))
             {
@@ -89,7 +106,7 @@ namespace UniversalMediaOS.Core.Routing
 
         public async Task<PlaybackSource?> ResolveBestSourceAsync(string query, string episodeId, string providerDomain, Action<string>? onStatusUpdate = null, SourceTier minimumTier = SourceTier.Tier1_LocalP2P)
         {
-            void Log(string msg) { onStatusUpdate?.Invoke(msg); Console.WriteLine(msg); }
+            void Log(string msg) { onStatusUpdate?.Invoke(msg); System.Diagnostics.Debug.WriteLine(msg); }
 
             // ── Tier 1: P2P Local (Nyaa → qBit / MonoTorrent) ──
             if (minimumTier <= SourceTier.Tier1_LocalP2P)
@@ -135,7 +152,7 @@ namespace UniversalMediaOS.Core.Routing
                         if (existingFile != null)
                         {
                             Log($"> [Tier 1] Episode already downloaded: {Path.GetFileName(existingFile)}");
-                            bestTorrent.DownloadedFilePath = existingFile;
+
                             return new PlaybackSource { Tier = SourceTier.Tier1_LocalP2P, UrlOrPath = existingFile };
                         }
 
@@ -166,16 +183,16 @@ namespace UniversalMediaOS.Core.Routing
                 try
                 {
                     Log("> [Tier 2] Trying Consumet HTTP streaming API...");
-                    using var client = new HttpClient();
-                    client.Timeout = TimeSpan.FromSeconds(10);
 
-                    string searchUrl = $"http://localhost:3000/anime/gogoanime/{Uri.EscapeDataString(query)}";
+                    string consumetBase = _config.GetSetting("ConsumetApiBase");
+                    if (string.IsNullOrEmpty(consumetBase)) consumetBase = "http://localhost:3000";
+                    string searchUrl = $"{consumetBase.TrimEnd('/')}/anime/gogoanime/{Uri.EscapeDataString(query)}";
                     Log($"> [Tier 2] Searching: {searchUrl}");
-                    var searchResponse = await client.GetAsync(searchUrl);
+                    var searchResp = await GetWithRetriesAsync(searchUrl, Log);
 
-                    if (searchResponse.IsSuccessStatusCode)
+                    if (searchResp.IsSuccessStatusCode)
                     {
-                        var searchJson = await searchResponse.Content.ReadAsStringAsync();
+                        var searchJson = await searchResp.Content.ReadAsStringAsync();
                         using var searchDoc = JsonDocument.Parse(searchJson);
 
                         if (searchDoc.RootElement.TryGetProperty("results", out var results) && results.GetArrayLength() > 0)
@@ -192,32 +209,53 @@ namespace UniversalMediaOS.Core.Routing
                                 }
                             }
 
-                            string watchUrl = $"http://localhost:3000/anime/gogoanime/watch/{Uri.EscapeDataString(resolvedEpisodeId)}";
+                            string consumetBase2 = _config.GetSetting("ConsumetApiBase");
+                            if (string.IsNullOrEmpty(consumetBase2)) consumetBase2 = "http://localhost:3000";
+                            string watchUrl = $"{consumetBase2.TrimEnd('/')}/anime/gogoanime/watch/{Uri.EscapeDataString(resolvedEpisodeId)}";
                             Log($"> [Tier 2] Fetching stream: {watchUrl}");
-                            var watchResponse = await client.GetAsync(watchUrl);
+                            var watchResp = await GetWithRetriesAsync(watchUrl, Log);
 
-                            if (watchResponse.IsSuccessStatusCode)
+                            if (watchResp.IsSuccessStatusCode)
                             {
-                                var watchJson = await watchResponse.Content.ReadAsStringAsync();
+                                var watchJson = await watchResp.Content.ReadAsStringAsync();
                                 using var watchDoc = JsonDocument.Parse(watchJson);
 
                                 if (watchDoc.RootElement.TryGetProperty("sources", out var sources) && sources.GetArrayLength() > 0)
                                 {
-                                    var firstSource = sources[0];
-                                    if (firstSource.TryGetProperty("url", out var urlProp))
+                                    System.Text.Json.JsonElement? bestSource = null;
+                                    foreach (var source in sources.EnumerateArray())
+                                    {
+                                        if (source.TryGetProperty("quality", out var qProp))
+                                        {
+                                            string quality = qProp.GetString() ?? "";
+                                            if (quality == "1080p" || quality == "default")
+                                            {
+                                                bestSource = source;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    
+                                    var selectedSource = bestSource ?? sources[0];
+                                    if (selectedSource.TryGetProperty("url", out var urlProp))
                                     {
                                         string? streamUrl = urlProp.GetString();
                                         if (!string.IsNullOrEmpty(streamUrl))
                                         {
+                                            string referer = "";
+                                            if (watchDoc.RootElement.TryGetProperty("headers", out var headers) && headers.TryGetProperty("Referer", out var refProp))
+                                            {
+                                                referer = refProp.GetString() ?? "";
+                                            }
                                             Log($"> [Tier 2] SUCCESS: Got streaming URL");
-                                            return new PlaybackSource { Tier = SourceTier.Tier2_ConsumetHttp, UrlOrPath = streamUrl };
+                                            return new PlaybackSource { Tier = SourceTier.Tier2_ConsumetHttp, UrlOrPath = streamUrl, EmbedOrigin = referer };
                                         }
                                     }
                                 }
                             }
                             else
                             {
-                                Log($"> [Tier 2] Watch endpoint returned {watchResponse.StatusCode}. Falling to Tier 3...");
+                                Log($"> [Tier 2] Watch endpoint returned {watchResp.StatusCode}. Falling to Tier 3...");
                             }
                         }
                         else
@@ -227,7 +265,7 @@ namespace UniversalMediaOS.Core.Routing
                     }
                     else
                     {
-                        Log($"> [Tier 2] Consumet API returned {searchResponse.StatusCode}. Falling to Tier 3...");
+                        Log($"> [Tier 2] Consumet API returned {searchResp.StatusCode}. Falling to Tier 3...");
                     }
                 }
                 catch (Exception ex)
@@ -286,11 +324,13 @@ namespace UniversalMediaOS.Core.Routing
                         var files = await _qbit.GetTorrentFilesAsync(infoHash);
                         if (files.Count > 0)
                         {
-                            // Find the largest video file
-                            string? bestFile = files
-                                .Where(f => f.EndsWith(".mkv") || f.EndsWith(".mp4") || f.EndsWith(".avi") || f.EndsWith(".webm"))
-                                .OrderByDescending(f => f.Length) // longest name usually = largest file
+                            // Find the largest video file using qBittorrent API reported byte size
+                            var bestFileObj = files
+                                .Where(f => f.Name.EndsWith(".mkv") || f.Name.EndsWith(".mp4") || f.Name.EndsWith(".avi") || f.Name.EndsWith(".webm"))
+                                .OrderByDescending(f => f.Size)
                                 .FirstOrDefault();
+                            
+                            string? bestFile = bestFileObj?.Name;
                             
                             if (bestFile != null)
                             {
@@ -360,7 +400,7 @@ namespace UniversalMediaOS.Core.Routing
 
                     // Download with timeout
                     var downloadDeadline = DateTime.UtcNow.AddSeconds(DownloadTimeoutSeconds);
-                    while (manager.State != TorrentState.Seeding && manager.State != TorrentState.Stopped)
+                    while (manager.State != TorrentState.Seeding && manager.State != TorrentState.Stopped && manager.State != TorrentState.Error)
                     {
                         if (DateTime.UtcNow > downloadDeadline)
                         {
@@ -371,6 +411,13 @@ namespace UniversalMediaOS.Core.Routing
                         log($"> [Tier 1] Progress: {manager.Progress:0.00}% - {manager.Monitor.DownloadRate / 1024.0 / 1024.0:0.00} MB/s");
                         await Task.Delay(2000);
                         if (manager.Progress >= 100.0) break;
+                    }
+
+                    if (manager.Progress < 100.0)
+                    {
+                        log($"> [Tier 1] Download aborted or failed. Final progress: {manager.Progress:0.00}%");
+                        await manager.StopAsync();
+                        return null;
                     }
 
                     log("> [Tier 1] Download complete!");
@@ -430,7 +477,7 @@ namespace UniversalMediaOS.Core.Routing
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error scanning downloads directory: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"Error scanning downloads directory: {ex.Message}");
             }
 
             return null;
@@ -442,8 +489,8 @@ namespace UniversalMediaOS.Core.Routing
             var match = Regex.Match(title, @"Season\s*(\d+)", RegexOptions.IgnoreCase);
             if (match.Success) return int.Parse(match.Groups[1].Value);
 
-            // 2. Check "S X" (e.g. S1, S2, S01, S02) with word boundary
-            match = Regex.Match(title, @"\bS(\d+)\b", RegexOptions.IgnoreCase);
+            // 2. Check "S X" (e.g. S1, S2, S01, S02) with boundary support for S02E05
+            match = Regex.Match(title, @"\bS(\d+)(?=E\d|\b)", RegexOptions.IgnoreCase);
             if (match.Success) return int.Parse(match.Groups[1].Value);
 
             // 3. Check "Xnd Season" ordinals (e.g. 2nd Season, 3rd Season)
@@ -451,6 +498,35 @@ namespace UniversalMediaOS.Core.Routing
             if (match.Success) return int.Parse(match.Groups[1].Value);
 
             return 1; // Default to Season 1
+        }
+
+        private async Task<HttpResponseMessage> GetWithRetriesAsync(string url, Action<string> log)
+        {
+            int maxRetries = 3;
+            for (int i = 0; i < maxRetries; i++)
+            {
+                try
+                {
+                    var response = await _httpClient.GetAsync(url);
+                    if (response.IsSuccessStatusCode)
+                        return response;
+                        
+                    log($"> [Tier 2] HTTP {response.StatusCode} for {url}. Retrying...");
+                }
+                catch (Exception ex)
+                {
+                    log($"> [Tier 2] Exception for {url}: {ex.Message}. Retrying...");
+                }
+
+                if (i < maxRetries - 1)
+                {
+                    int delayMs = (int)Math.Pow(2, i) * 1000;
+                    await Task.Delay(delayMs);
+                }
+            }
+            
+            // Final attempt to return whatever response we have, or a failed message
+            return await _httpClient.GetAsync(url);
         }
     }
 }

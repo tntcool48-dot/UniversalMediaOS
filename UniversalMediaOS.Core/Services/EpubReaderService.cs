@@ -10,7 +10,6 @@ namespace UniversalMediaOS.Core.Services
     public class EpubBook
     {
         public string Title { get; set; } = "Unknown Title";
-        public string TempExtractPath { get; set; } = string.Empty;
         public List<string> ChapterFiles { get; set; } = new List<string>();
     }
 
@@ -101,25 +100,30 @@ namespace UniversalMediaOS.Core.Services
                 return new EpubBook
                 {
                     Title = title,
-                    TempExtractPath = extractPath,
                     ChapterFiles = chapters
                 };
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"EPUB Parse Error: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"EPUB Parse Error: {ex.Message}");
                 return null;
             }
         }
 
-        public void CleanCache()
+        public void CleanCache(string? excludePath = null)
         {
             try
             {
                 string baseTemp = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "epub_cache");
                 if (Directory.Exists(baseTemp))
                 {
-                    Directory.Delete(baseTemp, true);
+                    foreach (var dir in Directory.GetDirectories(baseTemp))
+                    {
+                        if (excludePath == null || !string.Equals(dir, excludePath, StringComparison.OrdinalIgnoreCase))
+                        {
+                            try { Directory.Delete(dir, true); } catch { }
+                        }
+                    }
                 }
             }
             catch { }
