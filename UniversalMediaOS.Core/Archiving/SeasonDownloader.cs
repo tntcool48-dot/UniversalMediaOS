@@ -113,7 +113,7 @@ namespace UniversalMediaOS.Core.Archiving
                             var relativePaths = await _qbit.GetTorrentFilesAsync(infoHash);
                             foreach (var p in relativePaths)
                             {
-                                string fullPath = Path.Combine(_downloadDir, p);
+                                string fullPath = Path.Combine(_downloadDir, p.Name);
                                 downloadedFiles.Add(fullPath);
                             }
                             downloadComplete = true;

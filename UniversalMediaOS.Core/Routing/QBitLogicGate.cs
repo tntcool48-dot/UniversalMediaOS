@@ -6,6 +6,12 @@ using System.Threading.Tasks;
 
 namespace UniversalMediaOS.Core.Routing
 {
+    public class QBitFileInfo
+    {
+        public string Name { get; set; } = string.Empty;
+        public long Size { get; set; }
+    }
+
     public class QBitLogicGate
     {
         private static readonly HttpClient _httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
@@ -166,9 +172,9 @@ namespace UniversalMediaOS.Core.Routing
         /// <summary>
         /// Returns the list of file paths within a torrent.
         /// </summary>
-        public async Task<List<string>> GetTorrentFilesAsync(string infoHash)
+        public async Task<List<QBitFileInfo>> GetTorrentFilesAsync(string infoHash)
         {
-            var files = new List<string>();
+            var files = new List<QBitFileInfo>();
             if (string.IsNullOrEmpty(Cookie)) return files;
 
             try
@@ -186,7 +192,12 @@ namespace UniversalMediaOS.Core.Routing
                     {
                         if (element.TryGetProperty("name", out var nameProp))
                         {
-                            files.Add(nameProp.GetString());
+                            long size = 0;
+                            if (element.TryGetProperty("size", out var sizeProp))
+                            {
+                                size = sizeProp.GetInt64();
+                            }
+                            files.Add(new QBitFileInfo { Name = nameProp.GetString() ?? "", Size = size });
                         }
                     }
                 }
