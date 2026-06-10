@@ -16,6 +16,7 @@ namespace UniversalMediaOS.Core.Routing
     {
         public SourceTier Tier { get; set; }
         public string UrlOrPath { get; set; } = string.Empty;
+        public string EmbedOrigin { get; set; } = string.Empty;
     }
 
     public enum SourceTier
@@ -148,7 +149,7 @@ namespace UniversalMediaOS.Core.Routing
                         if (existingFile != null)
                         {
                             Log($"> [Tier 1] Episode already downloaded: {Path.GetFileName(existingFile)}");
-                            bestTorrent.DownloadedFilePath = existingFile;
+
                             return new PlaybackSource { Tier = SourceTier.Tier1_LocalP2P, UrlOrPath = existingFile };
                         }
 

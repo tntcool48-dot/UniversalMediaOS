@@ -284,6 +284,19 @@ namespace UniversalMediaOS.Core.Archiving
 
             if (seasonMatched.Count == 0) return null;
 
+            // 3. Filter by User Audio Preference
+            string audioPref = _config.GetSetting("AudioPreference");
+            var candidates = seasonMatched;
+            if (audioPref == "Dubbed (English)")
+            {
+                var dubs = seasonMatched.Where(t => t.Title.IndexOf("Dub", StringComparison.OrdinalIgnoreCase) >= 0 || t.Title.IndexOf("Dual Audio", StringComparison.OrdinalIgnoreCase) >= 0).ToList();
+                if (dubs.Count > 0) candidates = dubs;
+            }
+            else // Subbed preference
+            {
+                var subs = seasonMatched.Where(t => t.Title.IndexOf("Sub", StringComparison.OrdinalIgnoreCase) >= 0).ToList();
+                if (subs.Count > 0) candidates = subs;
+            }
 
             // 4. Prioritize titles containing batch markers
             var batches = candidates.Where(t => 

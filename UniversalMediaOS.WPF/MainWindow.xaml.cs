@@ -111,6 +111,13 @@ namespace UniversalMediaOS.WPF
                 {
                     _svcMgr.StartService(nodePath, consumetPath, Path.Combine(baseDir, "services", "consumet"));
                 }
+                
+                string pythonPath = "python";
+                string scraperScript = Path.Combine(baseDir, "services", "python_scraper", "app.py");
+                if (File.Exists(scraperScript))
+                {
+                    _svcMgr.StartService(pythonPath, $"-m uvicorn app:app --port 8000 --host 127.0.0.1", Path.Combine(baseDir, "services", "python_scraper"));
+                }
 
                 string qbitPath = UniversalMediaOS.Core.Services.DependencyBootstrapper.DetectedQBitPath;
                 if (!string.IsNullOrEmpty(qbitPath) && File.Exists(qbitPath))
@@ -122,6 +129,15 @@ namespace UniversalMediaOS.WPF
                 Log("Fetching trending anime from AniList...");
                 var results = await _searchService.SearchAnimeAsync("");
                 SearchResultsList.ItemsSource = results;
+                if (results.Count > 0)
+                {
+                    HeroTitle.Text = results[0].OfficialTitle;
+                    HeroDescription.Text = results[0].Synopsis;
+                    if (!string.IsNullOrEmpty(results[0].CoverImageUrl))
+                    {
+                        HeroBannerImage.Source = new System.Windows.Media.Imaging.BitmapImage(new Uri(results[0].CoverImageUrl));
+                    }
+                }
                 Log($"Loaded {results.Count} trending titles.");
             }
             catch (Exception ex)
@@ -602,7 +618,7 @@ namespace UniversalMediaOS.WPF
                     {
                         case SelectedSourceTier.Tier1_Torrent:
                             Log("Tier 1 selected — scraping Nyaa P2P networks...");
-                            var torrents = await _routingEngine.GetTorrentsAsync(target.OfficialTitle + audioPref, episodeNum, logger);
+                            torrents = await _routingEngine.GetTorrentsAsync(target.OfficialTitle + audioPref, episodeNum, logger);
 
                             if (torrents.Count == 0)
                             {
@@ -885,8 +901,7 @@ namespace UniversalMediaOS.WPF
         {
             var btn = sender as Button;
             if (btn != null) { btn.IsEnabled = false; btn.Content = "Loading..."; }
-            try
-            {
+
             // Spotlights Frieren Ep 1
             string title = "Frieren: Beyond Journey's End";
             string episode = "1";
@@ -956,7 +971,7 @@ namespace UniversalMediaOS.WPF
                     try
                     {
                         var downloader = new UniversalMediaOS.Core.Archiving.SeasonDownloader(_swapper);
-                        bool success = await downloader.DownloadSeasonAsync(
+                        await downloader.DownloadSeasonAsync(
                             target.OfficialTitle, 
                             msg => Log(msg), 
                             pct => {
@@ -967,7 +982,7 @@ namespace UniversalMediaOS.WPF
                         // Re-enable button on UI thread when done
                         Dispatcher.Invoke(() =>
                         {
-                            btn.Content = success ? "Done ✔" : "Failed";
+                            btn.Content = "Done ✔";
                             btn.IsEnabled = true;
                         });
                     }

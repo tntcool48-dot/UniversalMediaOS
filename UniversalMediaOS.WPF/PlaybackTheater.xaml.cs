@@ -348,10 +348,10 @@ namespace UniversalMediaOS.WPF
 
                 try
                 {
-                    var token = new DomainHotSwapper().GetSetting("MalOAuthToken");
+                    var token = new UniversalMediaOS.Core.Configuration.DomainHotSwapper(System.IO.Path.Combine(System.AppDomain.CurrentDomain.BaseDirectory, "config.json")).GetSetting("MalOAuthToken");
                     if (!string.IsNullOrEmpty(token) && _idMal > 0)
                     {
-                        var mal = new UniversalMediaOS.Core.Integrations.MalRestApi(token);
+                        var mal = new UniversalMediaOS.Core.Tracking.MalRestApi(token);
                         bool ok = await mal.UpdateProgressAsync(_idMal, int.TryParse(_episodeNo, out int ep) ? ep : 1);
                         if (ok)
                         {

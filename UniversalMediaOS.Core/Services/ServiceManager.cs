@@ -56,7 +56,7 @@ namespace UniversalMediaOS.Core.Services
                 {
                     if (!process.HasExited)
                     {
-                        process.Kill();
+                        process.Kill(entireProcessTree: true);
                         process.WaitForExit();
                     }
                 }
