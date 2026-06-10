@@ -11,7 +11,7 @@ namespace UniversalMediaOS.Core.Search
     {
         private const string AniListUrl = "https://graphql.anilist.co";
 
-        public async Task<List<MediaResult>> SearchAnimeAsync(string query)
+        public async Task<List<MediaResult>> SearchAnimeAsync(string query, System.Threading.CancellationToken token = default)
         {
             var results = new List<MediaResult>();
             
@@ -62,7 +62,7 @@ namespace UniversalMediaOS.Core.Search
                 using var client = new HttpClient();
                 client.DefaultRequestHeaders.Add("Accept", "application/json");
                 var content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
-                var response = await client.PostAsync(AniListUrl, content);
+                var response = await client.PostAsync(AniListUrl, content, token);
                 
                 if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
                 {
@@ -71,8 +71,8 @@ namespace UniversalMediaOS.Core.Search
                     {
                         delay = parsedDelay;
                     }
-                    await Task.Delay(TimeSpan.FromSeconds(delay));
-                    response = await client.PostAsync(AniListUrl, new StringContent(jsonBody, Encoding.UTF8, "application/json"));
+                    await Task.Delay(TimeSpan.FromSeconds(delay), token);
+                    response = await client.PostAsync(AniListUrl, new StringContent(jsonBody, Encoding.UTF8, "application/json"), token);
                 }
 
                 string responseJson = await response.Content.ReadAsStringAsync();
@@ -136,5 +136,7 @@ namespace UniversalMediaOS.Core.Search
         public string OfficialTitle { get; set; } = string.Empty;
         public string CoverImageUrl { get; set; } = string.Empty;
         public string Synopsis { get; set; } = string.Empty;
+        public string TargetEpisode { get; set; } = "1";
+        public string TargetProviderDomain { get; set; } = "https://gogoanime3.co/search.html?keyword={query}";
     }
 }

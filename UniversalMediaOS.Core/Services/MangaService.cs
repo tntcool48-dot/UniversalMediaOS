@@ -26,7 +26,7 @@ namespace UniversalMediaOS.Core.Services
     {
         private const string UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
-        public async Task<List<MangaSearchResult>> SearchMangaAsync(string query)
+        public async Task<List<MangaSearchResult>> SearchMangaAsync(string query, System.Threading.CancellationToken token = default)
         {
             var results = new List<MangaSearchResult>();
             if (string.IsNullOrWhiteSpace(query)) return results;
@@ -37,7 +37,7 @@ namespace UniversalMediaOS.Core.Services
                 client.DefaultRequestHeaders.Add("User-Agent", UserAgent);
 
                 string url = $"https://api.mangadex.org/manga?title={Uri.EscapeDataString(query)}&limit=15&includes[]=cover_art";
-                var response = await client.GetAsync(url);
+                var response = await client.GetAsync(url, token);
                 if (!response.IsSuccessStatusCode) return results;
 
                 string json = await response.Content.ReadAsStringAsync();

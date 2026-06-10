@@ -31,12 +31,24 @@ namespace UniversalMediaOS.WPF
         // Manga & Epub Reader context
         private readonly MangaService _mangaService;
         private readonly EpubReaderService _epubReader;
+        private UniversalMediaOS.Core.Search.MediaResult? _currentHeroMedia;
         private EpubBook? _currentEpubBook;
         private int _currentEpubChapterIndex = 0;
+
+        public System.Collections.ObjectModel.ObservableCollection<MediaResult> SearchResults { get; } = new();
+        public System.Collections.ObjectModel.ObservableCollection<UniversalMediaOS.Core.Services.MangaSearchResult> MangaResults { get; } = new();
+        public System.Collections.ObjectModel.ObservableCollection<UniversalMediaOS.Core.Configuration.CustomSource> CustomSources { get; } = new();
+        public System.Collections.ObjectModel.ObservableCollection<InstalledEpisodeItem> InstalledFiles { get; } = new();
+        public System.Collections.ObjectModel.ObservableCollection<string> MangaPages { get; } = new();
 
         public MainWindow()
         {
             InitializeComponent();
+            SearchResultsList.ItemsSource = SearchResults;
+            MangaResultsList.ItemsSource = MangaResults;
+            CustomSourcesGrid.ItemsSource = CustomSources;
+            InstalledFilesList.ItemsSource = InstalledFiles;
+            MangaPagesList.ItemsSource = MangaPages;
             _searchService = new FuzzyShieldSearch();
             string configPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "config.json");
             _swapper = new DomainHotSwapper(configPath);
@@ -49,6 +61,7 @@ namespace UniversalMediaOS.WPF
         }
 
         // ── Logging ──────────────────────────────────────────────
+        private readonly System.Collections.Generic.Queue<string> _logBuffer = new System.Collections.Generic.Queue<string>(150);
         private void Log(string msg)
         {
             string ts = DateTime.Now.ToString("HH:mm:ss");
@@ -56,10 +69,9 @@ namespace UniversalMediaOS.WPF
             System.Diagnostics.Debug.WriteLine(line);
             Dispatcher.Invoke(() =>
             {
-                if (StatusConsole.Text.Length > 8000)
-                    StatusConsole.Text = StatusConsole.Text.Substring(StatusConsole.Text.Length - 4000);
-
-                StatusConsole.Text += "\n" + line;
+                _logBuffer.Enqueue(line);
+                while (_logBuffer.Count > 150) _logBuffer.Dequeue();
+                StatusConsole.Text = string.Join("\n", _logBuffer);
                 ConsoleScroll.ScrollToEnd();
             });
         }
@@ -88,81 +100,125 @@ namespace UniversalMediaOS.WPF
             _epubReader.CleanCache();
         }
 
+        private void UpdateCollection<T>(System.Collections.ObjectModel.ObservableCollection<T> collection, IEnumerable<T>? newItems)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                collection.Clear();
+                if (newItems != null)
+                {
+                    foreach (var item in newItems)
+                        collection.Add(item);
+                }
+            });
+        }
+
         private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
-            var sysCheck = UniversalMediaOS.Core.Services.SystemResourceCheck.PerformStartupCheck();
-            Log(sysCheck.IsReady ? $"System OK — {sysCheck.Message}" : $"WARNING: {sysCheck.Message}");
-
-            try
+            await EpubWebBrowser.EnsureCoreWebView2Async(null);
+            await MangaWebBrowser.EnsureCoreWebView2Async(null);
+            _ = StartDownloadManagerLoopAsync();
+            WelcomeText.Text = "Booting Services...";
+            _ = Task.Run(async () =>
             {
-                var baseDir = AppDomain.CurrentDomain.BaseDirectory;
+                var sysCheck = UniversalMediaOS.Core.Services.SystemResourceCheck.PerformStartupCheck();
+                Log(sysCheck.IsReady ? $"System OK - {sysCheck.Message}" : $"WARNING: {sysCheck.Message}");
 
-                Log("Bootstrapping dependencies...");
-                var depBoot = new UniversalMediaOS.Core.Services.DependencyBootstrapper(baseDir);
-                await depBoot.EnsureDependenciesAsync();
-
-                Log("Generating scraper microservice...");
-                var conBoot = new UniversalMediaOS.Core.Services.ConsumetBootstrapper(baseDir);
-                await conBoot.EnsureLatestConsumetAsync();
-
-                Log("Initializing SQLite tracking database...");
-                using (var db = new UniversalMediaOS.Core.Data.DatabaseContext())
+                try
                 {
-                    db.Database.EnsureCreated();
-                }
+                    var baseDir = AppDomain.CurrentDomain.BaseDirectory;
 
-                // Bind Inline configuration fields
-                LoadConfigurationIntoUI();
+                    Log("Bootstrapping dependencies...");
+                    var depBoot = new UniversalMediaOS.Core.Services.DependencyBootstrapper(baseDir);
+                    await depBoot.EnsureDependenciesAsync();
 
-                // Start services
-                Log("Starting background services...");
-                _svcMgr = new UniversalMediaOS.Core.Services.ServiceManager();
-                string nodePath = Path.Combine(baseDir, "services", "node.exe");
-                string consumetPath = Path.Combine(baseDir, "services", "consumet", "index.js");
-                if (File.Exists(nodePath) && File.Exists(consumetPath))
-                {
-                    _svcMgr.StartService(nodePath, consumetPath, Path.Combine(baseDir, "services", "consumet"));
-                }
-                else
-                {
-                    Log("Tier-2 scraper files not found. Node.js features will be disabled.");
-                }
-                
-                string pythonPath = "python";
-                string scraperScript = Path.Combine(baseDir, "services", "python_scraper", "app.py");
-                if (File.Exists(scraperScript))
-                {
-                    _svcMgr.StartService(pythonPath, $"-m uvicorn app:app --port 8000 --host 127.0.0.1", Path.Combine(baseDir, "services", "python_scraper"));
-                }
+                    Log("Generating scraper microservice...");
+                    var conBoot = new UniversalMediaOS.Core.Services.ConsumetBootstrapper(baseDir);
+                    await conBoot.EnsureLatestConsumetAsync();
 
-                string qbitPath = UniversalMediaOS.Core.Services.DependencyBootstrapper.DetectedQBitPath;
-                if (!string.IsNullOrEmpty(qbitPath) && File.Exists(qbitPath))
-                {
-                    string port = _swapper.GetSetting("QBitPort");
-                    if (string.IsNullOrEmpty(port)) port = "8080";
-                    _svcMgr.StartService(qbitPath, $"--webui-port={port}", Path.GetDirectoryName(qbitPath) ?? baseDir);
-                }
-
-                WelcomeText.Text = "Trending Today";
-                Log("Fetching trending anime from AniList...");
-                var results = await _searchService.SearchAnimeAsync("");
-                SearchResultsList.ItemsSource = results;
-                if (results.Count > 0)
-                {
-                    HeroTitle.Text = results[0].OfficialTitle;
-                    HeroDescription.Text = results[0].Synopsis;
-                    if (!string.IsNullOrEmpty(results[0].CoverImageUrl))
+                    Log("Initializing SQLite tracking database...");
+                    using (var db = new UniversalMediaOS.Core.Data.DatabaseContext())
                     {
-                        HeroBannerImage.Source = new System.Windows.Media.Imaging.BitmapImage(new Uri(results[0].CoverImageUrl));
+                        db.Database.EnsureCreated();
                     }
+
+                    // Bind Inline configuration fields
+                    Dispatcher.Invoke(() => LoadConfigurationIntoUI());
+
+                    // Start services
+                    Log("Starting background services...");
+                    _svcMgr = new UniversalMediaOS.Core.Services.ServiceManager();
+                    string nodePath = Path.Combine(baseDir, "services", "node.exe");
+                    string consumetPath = Path.Combine(baseDir, "services", "consumet", "index.js");
+                    if (File.Exists(nodePath) && File.Exists(consumetPath))
+                    {
+                        _svcMgr.StartService(nodePath, consumetPath, Path.Combine(baseDir, "services", "consumet"));
+                    }
+                    else
+                    {
+                        Log("Tier-2 scraper files not found. Node.js features will be disabled.");
+                    }
+                    
+                    string pythonPath = "python";
+                    string scraperScript = Path.Combine(baseDir, "services", "python_scraper", "app.py");
+                    if (File.Exists(scraperScript))
+                    {
+                        _svcMgr.StartService(pythonPath, $"-m uvicorn app:app --port 8000 --host 127.0.0.1", Path.Combine(baseDir, "services", "python_scraper"));
+                    }
+
+                    string qbitPath = UniversalMediaOS.Core.Services.DependencyBootstrapper.DetectedQBitPath;
+                    if (!string.IsNullOrEmpty(qbitPath) && File.Exists(qbitPath))
+                    {
+                        string port = _swapper.GetSetting("QBitPort");
+                        if (string.IsNullOrEmpty(port)) port = "8080";
+                        _svcMgr.StartService(qbitPath, $"--webui-port={port}", Path.GetDirectoryName(qbitPath) ?? baseDir);
+                    }
+
+                    Dispatcher.Invoke(() => { 
+                        WelcomeText.Text = "Trending Today"; 
+                        SkeletonLoaderGrid.Visibility = Visibility.Visible;
+                    });
+                    Log("Fetching trending anime from AniList...");
+                    var results = await _searchService.SearchAnimeAsync("");
+                    
+                    if (results.Count > 0)
+                    {
+                        _currentHeroMedia = results[0];
+                        Dispatcher.Invoke(() => {
+                            HeroTitle.Text = _currentHeroMedia.OfficialTitle;
+                            HeroDescription.Text = _currentHeroMedia.Synopsis;
+                            try {
+                                var bitmap = new System.Windows.Media.Imaging.BitmapImage(new Uri(_currentHeroMedia.CoverImageUrl));
+                                HeroBannerImage.Source = bitmap;
+                            } catch { }
+                        });
+                    }
+
+                    Dispatcher.Invoke(() => {
+                        UpdateCollection(SearchResults, results);
+                        SkeletonLoaderGrid.Visibility = Visibility.Collapsed;
+                    });
+                    Dispatcher.Invoke(() =>
+                    {
+                        UpdateCollection(SearchResults, results);
+                        if (results.Count > 0)
+                        {
+                            HeroTitle.Text = results[0].OfficialTitle;
+                            HeroDescription.Text = results[0].Synopsis;
+                            if (!string.IsNullOrEmpty(results[0].CoverImageUrl))
+                            {
+                                HeroBannerImage.Source = new System.Windows.Media.Imaging.BitmapImage(new Uri(results[0].CoverImageUrl));
+                            }
+                        }
+                    });
+                    Log($"Loaded {results.Count} trending titles.");
                 }
-                Log($"Loaded {results.Count} trending titles.");
-            }
-            catch (Exception ex)
-            {
-                Log($"INIT ERROR: {ex.Message}");
-                MessageBox.Show($"Failed to initialize: {ex.Message}");
-            }
+                catch (Exception ex)
+                {
+                    Log($"INIT ERROR: {ex.Message}");
+                    Dispatcher.Invoke(() => MessageBox.Show($"Failed to initialize: {ex.Message}"));
+                }
+            });
         }
 
         // ── Load & Bind Configuration UI ─────────────────────────────
@@ -172,8 +228,7 @@ namespace UniversalMediaOS.WPF
 
             // Dynamic Custom Sources Grid
             var sources = _swapper.GetCustomSources();
-            CustomSourcesGrid.ItemsSource = null;
-            CustomSourcesGrid.ItemsSource = sources;
+            UpdateCollection(CustomSources, sources);
 
             // qBittorrent Configuration settings
             QBitPathTxt.Text = DependencyBootstrapper.DetectedQBitPath;
@@ -205,30 +260,82 @@ namespace UniversalMediaOS.WPF
             AutoPlayCheck.IsChecked = (autoPlay != "false");
 
             // Diagnostic Status Text
-            RefreshDiagnosticsText();
+            _ = RefreshDiagnosticsTextAsync();
         }
 
-        private void RefreshDiagnosticsText()
+        private async Task RefreshDiagnosticsTextAsync()
         {
             var baseDir = AppDomain.CurrentDomain.BaseDirectory;
             string nodePath = Path.Combine(baseDir, "services", "node.exe");
             string consumetPath = Path.Combine(baseDir, "services", "consumet", "index.js");
             string qbitDetected = DependencyBootstrapper.DetectedQBitPath;
 
-            bool isScraperActive = false;
-            try { 
-                using var client = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(1) };
-                isScraperActive = client.GetAsync("http://localhost:3000/").Result.IsSuccessStatusCode;
-            } catch { }
+            bool isConsumetActive = await PollServiceAsync("http://localhost:3000/");
+            bool isPythonActive = await PollServiceAsync("http://localhost:8000/");
 
             string status = $"Node.js Portable: {(File.Exists(nodePath) ? "✅ Active" : "❌ Missing")}\n" +
-                           $"Local Scraper Server: {(isScraperActive ? "✅ Active" : "❌ Offline")}\n" +
+                           $"Local Consumet Server: {(isConsumetActive ? "✅ Active" : "❌ Offline")}\n" +
+                           $"Python FFmpeg Scraper: {(isPythonActive ? "✅ Active" : "❌ Offline")}\n" +
                            $"qBittorrent client: {((!string.IsNullOrEmpty(qbitDetected) && File.Exists(qbitDetected)) ? $"✅ Detected at {qbitDetected}" : "⚠ WebUI fallback mode")}\n" +
                            $"SQLite tracking database: {(File.Exists(Path.Combine(baseDir, "media_os.db")) ? "✅ Connected" : "⚠ Auto-recreates on launch")}\n" +
                            $"Media Download Directory: {DownloadDirTxt.Text}\n" +
                            $"Current Resource load: {SystemResourceCheck.PerformStartupCheck().Message}";
 
-            SystemStatusTxt.Text = status;
+            Dispatcher.Invoke(() => SystemStatusTxt.Text = status);
+        }
+
+        private async Task<bool> PollServiceAsync(string url)
+        {
+            using var client = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+            int delay = 500;
+            for (int i = 0; i < 4; i++)
+            {
+                try
+                {
+                    var response = await client.GetAsync(url);
+                    if (response.IsSuccessStatusCode) return true;
+                }
+                catch { }
+                await Task.Delay(delay);
+                delay *= 2; // exponential backoff
+            }
+            return false;
+        }
+
+        private async Task StartDownloadManagerLoopAsync()
+        {
+            var host = "localhost";
+            var portStr = _swapper.GetSetting("QBitPort");
+            int port = string.IsNullOrEmpty(portStr) ? 8080 : int.Parse(portStr);
+            var logicGate = new UniversalMediaOS.Core.Routing.QBitLogicGate($"http://{host}:{port}");
+            await logicGate.AuthenticateAsync(null, _swapper.GetSetting("QBitUsername"), _swapper.GetSetting("QBitPassword"));
+
+            while (true)
+            {
+                try
+                {
+                    var info = await logicGate.GetGlobalTransferInfoAsync();
+                    if (info != null)
+                    {
+                        Dispatcher.Invoke(() =>
+                        {
+                            DlSpeedTxt.Text = FormatBytes(info.DlInfoSpeed) + "/s";
+                            UlSpeedTxt.Text = FormatBytes(info.UpInfoSpeed) + "/s";
+                        });
+                    }
+                }
+                catch { }
+
+                await Task.Delay(2000);
+            }
+        }
+
+        private string FormatBytes(long bytes)
+        {
+            if (bytes < 1024) return bytes + " B";
+            if (bytes < 1048576) return (bytes / 1024.0).ToString("F1") + " KB";
+            if (bytes < 1073741824) return (bytes / 1048576.0).ToString("F1") + " MB";
+            return (bytes / 1073741824.0).ToString("F1") + " GB";
         }
 
         private void SaveSettings_Click(object sender, RoutedEventArgs e)
@@ -263,7 +370,6 @@ namespace UniversalMediaOS.WPF
                 {
                     throw new Exception("Failed to write to config.json.");
                 }
-                RefreshDiagnosticsText();
             }
             catch (Exception ex)
             {
@@ -381,17 +487,24 @@ namespace UniversalMediaOS.WPF
             SwitchToConfig();
         }
 
+        private void MalTab_Click(object sender, MouseButtonEventArgs e)
+        {
+            SwitchToMal();
+        }
+
         private void SwitchToStorefront()
         {
             StorefrontTab.Tag = "Active";
             MangaTab.Tag = null;
             InstalledTab.Tag = null;
             ConfigTab.Tag = null;
+            MalTab.Tag = null;
 
             StorefrontView.Visibility = Visibility.Visible;
             MangaReaderView.Visibility = Visibility.Collapsed;
             InstalledView.Visibility = Visibility.Collapsed;
             ConfigView.Visibility = Visibility.Collapsed;
+            MalView.Visibility = Visibility.Collapsed;
 
             SearchBarPanel.Visibility = Visibility.Visible;
             SearchPlaceholderText.Text = "Fuzzy Shield Search (e.g. Bleach, Naruto)...";
@@ -403,11 +516,13 @@ namespace UniversalMediaOS.WPF
             StorefrontTab.Tag = null;
             InstalledTab.Tag = null;
             ConfigTab.Tag = null;
+            MalTab.Tag = null;
 
             StorefrontView.Visibility = Visibility.Collapsed;
             MangaReaderView.Visibility = Visibility.Visible;
             InstalledView.Visibility = Visibility.Collapsed;
             ConfigView.Visibility = Visibility.Collapsed;
+            MalView.Visibility = Visibility.Collapsed;
 
             SearchBarPanel.Visibility = Visibility.Visible;
             SearchPlaceholderText.Text = "Search Manga Dex (e.g. One Piece, Solo Leveling)...";
@@ -419,11 +534,13 @@ namespace UniversalMediaOS.WPF
             StorefrontTab.Tag = null;
             MangaTab.Tag = null;
             ConfigTab.Tag = null;
+            MalTab.Tag = null;
 
             StorefrontView.Visibility = Visibility.Collapsed;
             MangaReaderView.Visibility = Visibility.Collapsed;
             InstalledView.Visibility = Visibility.Visible;
             ConfigView.Visibility = Visibility.Collapsed;
+            MalView.Visibility = Visibility.Collapsed;
 
             SearchBarPanel.Visibility = Visibility.Collapsed;
             RefreshInstalledEpisodes();
@@ -435,14 +552,33 @@ namespace UniversalMediaOS.WPF
             StorefrontTab.Tag = null;
             MangaTab.Tag = null;
             InstalledTab.Tag = null;
+            MalTab.Tag = null;
 
             StorefrontView.Visibility = Visibility.Collapsed;
             MangaReaderView.Visibility = Visibility.Collapsed;
             InstalledView.Visibility = Visibility.Collapsed;
             ConfigView.Visibility = Visibility.Visible;
+            MalView.Visibility = Visibility.Collapsed;
 
             SearchBarPanel.Visibility = Visibility.Collapsed;
             LoadConfigurationIntoUI();
+        }
+
+        private void SwitchToMal()
+        {
+            MalTab.Tag = "Active";
+            StorefrontTab.Tag = null;
+            MangaTab.Tag = null;
+            InstalledTab.Tag = null;
+            ConfigTab.Tag = null;
+
+            StorefrontView.Visibility = Visibility.Collapsed;
+            MangaReaderView.Visibility = Visibility.Collapsed;
+            InstalledView.Visibility = Visibility.Collapsed;
+            ConfigView.Visibility = Visibility.Collapsed;
+            MalView.Visibility = Visibility.Visible;
+
+            SearchBarPanel.Visibility = Visibility.Collapsed;
         }
 
         private void RefreshInstalledEpisodes()
@@ -464,12 +600,12 @@ namespace UniversalMediaOS.WPF
                     })
                     .ToList();
 
-                InstalledFilesList.ItemsSource = files;
+                UpdateCollection(InstalledFiles, files);
                 InstalledEmptyText.Visibility = files.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
             }
             else
             {
-                InstalledFilesList.ItemsSource = null;
+                UpdateCollection(InstalledFiles, new List<InstalledEpisodeItem>());
                 InstalledEmptyText.Visibility = Visibility.Visible;
             }
         }
@@ -510,7 +646,7 @@ namespace UniversalMediaOS.WPF
         }
 
         // ── Search Hub Logic (Anime Search / Manga Search Selector) ──
-        private async Task ExecuteSearchAsync()
+        private async Task ExecuteSearchAsync(System.Threading.CancellationToken token = default)
         {
             string query = SearchBox.Text.Trim();
             bool isStorefront = StorefrontTab.Tag?.ToString() == "Active";
@@ -525,28 +661,43 @@ namespace UniversalMediaOS.WPF
                     if (string.IsNullOrWhiteSpace(query))
                     {
                         WelcomeText.Text = "Trending Today";
-                        try { SearchResultsList.ItemsSource = await _searchService.SearchAnimeAsync(""); } catch (Exception ex) { Log($"Failed to load trending: {ex.Message}"); }
+                        SearchEmptyText.Visibility = Visibility.Collapsed;
+                        SkeletonLoaderGrid.Visibility = Visibility.Visible;
+                        UpdateCollection(SearchResults, new List<MediaResult>());
+                        try { 
+                            var res = await _searchService.SearchAnimeAsync("", token); 
+                            UpdateCollection(SearchResults, res); 
+                            SearchEmptyText.Visibility = res.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+                        } catch (Exception ex) { Log($"Failed to load trending: {ex.Message}"); }
+                        finally { SkeletonLoaderGrid.Visibility = Visibility.Collapsed; }
                         return;
                     }
 
-                    WelcomeText.Text = "Searching...";
-                    SearchResultsList.ItemsSource = null;
+                    WelcomeText.Text = "Search Results";
+                    SearchEmptyText.Visibility = Visibility.Collapsed;
+                    SkeletonLoaderGrid.Visibility = Visibility.Visible;
+                    UpdateCollection(SearchResults, new List<MediaResult>());
                     Log($"Searching AniList GQL for anime '{query}'...");
 
-                    var results = await _searchService.SearchAnimeAsync(query);
-                    WelcomeText.Text = "Search Results";
-                    SearchResultsList.ItemsSource = results;
+                    var results = await _searchService.SearchAnimeAsync(query, token);
+                    SkeletonLoaderGrid.Visibility = Visibility.Collapsed;
+                    SearchEmptyText.Visibility = results.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+                    UpdateCollection(SearchResults, results);
                     Log($"Found {results.Count} titles.");
                 }
                 else if (isManga)
                 {
                     if (string.IsNullOrWhiteSpace(query)) return;
 
-                    MangaResultsList.ItemsSource = null;
+                    SkeletonLoaderGrid.Visibility = Visibility.Visible;
+                    MangaEmptyText.Visibility = Visibility.Collapsed;
+                    UpdateCollection(MangaResults, new List<UniversalMediaOS.Core.Services.MangaSearchResult>());
                     Log($"Searching MangaDex API for manga '{query}'...");
                     
-                    var results = await _mangaService.SearchMangaAsync(query);
-                    MangaResultsList.ItemsSource = results;
+                    var results = await _mangaService.SearchMangaAsync(query, token);
+                    SkeletonLoaderGrid.Visibility = Visibility.Collapsed;
+                    MangaEmptyText.Visibility = results.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+                    UpdateCollection(MangaResults, results);
                     Log($"Found {results.Count} manga titles.");
                 }
             }
@@ -562,16 +713,28 @@ namespace UniversalMediaOS.WPF
             finally
             {
                 SearchBox.IsEnabled = true;
+                SkeletonLoaderGrid.Visibility = Visibility.Collapsed;
                 SearchBox.Focus();
             }
         }
 
-        private async void SearchBox_KeyDown(object sender, KeyEventArgs e)
+        private System.Threading.CancellationTokenSource? _searchCts;
+
+        private async void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
         {
-            if (e.Key == Key.Enter) 
+            _searchCts?.Cancel();
+            _searchCts = new System.Threading.CancellationTokenSource();
+            var token = _searchCts.Token;
+
+            try
             {
-                await ExecuteSearchAsync();
+                await Task.Delay(350, token);
+                if (!token.IsCancellationRequested)
+                {
+                    await ExecuteSearchAsync(token);
+                }
             }
+            catch (TaskCanceledException) { }
         }
 
         // ── Anime Watch Trigger Handler ──────────────────────────────
@@ -599,39 +762,14 @@ namespace UniversalMediaOS.WPF
                 string savedAudio = _swapper.GetSetting("DefaultAudioPref");
                 string audioPref = (savedAudio == "Dub") ? " Dub" : "";
 
-                // Fetch episode input
+                // Fetch episode input and provider domain
                 string episodeNum = "1";
-                var parentPanel = (btn.Parent as Grid)?.Parent as StackPanel;
-                
-                // Card panel might nest differently
-                TextBox? epBox = null;
-                if (parentPanel != null)
-                {
-                    var grid = parentPanel.Children.OfType<Grid>().FirstOrDefault();
-                    if (grid != null)
-                    {
-                        epBox = grid.Children.OfType<TextBox>().FirstOrDefault();
-                    }
-                }
-                
-                if (epBox != null)
-                {
-                    episodeNum = epBox.Text;
-                }
-
-                // Resolve selected dynamic Custom Provider pattern from combobox on card
                 string providerDomain = "https://gogoanime3.co/search.html?keyword={query}";
-                if (parentPanel != null)
+                
+                if (btn.DataContext is UniversalMediaOS.Core.Search.MediaResult dataContextResult)
                 {
-                    var grid = parentPanel.Children.OfType<Grid>().FirstOrDefault();
-                    if (grid != null)
-                    {
-                        var combo = grid.Children.OfType<ComboBox>().FirstOrDefault();
-                        if (combo != null && combo.SelectedItem is ComboBoxItem item && item.Tag is string pattern)
-                        {
-                            providerDomain = pattern;
-                        }
-                    }
+                    episodeNum = dataContextResult.TargetEpisode;
+                    providerDomain = dataContextResult.TargetProviderDomain;
                 }
 
                 Action<string> logger = (msg) => Log(msg);
@@ -797,7 +935,7 @@ namespace UniversalMediaOS.WPF
                     
                     try
                     {
-                        MangaWebBrowser.Navigate(new Uri(chapter.ExternalUrl));
+                        MangaWebBrowser.CoreWebView2.Navigate(chapter.ExternalUrl);
                     }
                     catch (Exception ex)
                     {
@@ -816,10 +954,10 @@ namespace UniversalMediaOS.WPF
                         {
                             MangaPagesList.ScrollIntoView(MangaPagesList.Items[0]);
                         }
-                        MangaPagesList.ItemsSource = null;
+                        UpdateCollection(MangaPages, new List<string>());
 
                         var pages = await _mangaService.GetPageUrlsAsync(chapter.Id);
-                        MangaPagesList.ItemsSource = pages;
+                        UpdateCollection(MangaPages, pages);
                         Log($"Manga pages loaded: {pages.Count} images. Swipe grid ready.");
                     }
                     catch (Exception ex)
@@ -878,7 +1016,7 @@ namespace UniversalMediaOS.WPF
                 try
                 {
                     // Render locally inside the Browser control
-                    EpubWebBrowser.Navigate(new Uri(filePath));
+                    EpubWebBrowser.CoreWebView2.Navigate(filePath);
                     Log($"Rendering Epub chapter {_currentEpubChapterIndex + 1}/{_currentEpubBook.ChapterFiles.Count}");
                 }
                 catch (Exception ex)
@@ -944,16 +1082,31 @@ namespace UniversalMediaOS.WPF
             Log("Diagnostics updated.");
         }
 
+        private void ReadHeroManga_Click(object sender, RoutedEventArgs e)
+        {
+            if (_currentHeroMedia != null)
+            {
+                SwitchToManga();
+                SearchBox.Text = _currentHeroMedia.OfficialTitle;
+                _ = ExecuteSearchAsync();
+            }
+        }
+
         private async void PlayHero_Click(object sender, RoutedEventArgs e)
         {
             var btn = sender as Button;
             if (btn != null) { btn.IsEnabled = false; btn.Content = "Loading..."; }
 
-            // Spotlights Frieren Ep 1
-            string title = "Frieren: Beyond Journey's End";
+            if (_currentHeroMedia == null) 
+            {
+                if (btn != null) { btn.IsEnabled = true; btn.Content = "▶ Play Episode 1"; }
+                return;
+            }
+
+            string title = _currentHeroMedia.OfficialTitle;
             string episode = "1";
             string audioPref = (_swapper.GetSetting("DefaultAudioPref") == "Dub") ? " Dub" : "";
-            int mediaId = 156115; // AniList Frieren ID
+            int mediaId = _currentHeroMedia.IdMal > 0 ? _currentHeroMedia.IdMal : _currentHeroMedia.Id; 
             
             string providerDomain = "https://gogoanime3.co/search.html?keyword={query}";
             if (HeroProviderCombo.SelectedItem is ComboBoxItem item && item.Tag is string pattern)

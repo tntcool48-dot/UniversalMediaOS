@@ -57,10 +57,10 @@ namespace UniversalMediaOS.Core.Routing
             Directory.CreateDirectory(_downloadDir);
         }
 
-        public async Task<List<TorrentResult>> GetTorrentsAsync(string query, string episodeId, Action<string>? onStatusUpdate = null)
+        public async Task<List<TorrentResult>> GetTorrentsAsync(string query, string episodeId, Action<string>? onStatusUpdate = null, System.Threading.CancellationToken token = default)
         {
             string fullQuery = $"{query} {episodeId}".Trim();
-            var torrents = await _rssParser.SearchAsync(fullQuery, onStatusUpdate);
+            var torrents = await _rssParser.SearchAsync(fullQuery, onStatusUpdate, token);
 
             // 1. Filter by season to prevent mismatches (e.g. S2 under S1 query)
             int targetSeason = ExtractSeasonNumber(query);
@@ -104,7 +104,7 @@ namespace UniversalMediaOS.Core.Routing
             return await _injectMagnetInternalAsync(bestTorrent, Log);
         }
 
-        public async Task<PlaybackSource?> ResolveBestSourceAsync(string query, string episodeId, string providerDomain, Action<string>? onStatusUpdate = null, SourceTier minimumTier = SourceTier.Tier1_LocalP2P)
+        public async Task<PlaybackSource?> ResolveBestSourceAsync(string query, string episodeId, string providerDomain, Action<string>? onStatusUpdate = null, SourceTier minimumTier = SourceTier.Tier1_LocalP2P, System.Threading.CancellationToken token = default)
         {
             void Log(string msg) { onStatusUpdate?.Invoke(msg); System.Diagnostics.Debug.WriteLine(msg); }
 
@@ -115,7 +115,7 @@ namespace UniversalMediaOS.Core.Routing
                 {
                     string fullQuery = $"{query} {episodeId}".Trim();
                     Log($"> [Tier 1] Querying Nyaa RSS for '{fullQuery}'...");
-                    var torrents = await _rssParser.SearchAsync(fullQuery);
+                    var torrents = await _rssParser.SearchAsync(fullQuery, null, token);
 
                     // Filter by season to prevent mismatches (e.g. S2 under S1 query)
                     int targetSeason = ExtractSeasonNumber(query);
@@ -188,7 +188,7 @@ namespace UniversalMediaOS.Core.Routing
                     if (string.IsNullOrEmpty(consumetBase)) consumetBase = "http://localhost:3000";
                     string searchUrl = $"{consumetBase.TrimEnd('/')}/anime/gogoanime/{Uri.EscapeDataString(query)}";
                     Log($"> [Tier 2] Searching: {searchUrl}");
-                    var searchResp = await GetWithRetriesAsync(searchUrl, Log);
+                    var searchResp = await GetWithRetriesAsync(searchUrl, Log, token);
 
                     if (searchResp.IsSuccessStatusCode)
                     {
@@ -213,7 +213,7 @@ namespace UniversalMediaOS.Core.Routing
                             if (string.IsNullOrEmpty(consumetBase2)) consumetBase2 = "http://localhost:3000";
                             string watchUrl = $"{consumetBase2.TrimEnd('/')}/anime/gogoanime/watch/{Uri.EscapeDataString(resolvedEpisodeId)}";
                             Log($"> [Tier 2] Fetching stream: {watchUrl}");
-                            var watchResp = await GetWithRetriesAsync(watchUrl, Log);
+                            var watchResp = await GetWithRetriesAsync(watchUrl, Log, token);
 
                             if (watchResp.IsSuccessStatusCode)
                             {
@@ -500,14 +500,14 @@ namespace UniversalMediaOS.Core.Routing
             return 1; // Default to Season 1
         }
 
-        private async Task<HttpResponseMessage> GetWithRetriesAsync(string url, Action<string> log)
+        private async Task<HttpResponseMessage> GetWithRetriesAsync(string url, Action<string> log, System.Threading.CancellationToken token = default)
         {
             int maxRetries = 3;
             for (int i = 0; i < maxRetries; i++)
             {
                 try
                 {
-                    var response = await _httpClient.GetAsync(url);
+                    var response = await _httpClient.GetAsync(url, token);
                     if (response.IsSuccessStatusCode)
                         return response;
                         
@@ -521,12 +521,12 @@ namespace UniversalMediaOS.Core.Routing
                 if (i < maxRetries - 1)
                 {
                     int delayMs = (int)Math.Pow(2, i) * 1000;
-                    await Task.Delay(delayMs);
+                    await Task.Delay(delayMs, token);
                 }
             }
             
             // Final attempt to return whatever response we have, or a failed message
-            return await _httpClient.GetAsync(url);
+            return await _httpClient.GetAsync(url, token);
         }
     }
 }

@@ -202,5 +202,43 @@ namespace UniversalMediaOS.Core.Routing
 
             return files;
         }
+
+        public async Task<QBitTransferInfo?> GetGlobalTransferInfoAsync()
+        {
+            if (string.IsNullOrEmpty(Cookie)) return null;
+
+            try
+            {
+                var request = new HttpRequestMessage(HttpMethod.Get, $"{_qbitUrl}/api/v2/transfer/info");
+                request.Headers.Add("Cookie", Cookie);
+
+                var response = await _httpClient.SendAsync(request);
+                if (response.IsSuccessStatusCode)
+                {
+                    var json = await response.Content.ReadAsStringAsync();
+                    using var doc = JsonDocument.Parse(json);
+                    
+                    var info = new QBitTransferInfo();
+                    if (doc.RootElement.TryGetProperty("dl_info_speed", out var dlSpeed))
+                        info.DlInfoSpeed = dlSpeed.GetInt64();
+                    
+                    if (doc.RootElement.TryGetProperty("up_info_speed", out var upSpeed))
+                        info.UpInfoSpeed = upSpeed.GetInt64();
+                        
+                    return info;
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Failed to get transfer info: {ex.Message}");
+            }
+            return null;
+        }
+    }
+
+    public class QBitTransferInfo
+    {
+        public long DlInfoSpeed { get; set; }
+        public long UpInfoSpeed { get; set; }
     }
 }

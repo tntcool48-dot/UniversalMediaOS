@@ -5,7 +5,8 @@
         xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         Title="Playback Theater" Height="760" Width="1350"
         Background="#0B0F19" Foreground="White" FontFamily="Segoe UI"
-        WindowStartupLocation="CenterScreen">
+        WindowStartupLocation="CenterScreen"
+        MouseMove="Window_MouseMove">
     <Grid>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="*"/>

@@ -35,13 +35,14 @@ namespace UniversalMediaOS.Core.Archiving
 
             string qbitPort = _config.GetSetting("QBitPort");
             if (string.IsNullOrEmpty(qbitPort)) qbitPort = "8080";
-            _qbit = new QBitLogicGate($"http://localhost:{qbitPort}");
+            string qbitHost = _config.GetSetting("QBitHost") ?? "localhost";
+            _qbit = new QBitLogicGate($"http://{qbitHost}:{qbitPort}");
         }
 
         /// <summary>
         /// Searches Nyaa/AnimeTosho for a season batch torrent, downloads it via P2P, and validates all media files.
         /// </summary>
-        public async Task DownloadSeasonAsync(
+        public async Task<bool> DownloadSeasonAsync(
             string animeTitle, 
             Action<string> log, 
             Action<double> progressUpdate)
@@ -56,7 +57,7 @@ namespace UniversalMediaOS.Core.Archiving
                 if (torrents.Count == 0)
                 {
                     log($"[P2P Season Downloader] ERROR: No torrents found matching \"{animeTitle}\" on Nyaa or AnimeTosho feeds.");
-                    return;
+                    return false;
                 }
 
                 // 2. Select the best batch torrent based on seeders and batch markers (e.g. "Batch", "01-", "01~", "Season")
@@ -64,7 +65,7 @@ namespace UniversalMediaOS.Core.Archiving
                 if (bestTorrent == null)
                 {
                     log("[P2P Season Downloader] ERROR: Could not identify a valid healthy batch torrent matching parameters.");
-                    return;
+                    return false;
                 }
 
                 log($"[P2P Season Downloader] SELECTED BATCH: \"{bestTorrent.Title}\" ({bestTorrent.Seeders} seeders) from {bestTorrent.Source}");
@@ -140,7 +141,7 @@ namespace UniversalMediaOS.Core.Archiving
                 if (!downloadComplete || downloadedFiles.Count == 0)
                 {
                     log("[P2P Season Downloader] ERROR: Season download process timed out or was interrupted.");
-                    return;
+                    return false;
                 }
 
                 // 5. Scan and Validate all video files in the batch
@@ -155,7 +156,7 @@ namespace UniversalMediaOS.Core.Archiving
                 if (videoFiles.Count == 0)
                 {
                     log("[P2P Season Downloader] WARNING: Downloaded files contain no recognized video extension formats.");
-                    return;
+                    return false;
                 }
 
                 log($"[P2P Season Downloader] Found {videoFiles.Count} video files in batch. Checking integrity...");
@@ -205,10 +206,12 @@ namespace UniversalMediaOS.Core.Archiving
 
                 log($"[P2P Season Downloader] BATCH PROCESS COMPLETED! Season items verified: {passed} OK | {failed} Corrupted/Purged.");
                 progressUpdate(100);
+                return passed > 0;
             }
             catch (Exception ex)
             {
                 log($"[P2P Season Downloader] CRITICAL ERROR during batch process: {ex.Message}");
+                return false;
             }
         }
 
@@ -285,9 +288,9 @@ namespace UniversalMediaOS.Core.Archiving
             if (seasonMatched.Count == 0) return null;
 
             // 3. Filter by User Audio Preference
-            string audioPref = _config.GetSetting("AudioPreference");
+            string pref = _config.GetSetting("DefaultAudioPref");
             var candidates = seasonMatched;
-            if (audioPref == "Dubbed (English)")
+            if (pref == "Dubbed (English)")
             {
                 var dubs = seasonMatched.Where(t => t.Title.IndexOf("Dub", StringComparison.OrdinalIgnoreCase) >= 0 || t.Title.IndexOf("Dual Audio", StringComparison.OrdinalIgnoreCase) >= 0).ToList();
                 if (dubs.Count > 0) candidates = dubs;
@@ -380,7 +383,7 @@ namespace UniversalMediaOS.Core.Archiving
 
                     if (manager.Progress >= 100.0)
                     {
-                        log("[MonoTorrent] Torrent download complete!");
+                        log("[Season Downloader] Torrent parsing success! Download complete.");
 
                         foreach (var f in manager.Files)
                         {

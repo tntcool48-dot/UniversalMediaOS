@@ -29,6 +29,7 @@ namespace UniversalMediaOS.WPF
         private string _showTitle = string.Empty;
         private string _episodeNo = "1";
         private string _audioPref = "";
+        private Task? _malUpdateTask;
         private string _mediaUrlOrPath = string.Empty;
         
         // Auto-Resume tracker
@@ -44,6 +45,7 @@ namespace UniversalMediaOS.WPF
 
         // MAL progress sync
         private bool _malSynced = false;
+        private System.Windows.Threading.DispatcherTimer _osdTimer;
 
         public PlaybackTheater()
         {
@@ -61,16 +63,40 @@ namespace UniversalMediaOS.WPF
             _mediaPlayer.Paused += MediaPlayer_Paused;
             _mediaPlayer.Playing += MediaPlayer_Playing;
 
+            _osdTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+            _osdTimer.Tick += (s, e) => 
+            {
+                _osdTimer.Stop();
+                Mouse.OverrideCursor = Cursors.None;
+                ControlsOverlay.Visibility = Visibility.Collapsed;
+            };
+            _osdTimer.Start();
+
             // Dispatcher Timers
             _progressTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
             _progressTimer.Tick += ProgressTimer_Tick;
             _progressTimer.Start();
 
-            _malTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+            _malTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
             _malTimer.Tick += MalTimer_Tick;
             _malTimer.Start();
 
             Closed += PlaybackTheater_Closed;
+            MouseMove += Window_MouseMove;
+        }
+
+        private void Window_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (ControlsOverlay.Visibility == Visibility.Collapsed)
+            {
+                Mouse.OverrideCursor = null;
+                ControlsOverlay.Visibility = Visibility.Visible;
+            }
+            if (_osdTimer != null)
+            {
+                _osdTimer.Stop();
+                _osdTimer.Start();
+            }
         }
 
         public async Task InitializeMediaAsync(int mediaId, int idMal, string showTitle, string episodeNo, string audioPref)
@@ -123,6 +149,11 @@ namespace UniversalMediaOS.WPF
         {
             _progressTimer.Stop();
             _malTimer.Stop();
+
+            if (_malUpdateTask != null && !_malUpdateTask.IsCompleted)
+            {
+                try { _malUpdateTask.Wait(TimeSpan.FromSeconds(3)); } catch { }
+            }
 
             // Save final resume timestamp
             SavePlaybackPosition(force: true);
@@ -345,23 +376,26 @@ namespace UniversalMediaOS.WPF
             {
                 _malTimer.Stop();
 
-                try
+                _malUpdateTask = Task.Run(async () =>
                 {
-                    var token = new UniversalMediaOS.Core.Configuration.DomainHotSwapper(System.IO.Path.Combine(System.AppDomain.CurrentDomain.BaseDirectory, "config.json")).GetSetting("MalOAuthToken");
-                    if (!string.IsNullOrEmpty(token) && _idMal > 0)
+                    try
                     {
-                        var mal = new UniversalMediaOS.Core.Tracking.MalRestApi(token);
-                        bool ok = await mal.UpdateProgressAsync(_idMal, int.TryParse(_episodeNo, out int ep) ? ep : 1);
-                        if (ok)
+                        var token = new UniversalMediaOS.Core.Configuration.DomainHotSwapper(System.IO.Path.Combine(System.AppDomain.CurrentDomain.BaseDirectory, "config.json")).GetSetting("MalOAuthToken");
+                        if (!string.IsNullOrEmpty(token) && _idMal > 0)
                         {
-                            _malSynced = true;
+                            var mal = new UniversalMediaOS.Core.Tracking.MalRestApi(token);
+                            bool ok = await mal.UpdateProgressAsync(_idMal, int.TryParse(_episodeNo, out int ep) ? ep : 1);
+                            if (ok)
+                            {
+                                _malSynced = true;
+                            }
                         }
                     }
-                }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine($"[MAL Sync] Error: {ex.Message}");
-                }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[MAL Sync] Error: {ex.Message}");
+                    }
+                });
             }
         }
 

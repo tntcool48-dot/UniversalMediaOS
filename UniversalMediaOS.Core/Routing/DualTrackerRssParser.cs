@@ -15,7 +15,7 @@ namespace UniversalMediaOS.Core.Routing
         private const string NyaaUrl = "https://nyaa.si/?page=rss&c=1_2&f=0&q=";
         private const string AnimeToshoUrl = "https://feed.animetosho.org/rss2?q=";
 
-        public async Task<List<TorrentResult>> SearchAsync(string query, Action<string> logger = null)
+        public async Task<List<TorrentResult>> SearchAsync(string query, Action<string> logger = null, System.Threading.CancellationToken token = default)
         {
             void Log(string msg) { logger?.Invoke(msg); System.Diagnostics.Debug.WriteLine(msg); }
             var results = new List<TorrentResult>();
@@ -23,7 +23,7 @@ namespace UniversalMediaOS.Core.Routing
             try 
             {
                 Log("> [Tier 1] Fetching RSS feed from Nyaa...");
-                results = await FetchAndParseFeed(NyaaUrl + Uri.EscapeDataString(query), "Nyaa", Log);
+                results = await FetchAndParseFeed(NyaaUrl + Uri.EscapeDataString(query), "Nyaa", Log, token);
                 if (results.Count > 0)
                 {
                     Log($"> [Tier 1] Found {results.Count} results on Nyaa!");
@@ -43,15 +43,13 @@ namespace UniversalMediaOS.Core.Routing
             try 
             {
                 Log("> [Tier 1] Falling back to AnimeTosho RSS...");
-                results = await FetchAndParseFeed(AnimeToshoUrl + Uri.EscapeDataString(query), "AnimeTosho", Log);
+                results = await FetchAndParseFeed(AnimeToshoUrl + Uri.EscapeDataString(query), "AnimeTosho", Log, token);
                 if (results.Count > 0)
                 {
                     Log($"> [Tier 1] Found {results.Count} results on AnimeTosho!");
+                    return results;
                 }
-                else
-                {
-                    Log("> [Tier 1] AnimeTosho returned 0 results.");
-                }
+                Log("> [Tier 1] AnimeTosho returned 0 results.");
             }
             catch (TaskCanceledException ex)
             {
@@ -65,20 +63,23 @@ namespace UniversalMediaOS.Core.Routing
             return results;
         }
 
-        private async Task<List<TorrentResult>> FetchAndParseFeed(string url, string source, Action<string> log)
+        private async Task<List<TorrentResult>> FetchAndParseFeed(string url, string source, Action<string> log, System.Threading.CancellationToken token = default)
         {
             var results = new List<TorrentResult>();
             using var client = new HttpClient();
             client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
             
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            using var internalCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(internalCts.Token, token);
+            var mergedToken = linkedCts.Token;
+
             log($"> [Tier 1] Awaiting {source} response (10s timeout)...");
             
-            using var response = await client.GetAsync(url, cts.Token);
+            using var response = await client.GetAsync(url, mergedToken);
             response.EnsureSuccessStatusCode();
             
             log($"> [Tier 1] Reading {source} stream into memory...");
-            var xmlContent = await response.Content.ReadAsStringAsync(cts.Token);
+            var xmlContent = await response.Content.ReadAsStringAsync(mergedToken);
             using var stringReader = new System.IO.StringReader(xmlContent);
             using var reader = XmlReader.Create(stringReader);
             var feed = SyndicationFeed.Load(reader);
