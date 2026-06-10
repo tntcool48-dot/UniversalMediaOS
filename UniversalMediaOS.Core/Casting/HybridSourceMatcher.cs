@@ -136,20 +136,7 @@ namespace UniversalMediaOS.Core.Casting
                 System.Diagnostics.Debug.WriteLine($"Casting service error: {ex.Message}");
             }
 
-            // Stub fallback if network down
-            if (castList.Count == 0)
-            {
-                var stub = new DubCastHash
-                {
-                    MediaId = mediaId,
-                    ShowTitle = string.IsNullOrEmpty(showTitle) ? "Cowboy Bebop" : showTitle,
-                    CharacterName = "Spike Spiegel",
-                    CharacterImageUrl = "https://images.unsplash.com/photo-1541562232579-512a21360020?w=100",
-                    VoiceActorName = "Steve Blum",
-                    VoiceActorImageUrl = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100"
-                };
-                castList.Add(stub);
-            }
+
 
             return castList;
         }

@@ -319,7 +319,7 @@ namespace UniversalMediaOS.Core.Archiving
             if (match.Success) return int.Parse(match.Groups[1].Value);
 
             // 2. Check "S X" (e.g. S1, S2, S01, S02) with word boundary
-            match = Regex.Match(title, @"\bS(\d+)\b", RegexOptions.IgnoreCase);
+            match = Regex.Match(title, @"\bS(\d+)(?=E\d|\b)", RegexOptions.IgnoreCase);
             if (match.Success) return int.Parse(match.Groups[1].Value);
 
             // 3. Check "Xnd Season" ordinals (e.g. 2nd Season, 3rd Season)
@@ -378,12 +378,15 @@ namespace UniversalMediaOS.Core.Archiving
                         if (progress >= 100.0) break;
                     }
 
-                    log("[MonoTorrent] Torrent download complete!");
-
-                    foreach (var f in manager.Files)
+                    if (manager.Progress >= 100.0)
                     {
-                        string fullPath = f.FullPath;
-                        downloadedFiles.Add(fullPath);
+                        log("[MonoTorrent] Torrent download complete!");
+
+                        foreach (var f in manager.Files)
+                        {
+                            string fullPath = f.FullPath;
+                            downloadedFiles.Add(fullPath);
+                        }
                     }
 
                     await manager.StopAsync();

@@ -58,10 +58,7 @@ namespace UniversalMediaOS.Core.Routing
             return false;
         }
 
-        public async Task<bool> AddMagnetAsync(string magnetLink)
-        {
-            return await AddMagnetAsync(magnetLink, null);
-        }
+
 
         public async Task<bool> AddMagnetAsync(string magnetLink, string savePath)
         {
@@ -96,24 +93,7 @@ namespace UniversalMediaOS.Core.Routing
             return false;
         }
 
-        public async Task<bool> DeleteTorrentAsync(string infoHash)
-        {
-            if (string.IsNullOrEmpty(Cookie)) return false;
-            try
-            {
-                var request = new HttpRequestMessage(HttpMethod.Post, $"{_qbitUrl}/api/v2/torrents/delete");
-                request.Headers.Add("Cookie", Cookie);
-                var content = new FormUrlEncodedContent(new[]
-                {
-                    new KeyValuePair<string, string>("hashes", infoHash),
-                    new KeyValuePair<string, string>("deleteFiles", "true")
-                });
-                request.Content = content;
-                var response = await _httpClient.SendAsync(request);
-                return response.IsSuccessStatusCode;
-            }
-            catch { return false; }
-        }
+
 
         /// <summary>
         /// Polls the qBittorrent WebUI for download progress until the torrent completes or times out.

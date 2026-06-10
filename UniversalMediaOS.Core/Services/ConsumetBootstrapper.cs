@@ -62,7 +62,7 @@ function fetch(targetUrl, opts = {}) {
     const parsed = new URL(targetUrl);
     const options = {
       hostname: parsed.hostname,
-      port: parsed.port || 443,
+      port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
       path: parsed.pathname + parsed.search,
       method: opts.method || 'GET',
       headers: {

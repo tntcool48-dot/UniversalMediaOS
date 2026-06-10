@@ -150,6 +150,7 @@ namespace UniversalMediaOS.Core.Configuration
                 { "CustomSources", "[{\"Name\":\"GogoAnime\",\"Url\":\"https://gogoanime3.co/search.html?keyword={query}\"},{\"Name\":\"AnimePahe\",\"Url\":\"https://animepahe.ru/anime/{query}\"},{\"Name\":\"Zoro\",\"Url\":\"https://hianime.to/search?keyword={query}\"}]" },
 
                 // qBittorrent settings
+                { "QBitHost", "localhost" },
                 { "QBitPort", "8080" },
                 { "QBitUsername", "admin" },
                 { "QBitPassword", "adminadmin" },

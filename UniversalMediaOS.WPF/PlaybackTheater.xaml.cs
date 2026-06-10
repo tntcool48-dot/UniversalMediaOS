@@ -98,12 +98,12 @@ namespace UniversalMediaOS.WPF
                         _outroStart = skipTimes.Outro.Start * 1000;
                         _outroEnd = skipTimes.Outro.End * 1000;
                     }
-                    Console.WriteLine($"[AniSkip] Loaded OP: {_introStart/1000}s - {_introEnd/1000}s | ED: {_outroStart/1000}s - {_outroEnd/1000}s");
+                    System.Diagnostics.Debug.WriteLine($"[AniSkip] Loaded OP: {_introStart/1000}s - {_introEnd/1000}s | ED: {_outroStart/1000}s - {_outroEnd/1000}s");
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[AniSkip] Fetch failed: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"[AniSkip] Fetch failed: {ex.Message}");
             }
 
             // Warm up Casting cache in background
@@ -115,7 +115,7 @@ namespace UniversalMediaOS.WPF
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[Casting] Cache warm up failed: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"[Casting] Cache warm up failed: {ex.Message}");
             }
         }
 
@@ -158,7 +158,7 @@ namespace UniversalMediaOS.WPF
             }
             
             _mediaPlayer.Play(media);
-            Console.WriteLine($"[VLC] PlayLocalOrHttp. isLocal={isLocal} | path={url} | referer={referer}");
+            System.Diagnostics.Debug.WriteLine($"[VLC] PlayLocalOrHttp. isLocal={isLocal} | path={url} | referer={referer}");
         }
 
         public async System.Threading.Tasks.Task PlayEmbedAsync(string embedUrl)
@@ -200,13 +200,13 @@ namespace UniversalMediaOS.WPF
                         if (result == MessageBoxResult.Yes)
                         {
                             _mediaPlayer.Time = (long)(savedSecs * 1000);
-                            Console.WriteLine($"[Auto-Resume] Restored position to {savedSecs}s.");
+                            System.Diagnostics.Debug.WriteLine($"[Auto-Resume] Restored position to {savedSecs}s.");
                         }
                     }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[Auto-Resume] Error prompting: {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine($"[Auto-Resume] Error prompting: {ex.Message}");
                 }
             });
         }
@@ -229,7 +229,7 @@ namespace UniversalMediaOS.WPF
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[Auto-Resume] Save error: {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine($"[Auto-Resume] Save error: {ex.Message}");
                 }
             }
         }
@@ -309,7 +309,7 @@ namespace UniversalMediaOS.WPF
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[Casting Overlay] Error populating cast: {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine($"[Casting Overlay] Error populating cast: {ex.Message}");
                 }
             });
         }
@@ -343,7 +343,6 @@ namespace UniversalMediaOS.WPF
             double ratio = (double)_mediaPlayer.Time / _mediaPlayer.Length;
             if (ratio >= 0.90) // 90% completion
             {
-                _malSynced = true;
                 _malTimer.Stop();
 
                 try
@@ -361,7 +360,7 @@ namespace UniversalMediaOS.WPF
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[MAL Sync] Error: {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine($"[MAL Sync] Error: {ex.Message}");
                 }
             }
         }
@@ -385,7 +384,7 @@ namespace UniversalMediaOS.WPF
             {
                 _mediaPlayer.Time = seekTime;
                 AniSkipOverlay.Visibility = Visibility.Collapsed;
-                Console.WriteLine($"[AniSkip] Skipped segment to {seekTime/1000}s.");
+                System.Diagnostics.Debug.WriteLine($"[AniSkip] Skipped segment to {seekTime/1000}s.");
             }
         }
 
@@ -481,7 +480,7 @@ namespace UniversalMediaOS.WPF
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[Swap Gallery] Error: {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine($"[Swap Gallery] Error: {ex.Message}");
                 }
             }
         }

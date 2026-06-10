@@ -53,7 +53,7 @@ namespace UniversalMediaOS.WPF
         {
             string ts = DateTime.Now.ToString("HH:mm:ss");
             string line = $"[{ts}] {msg}";
-            Console.WriteLine(line);
+            System.Diagnostics.Debug.WriteLine(line);
             Dispatcher.Invoke(() =>
             {
                 if (StatusConsole.Text.Length > 8000)
@@ -111,6 +111,10 @@ namespace UniversalMediaOS.WPF
                 {
                     _svcMgr.StartService(nodePath, consumetPath, Path.Combine(baseDir, "services", "consumet"));
                 }
+                else
+                {
+                    Log("Tier-2 scraper files not found. Node.js features will be disabled.");
+                }
                 
                 string pythonPath = "python";
                 string scraperScript = Path.Combine(baseDir, "services", "python_scraper", "app.py");
@@ -122,7 +126,9 @@ namespace UniversalMediaOS.WPF
                 string qbitPath = UniversalMediaOS.Core.Services.DependencyBootstrapper.DetectedQBitPath;
                 if (!string.IsNullOrEmpty(qbitPath) && File.Exists(qbitPath))
                 {
-                    _svcMgr.StartService(qbitPath, "--webui-port=8080", Path.GetDirectoryName(qbitPath) ?? baseDir);
+                    string port = _swapper.GetSetting("QBitPort");
+                    if (string.IsNullOrEmpty(port)) port = "8080";
+                    _svcMgr.StartService(qbitPath, $"--webui-port={port}", Path.GetDirectoryName(qbitPath) ?? baseDir);
                 }
 
                 WelcomeText.Text = "Trending Today";
@@ -657,13 +663,21 @@ namespace UniversalMediaOS.WPF
                     // Wire Casting cache overlay, AniSkip and Resume states!
                     player.InitializeMedia(mediaId, target.IdMal, target.OfficialTitle, episodeNum, audioPref);
 
-                    player.Show();
-
                     if (source.Tier == UniversalMediaOS.Core.Routing.SourceTier.Tier1_LocalP2P)
                     {
                         if (File.Exists(source.UrlOrPath))
                         {
-                            player.PlayLocalOrHttp(source.UrlOrPath, source.EmbedOrigin);
+                            if (_swapper.GetSetting("AutoPlayAfterDownload") != "false")
+                            {
+                                player.Show();
+                                player.PlayLocalOrHttp(source.UrlOrPath, source.EmbedOrigin);
+                            }
+                            else
+                            {
+                                Log("Download completed. AutoPlay is disabled.");
+                                player.Close();
+                                RefreshInstalledEpisodes();
+                            }
                         }
                         else
                         {
@@ -674,11 +688,13 @@ namespace UniversalMediaOS.WPF
                     else if (source.Tier == UniversalMediaOS.Core.Routing.SourceTier.Tier2_ConsumetHttp)
                     {
                         Log("Opening VLC engine for HTTP m3u8 stream...");
+                        player.Show();
                         player.PlayLocalOrHttp(source.UrlOrPath, source.EmbedOrigin);
                     }
                     else if (source.Tier == UniversalMediaOS.Core.Routing.SourceTier.Tier3_WebViewEmbed)
                     {
                         Log("Opening WebView2 containment player...");
+                        player.Show();
                         await player.PlayEmbedAsync(source.UrlOrPath);
                     }
                 }
@@ -876,11 +892,13 @@ namespace UniversalMediaOS.WPF
         {
             try
             {
-                if (_currentEpubBook != null && _epubReader != null)
+                if (_currentEpubBook != null)
                 {
-                    _epubReader.CleanCache(Path.GetDirectoryName(_currentEpubBook.ChapterFiles.FirstOrDefault()));
+                    Log("Cannot clean cache while a book is actively open.");
+                    return;
                 }
-                else
+
+                if (_epubReader != null)
                 {
                     _epubReader.CleanCache();
                 }
@@ -984,6 +1002,7 @@ namespace UniversalMediaOS.WPF
                         {
                             btn.Content = "Done ✔";
                             btn.IsEnabled = true;
+                            RefreshInstalledEpisodes();
                         });
                     }
                     catch (Exception ex)

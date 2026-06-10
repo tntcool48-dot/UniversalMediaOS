@@ -118,44 +118,62 @@ namespace UniversalMediaOS.Core.Services
                 using var client = new HttpClient();
                 client.DefaultRequestHeaders.Add("User-Agent", UserAgent);
 
-                // Feed translations in English
-                string url = $"https://api.mangadex.org/manga/{mangaId}/feed?translatedLanguage[]=en&limit=100&order[chapter]=asc";
-                var response = await client.GetAsync(url);
-                if (!response.IsSuccessStatusCode) return chapters;
+                int offset = 0;
+                int total = 1;
 
-                string json = await response.Content.ReadAsStringAsync();
-                using var doc = JsonDocument.Parse(json);
-
-                if (doc.RootElement.TryGetProperty("data", out var dataArray) && dataArray.ValueKind == JsonValueKind.Array)
+                while (offset < total)
                 {
-                    foreach (var item in dataArray.EnumerateArray())
+                    string url = $"https://api.mangadex.org/manga/{mangaId}/feed?translatedLanguage[]=en&limit=100&offset={offset}&order[chapter]=asc";
+                    var response = await client.GetAsync(url);
+                    if (!response.IsSuccessStatusCode) break;
+
+                    string json = await response.Content.ReadAsStringAsync();
+                    using var doc = JsonDocument.Parse(json);
+
+                    if (doc.RootElement.TryGetProperty("total", out var totalProp) && totalProp.ValueKind == JsonValueKind.Number)
                     {
-                        string id = item.TryGetProperty("id", out var idProp) ? idProp.GetString() ?? "" : "";
-                        string chNum = "";
-                        string chTitle = "";
-                        string extUrl = "";
-                        int pages = 0;
+                        total = totalProp.GetInt32();
+                    }
 
-                        if (item.TryGetProperty("attributes", out var attrs))
-                        {
-                            chNum = attrs.TryGetProperty("chapter", out var numProp) ? numProp.GetString() ?? "" : "";
-                            chTitle = attrs.TryGetProperty("title", out var titleProp) ? titleProp.GetString() ?? "" : "";
-                            extUrl = attrs.TryGetProperty("externalUrl", out var extProp) && extProp.ValueKind == JsonValueKind.String ? extProp.GetString() ?? "" : "";
-                            pages = attrs.TryGetProperty("pages", out var pProp) && pProp.ValueKind == JsonValueKind.Number ? pProp.GetInt32() : 0;
-                        }
+                    if (doc.RootElement.TryGetProperty("data", out var dataArray) && dataArray.ValueKind == JsonValueKind.Array)
+                    {
+                        if (dataArray.GetArrayLength() == 0) break;
 
-                        if (!string.IsNullOrEmpty(id))
+                        foreach (var item in dataArray.EnumerateArray())
                         {
-                            chapters.Add(new MangaChapter
+                            string id = item.TryGetProperty("id", out var idProp) ? idProp.GetString() ?? "" : "";
+                            string chNum = "";
+                            string chTitle = "";
+                            string extUrl = "";
+                            int pages = 0;
+
+                            if (item.TryGetProperty("attributes", out var attrs))
                             {
-                                Id = id,
-                                ChapterNumber = string.IsNullOrEmpty(chNum) ? "0" : chNum,
-                                Title = string.IsNullOrEmpty(chTitle) ? $"Chapter {chNum}" : chTitle,
-                                Pages = pages,
-                                ExternalUrl = extUrl
-                            });
+                                chNum = attrs.TryGetProperty("chapter", out var numProp) ? numProp.GetString() ?? "" : "";
+                                chTitle = attrs.TryGetProperty("title", out var titleProp) ? titleProp.GetString() ?? "" : "";
+                                extUrl = attrs.TryGetProperty("externalUrl", out var extProp) && extProp.ValueKind == JsonValueKind.String ? extProp.GetString() ?? "" : "";
+                                pages = attrs.TryGetProperty("pages", out var pProp) && pProp.ValueKind == JsonValueKind.Number ? pProp.GetInt32() : 0;
+                            }
+
+                            if (!string.IsNullOrEmpty(id))
+                            {
+                                chapters.Add(new MangaChapter
+                                {
+                                    Id = id,
+                                    ChapterNumber = string.IsNullOrEmpty(chNum) ? "0" : chNum,
+                                    Title = string.IsNullOrEmpty(chTitle) ? $"Chapter {chNum}" : chTitle,
+                                    Pages = pages,
+                                    ExternalUrl = extUrl
+                                });
+                            }
                         }
                     }
+                    else
+                    {
+                        break;
+                    }
+
+                    offset += 100;
                 }
             }
             catch (Exception ex)
