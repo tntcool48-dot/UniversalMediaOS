@@ -161,6 +161,7 @@ namespace UniversalMediaOS.Core.Configuration
                 // Playback / UI preferences
                 { "DefaultAudioPref", "Sub" },
                 { "AutoPlayAfterDownload", "true" },
+                { "AutoManageServices", "false" },
                 { "DownloadDirectory", "" }
             };
             return defaults;

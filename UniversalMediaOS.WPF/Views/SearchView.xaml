@@ -63,10 +63,9 @@
             </ProgressBar.Style>
         </ProgressBar>
 
-        <!-- Virtualized Results Grid -->
+        <!-- Results Grid (WrapPanel does not implement IScrollInfo so virtualization is disabled intentionally) -->
         <ListBox Grid.Row="1" ItemsSource="{Binding SearchResults}" Background="Transparent" BorderThickness="0"
-                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                 VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled">
             <ListBox.ItemsPanel>
                 <ItemsPanelTemplate>
                     <WrapPanel IsItemsHost="True" Orientation="Horizontal"/>
@@ -74,10 +73,12 @@
             </ListBox.ItemsPanel>
             <ListBox.ItemTemplate>
                 <DataTemplate>
-                    <Border Width="160" Height="240" CornerRadius="8" Margin="8" Background="{StaticResource BgSurface}" ClipToBounds="True">
+                    <!-- Outer border carries the drop shadow; inner border clips the content to rounded corners -->
+                    <Border Width="160" Height="240" Margin="8" Background="Transparent">
                         <Border.Effect>
                             <StaticResource ResourceKey="ElevatedPlane"/>
                         </Border.Effect>
+                        <Border CornerRadius="8" Background="{StaticResource BgSurface}" ClipToBounds="True">
                         <Grid>
                             <!-- Poster Image -->
                             <Image controls:AsyncImageLoader.ImageUrl="{Binding CoverImageUrl}" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality"/>
@@ -123,6 +124,7 @@
                                 </BeginStoryboard>
                             </EventTrigger>
                         </Border.Triggers>
+                        </Border>
                     </Border>
                 </DataTemplate>
             </ListBox.ItemTemplate>

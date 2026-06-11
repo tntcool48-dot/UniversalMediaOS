@@ -42,28 +42,28 @@ namespace UniversalMediaOS.WPF.ViewModels
         }
 
         [RelayCommand]
-        private void RefreshDownloads()
+        private async Task RefreshDownloads()
         {
             InstalledFiles.Clear();
-            if (Directory.Exists(_downloadsPath))
-            {
-                var files = Directory.GetFiles(_downloadsPath, "*.*", SearchOption.AllDirectories)
+            if (!Directory.Exists(_downloadsPath)) { IsEmpty = true; return; }
+
+            // Run heavy disk I/O on a background thread to avoid blocking the UI
+            var files = await Task.Run(() =>
+                Directory.GetFiles(_downloadsPath, "*.*", SearchOption.AllDirectories)
                     .Where(f => f.EndsWith(".mp4") || f.EndsWith(".mkv") || f.EndsWith(".avi") || f.EndsWith(".epub"))
                     .Select(f =>
                     {
                         var fi = new FileInfo(f);
-                        string size = fi.Length > 1_000_000 
-                            ? $"{fi.Length / 1_000_000.0:F1} MB" 
+                        string size = fi.Length > 1_000_000
+                            ? $"{fi.Length / 1_000_000.0:F1} MB"
                             : $"{fi.Length / 1_000.0:F0} KB";
                         return new InstalledEpisodeItem { FileName = Path.GetFileName(f), FullPath = f, FileSizeText = size };
                     })
-                    .ToList();
+                    .ToList());
 
-                foreach (var file in files)
-                {
-                    InstalledFiles.Add(file);
-                }
-            }
+            foreach (var file in files)
+                InstalledFiles.Add(file);
+
             IsEmpty = InstalledFiles.Count == 0;
         }
 

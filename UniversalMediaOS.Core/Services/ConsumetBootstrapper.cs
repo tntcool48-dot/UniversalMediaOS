@@ -8,6 +8,7 @@ namespace UniversalMediaOS.Core.Services
     {
         private readonly string _servicesDir;
         private readonly string _consumetDir;
+        private System.Diagnostics.Process? _nodeProcess;
 
         public ConsumetBootstrapper(string baseDirectory)
         {
@@ -589,6 +590,16 @@ server.listen(PORT, () => {
   console.log('  GET /anime/gogoanime/watch/:episodeId      - Get streaming sources');
 });
 ";
+        }
+
+        public void StopServer()
+        {
+            try
+            {
+                if (_nodeProcess != null && !_nodeProcess.HasExited)
+                    _nodeProcess.Kill(entireProcessTree: true);
+            }
+            catch { }
         }
     }
 }

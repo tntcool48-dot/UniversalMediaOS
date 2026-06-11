@@ -42,10 +42,12 @@
             </ListBox.ItemsPanel>
             <ListBox.ItemTemplate>
                 <DataTemplate>
-                    <Border Background="{StaticResource BgSurface}" CornerRadius="8" Margin="0,0,0,16" Padding="16" ClipToBounds="True">
+                    <!-- Outer border carries the drop shadow; inner border clips content -->
+                    <Border Background="Transparent" Margin="0,0,0,16">
                         <Border.Effect>
                             <StaticResource ResourceKey="ElevatedPlane"/>
                         </Border.Effect>
+                        <Border Background="{StaticResource BgSurface}" CornerRadius="8" Padding="16" ClipToBounds="True">
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
@@ -69,6 +71,7 @@
                                     CommandParameter="{Binding}" 
                                     Width="100" Height="36" Background="{StaticResource AccentPrimary}" Foreground="{StaticResource TextPrimary}" BorderThickness="0" Margin="16,0,0,0" Style="{StaticResource PremiumNavButton}"/>
                         </Grid>
+                        </Border>
                     </Border>
                 </DataTemplate>
             </ListBox.ItemTemplate>

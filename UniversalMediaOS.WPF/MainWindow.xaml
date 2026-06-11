@@ -7,103 +7,98 @@
         Background="Transparent"
         Foreground="{StaticResource TextPrimary}"
         WindowStyle="SingleBorderWindow" AllowsTransparency="False">
-    
 
     <WindowChrome.WindowChrome>
         <WindowChrome CaptionHeight="40" ResizeBorderThickness="8" CornerRadius="0" GlassFrameThickness="-1" UseAeroCaptionButtons="True"/>
     </WindowChrome.WindowChrome>
-    
-        <Grid>
-            <!-- Define the BooleanToVisibilityConverter -->
-            <Grid.Resources>
-                <BooleanToVisibilityConverter x:Key="BoolToVis"/>
-            </Grid.Resources>
-            
-            <Grid.RowDefinitions>
-                <RowDefinition Height="40"/> <!-- TitleBar -->
-                <RowDefinition Height="*"/>  <!-- Main Content -->
-            </Grid.RowDefinitions>
-            
-            <!-- Custom TitleBar Background -->
-            <Border Grid.Row="0" Background="Transparent" WindowChrome.IsHitTestVisibleInChrome="False">
-                <TextBlock Text="UniversalMediaOS" VerticalAlignment="Center" Margin="{StaticResource SpaceMd}" Style="{StaticResource TitleText}" FontSize="14" Foreground="{StaticResource TextMuted}"/>
-            </Border>
-            
-            <!-- Main Application Surface -->
-            <Border Grid.Row="1" Background="{StaticResource BgSurface}" Margin="{StaticResource SpaceXs}" CornerRadius="8">
-                <Border.Effect>
-                    <StaticResource ResourceKey="ContentPlane"/>
-                </Border.Effect>
-                
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="200"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
 
-                    <!-- Navigation Sidebar -->
-                    <StackPanel Grid.Column="0" Background="Transparent" Margin="{StaticResource SpaceMd}">
-                        <TextBlock Text="Menu" Style="{StaticResource CaptionText}" Margin="12,0,0,8"/>
-                        <Button Content="Search" Command="{Binding NavigateToSearchCommand}" Style="{StaticResource PremiumNavButton}"/>
-                        <Button Content="Library" Command="{Binding NavigateToMangaCommand}" Style="{StaticResource PremiumNavButton}"/>
-                        <Button Content="Downloads" Command="{Binding NavigateToDownloadsCommand}" Style="{StaticResource PremiumNavButton}"/>
-                        
-                        <TextBlock Text="Active" Style="{StaticResource CaptionText}" Margin="12,24,0,8"/>
-                        <Button Content="Playback" Command="{Binding NavigateToPlaybackCommand}" Style="{StaticResource PremiumNavButton}"/>
-                    </StackPanel>
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="40"/> <!-- TitleBar -->
+            <RowDefinition Height="*"/>  <!-- Main Content -->
+        </Grid.RowDefinitions>
 
-                    <!-- View Container Caching -->
-                    <Grid Grid.Column="1" Margin="{StaticResource SpaceMd}">
-                        <views:SearchView DataContext="{Binding SearchViewModel}" 
-                                          Visibility="{Binding IsSearchVisible, Converter={StaticResource BoolToVis}}"/>
-                                          
-                        <views:MangaView DataContext="{Binding MangaViewModel}" 
-                                         Visibility="{Binding IsMangaVisible, Converter={StaticResource BoolToVis}}"/>
-                                         
-                        <views:DownloadsView DataContext="{Binding DownloadsViewModel}" 
-                                             Visibility="{Binding IsDownloadsVisible, Converter={StaticResource BoolToVis}}"/>
-                                             
-                        <views:PlaybackView DataContext="{Binding PlaybackViewModel}" 
-                                            Visibility="{Binding IsPlaybackVisible, Converter={StaticResource BoolToVis}}"/>
-                    </Grid>
-                </Grid>
-            </Border>
-            
-            <!-- Toast Notification Overlay -->
-            <Grid Grid.Row="1" VerticalAlignment="Bottom" HorizontalAlignment="Center" Margin="0,0,0,32" IsHitTestVisible="False">
-                <Border Background="{StaticResource AccentPrimary}" CornerRadius="8" Padding="24,12" 
-                        Opacity="0" Visibility="Collapsed" x:Name="ToastBorder">
-                    <Border.Effect>
-                        <StaticResource ResourceKey="ElevatedPlane"/>
-                    </Border.Effect>
-                    <TextBlock Text="{Binding ToastText}" Foreground="{StaticResource TextPrimary}" 
-                               Style="{StaticResource BodyText}" FontWeight="SemiBold"/>
-                    
-                    <Border.Style>
-                        <Style TargetType="Border">
-                            <Style.Triggers>
-                                <DataTrigger Binding="{Binding IsToastVisible}" Value="True">
-                                    <Setter Property="Visibility" Value="Visible"/>
-                                    <DataTrigger.EnterActions>
-                                        <BeginStoryboard>
-                                            <Storyboard>
-                                                <DoubleAnimation Storyboard.TargetProperty="Opacity" To="1" Duration="{StaticResource MotionFast}"/>
-                                                <ThicknessAnimation Storyboard.TargetProperty="Margin" From="0,20,0,-20" To="0,0,0,0" Duration="{StaticResource MotionFast}"/>
-                                            </Storyboard>
-                                        </BeginStoryboard>
-                                    </DataTrigger.EnterActions>
-                                    <DataTrigger.ExitActions>
-                                        <BeginStoryboard>
-                                            <Storyboard>
-                                                <DoubleAnimation Storyboard.TargetProperty="Opacity" To="0" Duration="{StaticResource MotionFast}"/>
-                                            </Storyboard>
-                                        </BeginStoryboard>
-                                    </DataTrigger.ExitActions>
-                                </DataTrigger>
-                            </Style.Triggers>
-                        </Style>
-                    </Border.Style>
-                </Border>
+        <!-- Custom TitleBar Background -->
+        <Border Grid.Row="0" Background="Transparent" WindowChrome.IsHitTestVisibleInChrome="False">
+            <TextBlock Text="UniversalMediaOS" VerticalAlignment="Center" Margin="{StaticResource SpaceMd}"
+                       Style="{StaticResource TitleText}" FontSize="14" Foreground="{StaticResource TextMuted}"/>
+        </Border>
+
+        <!-- Main Application Surface -->
+        <Border Grid.Row="1" Background="{StaticResource BgSurface}" Margin="{StaticResource SpaceXs}" CornerRadius="8">
+            <Border.Effect>
+                <StaticResource ResourceKey="ContentPlane"/>
+            </Border.Effect>
+
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="200"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- Navigation Sidebar -->
+                <StackPanel Grid.Column="0" Background="Transparent" Margin="{StaticResource SpaceMd}">
+                    <TextBlock Text="Menu" Style="{StaticResource CaptionText}" Margin="12,0,0,8"/>
+                    <Button Content="Search"    Command="{Binding NavigateToSearchCommand}"    Style="{StaticResource PremiumNavButton}"/>
+                    <Button Content="Library"   Command="{Binding NavigateToMangaCommand}"     Style="{StaticResource PremiumNavButton}"/>
+                    <Button Content="Downloads" Command="{Binding NavigateToDownloadsCommand}" Style="{StaticResource PremiumNavButton}"/>
+
+                    <TextBlock Text="Active" Style="{StaticResource CaptionText}" Margin="12,24,0,8"/>
+                    <Button Content="Playback"  Command="{Binding NavigateToPlaybackCommand}"  Style="{StaticResource PremiumNavButton}"/>
+
+                    <TextBlock Text="System" Style="{StaticResource CaptionText}" Margin="12,24,0,8"/>
+                    <Button Content="Settings"  Command="{Binding NavigateToSettingsCommand}"  Style="{StaticResource PremiumNavButton}"/>
+                </StackPanel>
+
+                <!-- Content Area: single ContentControl hooked into DataTemplates in App.xaml -->
+                <ContentControl Grid.Column="1" Margin="{StaticResource SpaceMd}"
+                                Content="{Binding CurrentViewModel}"/>
             </Grid>
+        </Border>
+
+        <!-- Toast Notification Overlay -->
+        <!-- Fix: Visibility is NOT set as a local value so DataTrigger can override it correctly -->
+        <Grid Grid.Row="1" VerticalAlignment="Bottom" HorizontalAlignment="Center"
+              Margin="0,0,0,32" IsHitTestVisible="False">
+            <Border x:Name="ToastBorder" CornerRadius="8" Padding="24,12"
+                    Background="{StaticResource AccentPrimary}">
+                <Border.Effect>
+                    <StaticResource ResourceKey="ElevatedPlane"/>
+                </Border.Effect>
+                <TextBlock Text="{Binding ToastText}" Foreground="{StaticResource TextPrimary}"
+                           Style="{StaticResource BodyText}" FontWeight="SemiBold"/>
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <!-- Default collapsed via Style setter (not local value) so DataTrigger can override -->
+                        <Setter Property="Visibility" Value="Collapsed"/>
+                        <Setter Property="Opacity" Value="0"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsToastVisible}" Value="True">
+                                <Setter Property="Visibility" Value="Visible"/>
+                                <DataTrigger.EnterActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                                             To="1" Duration="{StaticResource MotionFast}"/>
+                                            <ThicknessAnimation Storyboard.TargetProperty="Margin"
+                                                                From="0,20,0,-20" To="0,0,0,0"
+                                                                Duration="{StaticResource MotionFast}"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </DataTrigger.EnterActions>
+                                <DataTrigger.ExitActions>
+                                    <BeginStoryboard>
+                                        <Storyboard FillBehavior="Stop">
+                                            <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                                             To="0" Duration="{StaticResource MotionFast}"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </DataTrigger.ExitActions>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+            </Border>
         </Grid>
-    </Window>
+    </Grid>
+</Window>

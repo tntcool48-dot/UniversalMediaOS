@@ -32,11 +32,11 @@ namespace UniversalMediaOS.WPF.ViewModels
             _libVLC = new LibVLC(enableDebugLogs: false);
             _mediaPlayer = new MediaPlayer(_libVLC);
             
-            _mediaPlayer.Playing += (s, e) => IsPlaying = true;
-            _mediaPlayer.Paused += (s, e) => IsPlaying = false;
-            _mediaPlayer.Stopped += (s, e) => IsPlaying = false;
-            _mediaPlayer.TimeChanged += MediaPlayer_TimeChanged;
-            _mediaPlayer.LengthChanged += (s, e) => PlaybackDuration = e.Length;
+            _mediaPlayer.Playing      += (s, e) => App.Current.Dispatcher.InvokeAsync(() => IsPlaying = true);
+            _mediaPlayer.Paused       += (s, e) => App.Current.Dispatcher.InvokeAsync(() => IsPlaying = false);
+            _mediaPlayer.Stopped      += (s, e) => App.Current.Dispatcher.InvokeAsync(() => IsPlaying = false);
+            _mediaPlayer.TimeChanged  += MediaPlayer_TimeChanged;
+            _mediaPlayer.LengthChanged += (s, e) => App.Current.Dispatcher.InvokeAsync(() => PlaybackDuration = e.Length);
         }
 
         private DateTime _lastTimeUpdate = DateTime.MinValue;

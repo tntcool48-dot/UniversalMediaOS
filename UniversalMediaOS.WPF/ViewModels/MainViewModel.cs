@@ -1,29 +1,24 @@
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-
 using CommunityToolkit.Mvvm.Messaging;
 
 namespace UniversalMediaOS.WPF.ViewModels
 {
     public partial class MainViewModel : ObservableObject
     {
-        public SearchViewModel SearchViewModel { get; }
-        public MangaViewModel MangaViewModel { get; }
+        public SearchViewModel    SearchViewModel    { get; }
+        public MangaViewModel     MangaViewModel     { get; }
         public DownloadsViewModel DownloadsViewModel { get; }
-        public PlaybackViewModel PlaybackViewModel { get; }
+        public PlaybackViewModel  PlaybackViewModel  { get; }
+        public SettingsViewModel  SettingsViewModel  { get; }
 
+        /// <summary>
+        /// The view model currently displayed in the main content area.
+        /// App.xaml DataTemplates automatically resolve the correct view.
+        /// </summary>
         [ObservableProperty]
-        private bool _isSearchVisible = true;
-
-        [ObservableProperty]
-        private bool _isMangaVisible;
-
-        [ObservableProperty]
-        private bool _isDownloadsVisible;
-
-        [ObservableProperty]
-        private bool _isPlaybackVisible;
+        private ObservableObject _currentViewModel = null!;
 
         [ObservableProperty]
         private string _toastText = string.Empty;
@@ -34,16 +29,20 @@ namespace UniversalMediaOS.WPF.ViewModels
         private int _toastId;
 
         public MainViewModel(
-            SearchViewModel searchViewModel,
-            MangaViewModel mangaViewModel,
+            SearchViewModel    searchViewModel,
+            MangaViewModel     mangaViewModel,
             DownloadsViewModel downloadsViewModel,
-            PlaybackViewModel playbackViewModel)
+            PlaybackViewModel  playbackViewModel,
+            SettingsViewModel  settingsViewModel)
         {
-            SearchViewModel = searchViewModel;
-            MangaViewModel = mangaViewModel;
+            SearchViewModel    = searchViewModel;
+            MangaViewModel     = mangaViewModel;
             DownloadsViewModel = downloadsViewModel;
-            PlaybackViewModel = playbackViewModel;
-            
+            PlaybackViewModel  = playbackViewModel;
+            SettingsViewModel  = settingsViewModel;
+
+            CurrentViewModel = SearchViewModel;
+
             DownloadsViewModel.RegisterPlayMediaAction(PlayMedia);
 
             WeakReferenceMessenger.Default.Register<ToastNotificationMessage>(this, (r, m) =>
@@ -51,15 +50,13 @@ namespace UniversalMediaOS.WPF.ViewModels
                 var vm = (MainViewModel)r;
                 System.Windows.Application.Current.Dispatcher.Invoke(async () =>
                 {
-                    vm.ToastText = m.Message;
+                    vm.ToastText      = m.Message;
                     vm.IsToastVisible = true;
-                    
+
                     int currentId = ++vm._toastId;
                     await Task.Delay(3000);
                     if (vm._toastId == currentId)
-                    {
                         vm.IsToastVisible = false;
-                    }
                 });
             });
         }
@@ -70,45 +67,38 @@ namespace UniversalMediaOS.WPF.ViewModels
             PlaybackViewModel.LoadMedia(path, title);
         }
 
-        private void HideAll()
-        {
-            IsSearchVisible = false;
-            IsMangaVisible = false;
-            IsDownloadsVisible = false;
-            
-            if (IsPlaybackVisible)
-            {
-                PlaybackViewModel.StopAndRelease();
-            }
-            IsPlaybackVisible = false;
-        }
-
         [RelayCommand]
         private void NavigateToSearch()
         {
-            HideAll();
-            IsSearchVisible = true;
+            if (CurrentViewModel is PlaybackViewModel) PlaybackViewModel.StopAndRelease();
+            CurrentViewModel = SearchViewModel;
         }
 
         [RelayCommand]
         private void NavigateToManga()
         {
-            HideAll();
-            IsMangaVisible = true;
+            if (CurrentViewModel is PlaybackViewModel) PlaybackViewModel.StopAndRelease();
+            CurrentViewModel = MangaViewModel;
         }
 
         [RelayCommand]
         private void NavigateToDownloads()
         {
-            HideAll();
-            IsDownloadsVisible = true;
+            if (CurrentViewModel is PlaybackViewModel) PlaybackViewModel.StopAndRelease();
+            CurrentViewModel = DownloadsViewModel;
         }
 
         [RelayCommand]
         private void NavigateToPlayback()
         {
-            HideAll();
-            IsPlaybackVisible = true;
+            CurrentViewModel = PlaybackViewModel;
+        }
+
+        [RelayCommand]
+        private void NavigateToSettings()
+        {
+            if (CurrentViewModel is PlaybackViewModel) PlaybackViewModel.StopAndRelease();
+            CurrentViewModel = SettingsViewModel;
         }
     }
 }
