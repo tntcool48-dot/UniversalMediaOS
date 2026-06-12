@@ -22,10 +22,35 @@
         <!-- Search Bar -->
         <Border Grid.Row="0" Background="{StaticResource BgBase}" CornerRadius="8" Margin="0,0,0,24" Padding="{StaticResource SpaceXs}">
             <Grid>
-                <TextBox Text="{Binding SearchQuery, UpdateSourceTrigger=PropertyChanged}" 
-                         Background="Transparent" BorderThickness="0" Foreground="{StaticResource TextPrimary}" 
+                <TextBox Text="{Binding SearchQuery, UpdateSourceTrigger=PropertyChanged}"
+                         Background="Transparent" Foreground="{StaticResource TextPrimary}"
+                         CaretBrush="{StaticResource TextPrimary}"
                          FontSize="16" Padding="{StaticResource SpaceSm}"
                          VerticalContentAlignment="Center" HorizontalContentAlignment="Left">
+                    <TextBox.Style>
+                        <Style TargetType="TextBox">
+                            <Setter Property="BorderThickness" Value="0,0,0,2"/>
+                            <Setter Property="BorderBrush" Value="Transparent"/>
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="TextBox">
+                                        <Border x:Name="border" Background="{TemplateBinding Background}"
+                                                BorderBrush="{TemplateBinding BorderBrush}"
+                                                BorderThickness="{TemplateBinding BorderThickness}"
+                                                CornerRadius="4">
+                                            <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}"
+                                                          VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsFocused" Value="True">
+                                                <Setter TargetName="border" Property="BorderBrush" Value="{StaticResource FocusBorder}"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </TextBox.Style>
                     <TextBox.InputBindings>
                         <KeyBinding Key="Enter" Command="{Binding SearchCommand}" />
                     </TextBox.InputBindings>
@@ -78,52 +103,62 @@
                         <Border.Effect>
                             <StaticResource ResourceKey="ElevatedPlane"/>
                         </Border.Effect>
-                        <Border CornerRadius="8" Background="{StaticResource BgSurface}" ClipToBounds="True">
-                        <Grid>
-                            <!-- Poster Image -->
-                            <Image controls:AsyncImageLoader.ImageUrl="{Binding CoverImageUrl}" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality"/>
-                            
-                            <!-- Gradient Overlay for Text Readability -->
-                            <Border VerticalAlignment="Bottom" Height="100">
-                                <Border.Background>
-                                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                                        <GradientStop Color="Transparent" Offset="0"/>
-                                        <GradientStop Color="#E6000000" Offset="1"/>
-                                    </LinearGradientBrush>
-                                </Border.Background>
+                        <Border CornerRadius="8" Background="{StaticResource BgSurface}" ClipToBounds="True" Cursor="Hand">
+                            <Border.InputBindings>
+                                <MouseBinding MouseAction="LeftClick" 
+                                              Command="{Binding DataContext.SelectAnimeCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" 
+                                              CommandParameter="{Binding}" />
+                            </Border.InputBindings>
+                            <Grid>
+                                <!-- Poster Image -->
+                                <Image controls:AsyncImageLoader.ImageUrl="{Binding CoverImageUrl}" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality"/>
                                 
-                                <Grid Margin="12,0,12,12" VerticalAlignment="Bottom">
-                                    <TextBlock Text="{Binding OfficialTitle}" Style="{StaticResource BodyText}" FontWeight="SemiBold" TextWrapping="Wrap" MaxHeight="40" TextTrimming="CharacterEllipsis"/>
-                                </Grid>
-                            </Border>
+                                <!-- Gradient Overlay for Text Readability -->
+                                <Border VerticalAlignment="Bottom" Height="100">
+                                    <Border.Background>
+                                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                            <GradientStop Color="Transparent" Offset="0"/>
+                                            <GradientStop Color="#E6000000" Offset="1"/>
+                                        </LinearGradientBrush>
+                                    </Border.Background>
+                                    
+                                    <Grid Margin="12,0,12,12" VerticalAlignment="Bottom">
+                                        <TextBlock Text="{Binding OfficialTitle}" Style="{StaticResource BodyText}" FontWeight="SemiBold" TextWrapping="Wrap" MaxHeight="40" TextTrimming="CharacterEllipsis"/>
+                                    </Grid>
+                                </Border>
 
-                            <!-- Hover Overlay -->
-                            <Border x:Name="HoverOverlay" Background="{StaticResource HoverOverlay}" Opacity="0">
-                                <Button Content="Download" Command="{Binding DataContext.DownloadCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" 
-                                        CommandParameter="{Binding}" VerticalAlignment="Center" HorizontalAlignment="Center" Padding="16,8"
-                                        Background="{StaticResource AccentPrimary}" Foreground="{StaticResource TextPrimary}" BorderThickness="0"/>
-                            </Border>
-                        </Grid>
-                        
-                        <!-- Hover Triggers -->
-                        <Border.Triggers>
-                            <EventTrigger RoutedEvent="MouseEnter">
-                                <BeginStoryboard>
-                                    <Storyboard>
-                                        <DoubleAnimation Storyboard.TargetName="HoverOverlay" Storyboard.TargetProperty="Opacity" 
-                                                         To="1" Duration="{StaticResource MotionFast}"/>
-                                    </Storyboard>
-                                </BeginStoryboard>
-                            </EventTrigger>
-                            <EventTrigger RoutedEvent="MouseLeave">
-                                <BeginStoryboard>
-                                    <Storyboard>
-                                        <DoubleAnimation Storyboard.TargetName="HoverOverlay" Storyboard.TargetProperty="Opacity" 
-                                                         To="0" Duration="{StaticResource MotionFast}"/>
-                                    </Storyboard>
-                                </BeginStoryboard>
-                            </EventTrigger>
-                        </Border.Triggers>
+                                <!-- Hover Overlay -->
+                                <Border x:Name="HoverOverlay" Background="{StaticResource HoverOverlay}" Opacity="0">
+                                    <Border.InputBindings>
+                                        <MouseBinding MouseAction="LeftClick" 
+                                                      Command="{Binding DataContext.SelectAnimeCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" 
+                                                      CommandParameter="{Binding}" />
+                                    </Border.InputBindings>
+                                    <Button Content="View Details" Command="{Binding DataContext.SelectAnimeCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" 
+                                            CommandParameter="{Binding}" VerticalAlignment="Center" HorizontalAlignment="Center" Padding="16,8"
+                                            Background="{StaticResource AccentPrimary}" Foreground="{StaticResource TextPrimary}" BorderThickness="0" Cursor="Hand"/>
+                                </Border>
+                            </Grid>
+                            
+                            <!-- Hover Triggers -->
+                            <Border.Triggers>
+                                <EventTrigger RoutedEvent="MouseEnter">
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="HoverOverlay" Storyboard.TargetProperty="Opacity" 
+                                                             To="1" Duration="{StaticResource MotionFast}"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </EventTrigger>
+                                <EventTrigger RoutedEvent="MouseLeave">
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="HoverOverlay" Storyboard.TargetProperty="Opacity" 
+                                                             To="0" Duration="{StaticResource MotionFast}"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </EventTrigger>
+                            </Border.Triggers>
                         </Border>
                     </Border>
                 </DataTemplate>

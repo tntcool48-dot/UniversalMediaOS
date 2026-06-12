@@ -32,15 +32,19 @@ namespace UniversalMediaOS.WPF
             base.OnStartup(e);
 
             string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-            string configPath = Path.Combine(appData, "UniversalMediaOS", "config.json");
-            Directory.CreateDirectory(Path.Combine(appData, "UniversalMediaOS"));
+            string appDataDir = Path.Combine(appData, "UniversalMediaOS");
+            string configPath = Path.Combine(appDataDir, "config.json");
+            
+            UniversalMediaOS.Core.Helpers.AppLogger.Initialize(appDataDir);
             var config = new DomainHotSwapper(configPath);
+            UniversalMediaOS.Core.Helpers.AppLogger.IsEnabled = config.GetSetting("EnableDebugLogging") != "false";
+            UniversalMediaOS.Core.Helpers.AppLogger.Log("Application session started.");
 
             // Auto-manage local services if the user has enabled it in Settings
             if (config.GetSetting("AutoManageServices") == "true")
             {
                 string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-                _consumetServer = new ConsumetBootstrapper(baseDir);
+                _consumetServer = new ConsumetBootstrapper(baseDir, config);
                 _pythonServer = new PythonBootstrapper(baseDir);
 
                 _ = Task.Run(async () => await _consumetServer.EnsureLatestConsumetAsync());
@@ -104,6 +108,7 @@ namespace UniversalMediaOS.WPF
             services.AddTransient<MangaViewModel>();
             services.AddTransient<DownloadsViewModel>();
             services.AddTransient<PlaybackViewModel>();
+            services.AddTransient<AnimeDetailsViewModel>();
 
             return services.BuildServiceProvider();
         }

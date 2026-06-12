@@ -2,13 +2,16 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using UniversalMediaOS.Core.Services;
+using UniversalMediaOS.Core.Helpers;
 using MonoTorrent;
 using MonoTorrent.Client;
+using MonoTorrent.Dht;
 
 namespace UniversalMediaOS.Core.Routing
 {
@@ -93,7 +96,11 @@ namespace UniversalMediaOS.Core.Routing
 
         public async Task<PlaybackSource?> InjectTorrentAsync(TorrentResult bestTorrent, Action<string>? onStatusUpdate = null)
         {
-            void Log(string msg) { onStatusUpdate?.Invoke(msg); System.Diagnostics.Debug.WriteLine(msg); }
+            void Log(string msg) { 
+                onStatusUpdate?.Invoke(msg); 
+                System.Diagnostics.Debug.WriteLine(msg); 
+                AppLogger.Log(msg);
+            }
 
             if (bestTorrent == null || string.IsNullOrEmpty(bestTorrent.MagnetLink))
             {
@@ -106,7 +113,11 @@ namespace UniversalMediaOS.Core.Routing
 
         public async Task<PlaybackSource?> ResolveBestSourceAsync(string query, string episodeId, string providerDomain, Action<string>? onStatusUpdate = null, SourceTier minimumTier = SourceTier.Tier1_LocalP2P, System.Threading.CancellationToken token = default)
         {
-            void Log(string msg) { onStatusUpdate?.Invoke(msg); System.Diagnostics.Debug.WriteLine(msg); }
+            void Log(string msg) { 
+                onStatusUpdate?.Invoke(msg); 
+                System.Diagnostics.Debug.WriteLine(msg); 
+                AppLogger.Log(msg);
+            }
 
             // ── Tier 1: P2P Local (Nyaa → qBit / MonoTorrent) ──
             if (minimumTier <= SourceTier.Tier1_LocalP2P)
@@ -186,7 +197,11 @@ namespace UniversalMediaOS.Core.Routing
 
                     string consumetBase = _config.GetSetting("ConsumetApiBase");
                     if (string.IsNullOrEmpty(consumetBase)) consumetBase = "http://localhost:3000";
-                    string searchUrl = $"{consumetBase.TrimEnd('/')}/anime/gogoanime/{Uri.EscapeDataString(query)}";
+
+                    string provider = _config.GetSetting("ConsumetProvider");
+                    if (string.IsNullOrEmpty(provider)) provider = "gogoanime";
+
+                    string searchUrl = $"{consumetBase.TrimEnd('/')}/anime/{provider}/{Uri.EscapeDataString(query)}";
                     Log($"> [Tier 2] Searching: {searchUrl}");
                     var searchResp = await GetWithRetriesAsync(searchUrl, Log, token);
 
@@ -211,7 +226,7 @@ namespace UniversalMediaOS.Core.Routing
 
                             string consumetBase2 = _config.GetSetting("ConsumetApiBase");
                             if (string.IsNullOrEmpty(consumetBase2)) consumetBase2 = "http://localhost:3000";
-                            string watchUrl = $"{consumetBase2.TrimEnd('/')}/anime/gogoanime/watch/{Uri.EscapeDataString(resolvedEpisodeId)}";
+                            string watchUrl = $"{consumetBase2.TrimEnd('/')}/anime/{provider}/watch/{Uri.EscapeDataString(resolvedEpisodeId)}";
                             Log($"> [Tier 2] Fetching stream: {watchUrl}");
                             var watchResp = await GetWithRetriesAsync(watchUrl, Log, token);
 
@@ -277,9 +292,28 @@ namespace UniversalMediaOS.Core.Routing
             // ── Tier 3: Web Embed Fallback ──
             Log("> [Tier 3] Falling back to Embedded WebView...");
             string safeQuery = Uri.EscapeDataString(query);
-            string finalUrl = providerDomain.Contains("{query}")
-                ? providerDomain.Replace("{query}", safeQuery)
-                : $"{providerDomain}/search?keyword={safeQuery}";
+            string finalUrl = providerDomain;
+
+            if (providerDomain.Contains("{slug}", StringComparison.OrdinalIgnoreCase) || 
+                providerDomain.Contains("{episode}", StringComparison.OrdinalIgnoreCase))
+            {
+                string slug = GenerateSlug(query);
+                finalUrl = Regex.Replace(finalUrl, @"\{slug\}", slug, RegexOptions.IgnoreCase);
+                finalUrl = Regex.Replace(finalUrl, @"\{episode\}", episodeId, RegexOptions.IgnoreCase);
+            }
+            else if (providerDomain.Contains("{query}", StringComparison.OrdinalIgnoreCase))
+            {
+                finalUrl = Regex.Replace(finalUrl, @"\{query\}", safeQuery, RegexOptions.IgnoreCase);
+            }
+            else if (providerDomain.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || 
+                     providerDomain.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            {
+                finalUrl = await ResolveHomepageDomainAsync(providerDomain, query, episodeId);
+            }
+            else
+            {
+                finalUrl = $"{providerDomain.TrimEnd('/')}/search?keyword={safeQuery}";
+            }
 
             return new PlaybackSource
             {
@@ -376,7 +410,19 @@ namespace UniversalMediaOS.Core.Routing
             log("> [Tier 1] qBittorrent WebUI unreachable. Using built-in MonoTorrent engine...");
             try
             {
-                using (var engine = new ClientEngine())
+                var settingsBuilder = new EngineSettingsBuilder
+                {
+                    AllowPortForwarding = true,
+                    AutoSaveLoadDhtCache = true,
+                    AutoSaveLoadFastResume = true,
+                    AutoSaveLoadMagnetLinkMetadata = true,
+                    DhtEndPoint = new IPEndPoint(IPAddress.Any, 0),
+                    ListenEndPoints = new Dictionary<string, IPEndPoint>
+                    {
+                        { "ipv4", new IPEndPoint(IPAddress.Any, 0) }
+                    }
+                };
+                using (var engine = new ClientEngine(settingsBuilder.ToSettings()))
                 {
                     var magnet = MagnetLink.Parse(magnetLink);
                     var manager = await engine.AddAsync(magnet, _downloadDir);
@@ -527,6 +573,168 @@ namespace UniversalMediaOS.Core.Routing
             
             // Final attempt to return whatever response we have, or a failed message
             return await _httpClient.GetAsync(url, token);
+        }
+
+        private string GenerateSlug(string input)
+        {
+            if (string.IsNullOrEmpty(input)) return string.Empty;
+            string slug = input.ToLowerInvariant();
+            slug = Regex.Replace(slug, @"[^a-z0-9\s-]", "");
+            slug = Regex.Replace(slug, @"[\s-]+", "-").Trim('-');
+            return slug;
+        }
+
+        private async Task<string> ResolveHomepageDomainAsync(string baseDomain, string query, string episodeId)
+        {
+            UniversalMediaOS.Core.Helpers.AppLogger.Log($"Resolving homepage-only domain: '{baseDomain}' using heuristics...");
+            string slug = GenerateSlug(query);
+            string safeQuery = Uri.EscapeDataString(query);
+
+            string domainRoot = baseDomain;
+            try
+            {
+                var uri = new Uri(baseDomain);
+                domainRoot = $"{uri.Scheme}://{uri.Host}";
+            }
+            catch (Exception ex)
+            {
+                UniversalMediaOS.Core.Helpers.AppLogger.Log($"Error resolving domain root: {ex.Message}", "WARNING");
+            }
+            
+            var patterns = new System.Collections.Generic.List<string>
+            {
+                $"{domainRoot.TrimEnd('/')}/anime/{slug}",
+                $"{domainRoot.TrimEnd('/')}/watch/{slug}-episode-{episodeId}",
+                $"{domainRoot.TrimEnd('/')}/watch/{slug}",
+                $"{domainRoot.TrimEnd('/')}/category/{slug}",
+                $"{domainRoot.TrimEnd('/')}/search?q={safeQuery}",
+                $"{domainRoot.TrimEnd('/')}/search?keyword={safeQuery}",
+                $"{domainRoot.TrimEnd('/')}/search.html?keyword={safeQuery}"
+            };
+
+            foreach (var url in patterns)
+            {
+                try
+                {
+                    UniversalMediaOS.Core.Helpers.AppLogger.Log($"Probing candidate URL: '{url}'...");
+                    var request = new HttpRequestMessage(HttpMethod.Get, url);
+                    request.Headers.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+                    
+                    bool isSearchUrl = url.Contains("/search") || url.Contains("search.html");
+                    
+                    using var response = await _httpClient.SendAsync(
+                        request, 
+                        isSearchUrl ? HttpCompletionOption.ResponseContentRead : HttpCompletionOption.ResponseHeadersRead, 
+                        new System.Threading.CancellationTokenSource(6000).Token);
+
+                    if (response.IsSuccessStatusCode)
+                    {
+                        UniversalMediaOS.Core.Helpers.AppLogger.Log($"SUCCESS: Probe matched '{url}' (Status: {response.StatusCode})");
+                        
+                        if (isSearchUrl)
+                        {
+                            string html = await response.Content.ReadAsStringAsync();
+                            string? directLink = ExtractBestLinkFromSearchHtml(html, domainRoot, query, episodeId);
+                            if (directLink != null)
+                            {
+                                UniversalMediaOS.Core.Helpers.AppLogger.Log($"Smart Scraper successfully resolved direct watch/details link from search results: '{directLink}'");
+                                return directLink;
+                            }
+                            UniversalMediaOS.Core.Helpers.AppLogger.Log("Smart Scraper could not extract a high-scoring direct link from search HTML. Falling back to the search URL.");
+                        }
+                        
+                        return url;
+                    }
+                    else
+                    {
+                        UniversalMediaOS.Core.Helpers.AppLogger.Log($"Probe failed for '{url}' (Status: {response.StatusCode})");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    UniversalMediaOS.Core.Helpers.AppLogger.Log($"Exception probing '{url}': {ex.Message}");
+                }
+            }
+
+            UniversalMediaOS.Core.Helpers.AppLogger.Log($"Heuristics yielded no matches. Falling back to base domain '{baseDomain}'.");
+            return baseDomain;
+        }
+
+        private string? ExtractBestLinkFromSearchHtml(string html, string domainRoot, string query, string episodeId)
+        {
+            var hrefMatches = Regex.Matches(html, @"href\s*=\s*[""']([^""']+)[""']", RegexOptions.IgnoreCase);
+            var candidates = new System.Collections.Generic.List<(string url, int score)>();
+            
+            // Clean up the query to extract alphanumeric keywords
+            var keywords = Regex.Matches(query.ToLowerInvariant(), @"[a-z0-9]{3,}")
+                                .Cast<Match>()
+                                .Select(m => m.Value)
+                                .ToList();
+            
+            if (keywords.Count == 0) return null;
+
+            foreach (Match match in hrefMatches)
+            {
+                string href = match.Groups[1].Value;
+                
+                // Skip static/common non-media paths
+                if (href.EndsWith(".css") || href.EndsWith(".js") || href.EndsWith(".png") || href.EndsWith(".jpg") || href.EndsWith(".gif") || href.EndsWith(".woff") || href.EndsWith(".svg"))
+                    continue;
+                
+                string lowerHref = href.ToLowerInvariant();
+                bool isWatchOrDetails = lowerHref.Contains("/watch") || 
+                                        lowerHref.Contains("/anime") || 
+                                        lowerHref.Contains("/category") ||
+                                        lowerHref.Contains("/series") ||
+                                        lowerHref.Contains("/show") ||
+                                        lowerHref.Contains("/play");
+                                        
+                if (!isWatchOrDetails) continue;
+
+                // Resolve relative paths to absolute URLs
+                string fullUrl = href;
+                if (href.StartsWith("/"))
+                {
+                    fullUrl = $"{domainRoot.TrimEnd('/')}{href}";
+                }
+                else if (!href.StartsWith("http://") && !href.StartsWith("https://"))
+                {
+                    fullUrl = $"{domainRoot.TrimEnd('/')}/{href}";
+                }
+
+                int score = 0;
+                foreach (var word in keywords)
+                {
+                    if (lowerHref.Contains(word))
+                    {
+                        score++;
+                    }
+                }
+
+                if (score > 0)
+                {
+                    // Prioritize links that match the specific episode if episodeId is provided
+                    if (!string.IsNullOrEmpty(episodeId))
+                    {
+                        if (lowerHref.Contains($"-episode-{episodeId}") || 
+                            lowerHref.Contains($"/ep-{episodeId}") ||
+                            lowerHref.EndsWith($"-{episodeId}") ||
+                            lowerHref.EndsWith($"/{episodeId}"))
+                        {
+                            score += 5;
+                        }
+                    }
+                    candidates.Add((fullUrl, score));
+                }
+            }
+
+            var best = candidates.OrderByDescending(c => c.score).FirstOrDefault();
+            if (best.score >= 1)
+            {
+                return best.url;
+            }
+
+            return null;
         }
     }
 }

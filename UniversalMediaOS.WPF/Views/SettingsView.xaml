@@ -102,13 +102,115 @@
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
                 <TextBlock Grid.Column="0" Text="Default Audio" Foreground="{StaticResource TextMuted}" VerticalAlignment="Center"/>
-                <ComboBox  Grid.Column="1" SelectedItem="{Binding DefaultAudioPref}">
+                <ComboBox  Grid.Column="1" SelectedValue="{Binding DefaultAudioPref}" SelectedValuePath="Content">
                     <ComboBoxItem Content="Sub"/>
                     <ComboBoxItem Content="Dub"/>
                 </ComboBox>
             </Grid>
             <CheckBox Content="Auto-play after download" IsChecked="{Binding AutoPlayAfterDownload}"
-                      Foreground="{StaticResource TextPrimary}" Margin="0,0,0,32"/>
+                      Foreground="{StaticResource TextPrimary}" Margin="0,0,0,16"/>
+
+            <!-- ── Downloads ─────────────────────────────────── -->
+            <TextBlock Text="Downloads" FontSize="16" FontWeight="SemiBold"
+                       Foreground="{StaticResource TextPrimary}" Margin="0,0,0,12"/>
+
+            <Grid Margin="0,0,0,24">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="200"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="Download Directory" Foreground="{StaticResource TextMuted}" VerticalAlignment="Center"/>
+                <TextBox   Grid.Column="1" Text="{Binding DownloadDirectory, UpdateSourceTrigger=PropertyChanged}" 
+                           Foreground="{StaticResource TextPrimary}" CaretBrush="{StaticResource TextPrimary}"/>
+                <Button    Grid.Column="2" Content="Browse..." Command="{Binding BrowseDownloadDirectoryCommand}"
+                           Margin="8,0,0,0" Padding="12,6" Background="{StaticResource AccentPrimary}" 
+                           Foreground="White" BorderThickness="0" Cursor="Hand"/>
+            </Grid>
+
+            <!-- ── Debug & Logging ─────────────────────────────────── -->
+            <TextBlock Text="Debug &amp; Logging" FontSize="16" FontWeight="SemiBold"
+                       Foreground="{StaticResource TextPrimary}" Margin="0,0,0,12"/>
+            <CheckBox Content="Enable Debug Logging" IsChecked="{Binding EnableDebugLogging}"
+                       Foreground="{StaticResource TextPrimary}" Margin="0,0,0,8"/>
+            <TextBlock Text="Writes button clicks, network resolve events, and scraper logs to a local file for diagnosis."
+                       Foreground="{StaticResource TextMuted}" FontSize="12" Margin="24,0,0,12" TextWrapping="Wrap"/>
+            
+            <StackPanel Orientation="Horizontal" Margin="24,0,0,32">
+                <TextBlock Text="Log File Size: " Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center" FontWeight="Medium"/>
+                <TextBlock Text="{Binding LogFileSizeText}" Foreground="{StaticResource TextMuted}" VerticalAlignment="Center" Margin="0,0,16,0"/>
+                <Button Content="Clear Log File" Command="{Binding ClearLogCommand}" Padding="12,6" Background="#EF4444" Foreground="White" BorderThickness="0" Cursor="Hand"/>
+            </StackPanel>
+
+            <!-- ── Custom Web Providers (Tier 3) ────────────────────── -->
+            <Border BorderBrush="{StaticResource BorderSubtle}" BorderThickness="0,1,0,0" Margin="0,16,0,24"/>
+            
+            <TextBlock Text="Custom Web Providers (Tier 3 WebView2 Embeds)" FontSize="20" FontWeight="SemiBold"
+                       Foreground="{StaticResource TextPrimary}" Margin="0,0,0,16"/>
+            
+            <TextBlock Text="Manage custom websites to load as embeds. The search URL must contain '{query}' where the anime name will be injected."
+                       Foreground="{StaticResource TextMuted}" FontSize="12" Margin="0,0,0,16" TextWrapping="Wrap"/>
+
+            <!-- Providers List -->
+            <ListBox ItemsSource="{Binding CustomSourcesList}" Background="Transparent" BorderThickness="0" Margin="0,0,0,24" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <Border Background="{StaticResource BgSurface}" CornerRadius="8" Padding="12" Margin="0,0,0,8">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="150"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                
+                                <TextBlock Grid.Column="0" Text="{Binding Name}" FontWeight="Bold" Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="1" Text="{Binding Url}" Foreground="{StaticResource TextMuted}" VerticalAlignment="Center" Margin="16,0,16,0" TextTrimming="CharacterEllipsis"/>
+                                
+                                <Button Grid.Column="2" Content="Delete" 
+                                        Command="{Binding DataContext.RemoveSourceCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" 
+                                        CommandParameter="{Binding}"
+                                        Background="#EF4444" Foreground="White" Padding="12,6" BorderThickness="0" Cursor="Hand"/>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+
+            <!-- Add Provider Form -->
+            <Border Background="{StaticResource BgSurface}" CornerRadius="12" Padding="20" Margin="0,0,0,32">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="12"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="16"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    
+                    <TextBlock Grid.Row="0" Text="Add New Web Provider" Style="{StaticResource SubtitleText}" FontWeight="Bold"/>
+                    
+                    <Grid Grid.Row="2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="16"/>
+                            <ColumnDefinition Width="2*"/>
+                        </Grid.ColumnDefinitions>
+                        
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Provider Name" Style="{StaticResource CaptionText}" Margin="0,0,0,6"/>
+                            <TextBox Text="{Binding NewSourceName, UpdateSourceTrigger=PropertyChanged}"/>
+                        </StackPanel>
+                        
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Text="Search URL Template (e.g. https://website.com/search?q={query})" Style="{StaticResource CaptionText}" Margin="0,0,0,6"/>
+                            <TextBox Text="{Binding NewSourceUrl, UpdateSourceTrigger=PropertyChanged}"/>
+                        </StackPanel>
+                    </Grid>
+                    
+                    <Button Grid.Row="4" Content="Add Provider" Command="{Binding AddSourceCommand}"
+                            HorizontalAlignment="Right" Padding="16,8" Background="#10B981" Foreground="White" BorderThickness="0" Cursor="Hand"/>
+                </Grid>
+            </Border>
 
             <!-- Save -->
             <Button Content="Save Settings" Command="{Binding SaveCommand}"

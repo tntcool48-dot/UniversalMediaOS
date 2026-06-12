@@ -1,6 +1,8 @@
 using System;
 using System.IO;
 using System.Threading.Tasks;
+using UniversalMediaOS.Core.Configuration;
+using UniversalMediaOS.Core.Helpers;
 
 namespace UniversalMediaOS.Core.Services
 {
@@ -8,10 +10,12 @@ namespace UniversalMediaOS.Core.Services
     {
         private readonly string _servicesDir;
         private readonly string _consumetDir;
+        private readonly DomainHotSwapper? _config;
         private System.Diagnostics.Process? _nodeProcess;
 
-        public ConsumetBootstrapper(string baseDirectory)
+        public ConsumetBootstrapper(string baseDirectory, DomainHotSwapper? config = null)
         {
+            _config = config;
             _servicesDir = Path.Combine(baseDirectory, "services");
             _consumetDir = Path.Combine(_servicesDir, "consumet");
             Directory.CreateDirectory(_servicesDir);
@@ -19,22 +23,71 @@ namespace UniversalMediaOS.Core.Services
 
         public async Task<bool> EnsureLatestConsumetAsync()
         {
+            AppLogger.Log("Ensuring latest Consumet microservice configuration...");
             try
             {
                 if (!Directory.Exists(_consumetDir)) Directory.CreateDirectory(_consumetDir);
                 string serverJsPath = Path.Combine(_consumetDir, "index.js");
 
                 // Always regenerate the server file to pick up scraper updates.
-                System.Diagnostics.Debug.WriteLine("Generating GogoAnime scraper microservice...");
-                string serverCode = GetServerCode();
+                string gogoUrl = GetGogoBaseUrl();
+                AppLogger.Log($"Generating GogoAnime scraper microservice with base url '{gogoUrl}'...");
+                string serverCode = GetServerCode().Replace("{{GOGO_BASE_URL}}", gogoUrl);
                 await File.WriteAllTextAsync(serverJsPath, serverCode);
+
+                // Start node process
+                StopServer();
+                StartNodeServer();
 
                 return true;
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Error bootstrapping scraper server: {ex.Message}");
+                AppLogger.Log($"Error bootstrapping scraper server: {ex.Message}", "ERROR");
                 return false;
+            }
+        }
+
+        private string GetGogoBaseUrl()
+        {
+            if (_config != null)
+            {
+                var customSources = _config.GetCustomSources();
+                var gogoSource = customSources.Find(s => s.Name.Equals("GogoAnime", StringComparison.OrdinalIgnoreCase));
+                if (gogoSource != null)
+                {
+                    try
+                    {
+                        var uri = new Uri(gogoSource.Url);
+                        return $"{uri.Scheme}://{uri.Host}";
+                    }
+                    catch (Exception ex)
+                    {
+                        AppLogger.Log($"Error parsing custom source GogoAnime URL '{gogoSource.Url}': {ex.Message}", "WARNING");
+                    }
+                }
+            }
+            return "https://anitaku.pe"; // Default fallback
+        }
+
+        private void StartNodeServer()
+        {
+            try
+            {
+                var startInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "cmd.exe",
+                    Arguments = "/c node index.js",
+                    WorkingDirectory = _consumetDir,
+                    CreateNoWindow = true,
+                    UseShellExecute = false
+                };
+                _nodeProcess = System.Diagnostics.Process.Start(startInfo);
+                AppLogger.Log($"[Consumet Bootstrapper] Started Node server process. PID={_nodeProcess?.Id}");
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Log($"[Consumet Bootstrapper] Failed to start Node server: {ex.Message}", "ERROR");
             }
         }
 
@@ -51,7 +104,7 @@ const crypto = require('crypto');
 // ─── Configuration ───────────────────────────────────────────
 const PORT = 3000;
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
-const BASE_URL = 'https://anitaku.pe';
+const BASE_URL = '{{GOGO_BASE_URL}}';
 const AJAX_URL = 'https://ajax.gogocdn.net';
 const AJAX_SEARCH_URL = AJAX_URL + '/site/loadAjaxSearch';
 
@@ -545,24 +598,24 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
-    // Search: GET /anime/gogoanime/:query
-    const searchMatch = /^\/anime\/gogoanime\/([^\/]+)$/.exec(pathname);
+    // Search: GET /anime/:provider/:query
+    const searchMatch = /^\/anime\/([^\/]+)\/([^\/]+)$/.exec(pathname);
     if (searchMatch && !pathname.includes('/watch/') && !pathname.includes('/info/')) {
-      const query = decodeURIComponent(searchMatch[1]);
+      const query = decodeURIComponent(searchMatch[2]);
       return await handleSearch(query, res);
     }
 
-    // Watch: GET /anime/gogoanime/watch/:episodeId
-    const watchMatch = /^\/anime\/gogoanime\/watch\/(.+)$/.exec(pathname);
+    // Watch: GET /anime/:provider/watch/:episodeId
+    const watchMatch = /^\/anime\/([^\/]+)\/watch\/(.+)$/.exec(pathname);
     if (watchMatch) {
-      const episodeId = decodeURIComponent(watchMatch[1]);
+      const episodeId = decodeURIComponent(watchMatch[2]);
       return await handleWatch(episodeId, res);
     }
 
-    // Info: GET /anime/gogoanime/info/:animeId
-    const infoMatch = /^\/anime\/gogoanime\/info\/(.+)$/.exec(pathname);
+    // Info: GET /anime/:provider/info/:animeId
+    const infoMatch = /^\/anime\/([^\/]+)\/info\/(.+)$/.exec(pathname);
     if (infoMatch) {
-      const animeId = decodeURIComponent(infoMatch[1]);
+      const animeId = decodeURIComponent(infoMatch[2]);
       return await handleInfo(animeId, res);
     }
 
@@ -597,9 +650,16 @@ server.listen(PORT, () => {
             try
             {
                 if (_nodeProcess != null && !_nodeProcess.HasExited)
+                {
+                    AppLogger.Log($"Stopping Consumet scraper microservice server (PID={_nodeProcess.Id})...");
                     _nodeProcess.Kill(entireProcessTree: true);
+                    AppLogger.Log("Consumet scraper microservice server terminated.");
+                }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                AppLogger.Log($"Error stopping Consumet scraper microservice server: {ex.Message}", "WARNING");
+            }
         }
     }
 }

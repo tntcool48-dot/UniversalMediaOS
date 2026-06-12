@@ -76,6 +76,9 @@
             <DataTemplate DataType="{x:Type vm:SettingsViewModel}">
                 <views:SettingsView/>
             </DataTemplate>
+            <DataTemplate DataType="{x:Type vm:AnimeDetailsViewModel}">
+                <views:AnimeDetailsView/>
+            </DataTemplate>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

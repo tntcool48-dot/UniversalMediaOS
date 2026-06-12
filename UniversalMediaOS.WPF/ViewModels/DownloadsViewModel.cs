@@ -3,10 +3,13 @@ using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
 using UniversalMediaOS.Core.Archiving;
+using UniversalMediaOS.Core.Configuration;
+using UniversalMediaOS.Core.Helpers;
 
 namespace UniversalMediaOS.WPF.ViewModels
 {
@@ -20,7 +23,7 @@ namespace UniversalMediaOS.WPF.ViewModels
     public partial class DownloadsViewModel : ObservableObject
     {
         private readonly SeasonDownloader _seasonDownloader;
-        private readonly string _downloadsPath;
+        private readonly DomainHotSwapper _config;
         private Action<string, string>? _playMediaAction;
 
         public ObservableCollection<InstalledEpisodeItem> InstalledFiles { get; } = new();
@@ -28,11 +31,10 @@ namespace UniversalMediaOS.WPF.ViewModels
         [ObservableProperty]
         private bool _isEmpty = true;
 
-        public DownloadsViewModel(SeasonDownloader seasonDownloader)
+        public DownloadsViewModel(SeasonDownloader seasonDownloader, DomainHotSwapper config)
         {
             _seasonDownloader = seasonDownloader;
-            string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-            _downloadsPath = Path.Combine(appData, "UniversalMediaOS", "Downloads");
+            _config = config;
             RefreshDownloadsCommand.Execute(null);
         }
 
@@ -44,12 +46,22 @@ namespace UniversalMediaOS.WPF.ViewModels
         [RelayCommand]
         private async Task RefreshDownloads()
         {
+            AppLogger.Log("RefreshDownloads command invoked. Scanning downloads directory...");
             InstalledFiles.Clear();
-            if (!Directory.Exists(_downloadsPath)) { IsEmpty = true; return; }
+            
+            string dDir = _config.GetSetting("DownloadDirectory");
+            string downloadsPath = string.IsNullOrEmpty(dDir) ? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Downloads") : dDir;
+
+            if (!Directory.Exists(downloadsPath)) 
+            { 
+                AppLogger.Log($"Downloads directory '{downloadsPath}' does not exist.");
+                IsEmpty = true; 
+                return; 
+            }
 
             // Run heavy disk I/O on a background thread to avoid blocking the UI
             var files = await Task.Run(() =>
-                Directory.GetFiles(_downloadsPath, "*.*", SearchOption.AllDirectories)
+                Directory.GetFiles(downloadsPath, "*.*", SearchOption.AllDirectories)
                     .Where(f => f.EndsWith(".mp4") || f.EndsWith(".mkv") || f.EndsWith(".avi") || f.EndsWith(".epub"))
                     .Select(f =>
                     {
@@ -65,18 +77,23 @@ namespace UniversalMediaOS.WPF.ViewModels
                 InstalledFiles.Add(file);
 
             IsEmpty = InstalledFiles.Count == 0;
+            AppLogger.Log($"Scan completed. Found {InstalledFiles.Count} media files.");
         }
 
         [RelayCommand]
         private void OpenDownloadsFolder()
         {
-            if (!Directory.Exists(_downloadsPath))
+            string dDir = _config.GetSetting("DownloadDirectory");
+            string downloadsPath = string.IsNullOrEmpty(dDir) ? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Downloads") : dDir;
+
+            AppLogger.Log($"OpenDownloadsFolder command invoked. Path: '{downloadsPath}'");
+            if (!Directory.Exists(downloadsPath))
             {
-                Directory.CreateDirectory(_downloadsPath);
+                Directory.CreateDirectory(downloadsPath);
             }
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo()
             {
-                FileName = _downloadsPath,
+                FileName = downloadsPath,
                 UseShellExecute = true,
                 Verb = "open"
             });
@@ -85,9 +102,49 @@ namespace UniversalMediaOS.WPF.ViewModels
         [RelayCommand]
         private void PlayFile(InstalledEpisodeItem item)
         {
-            if (item != null && File.Exists(item.FullPath))
+            if (item != null)
             {
-                _playMediaAction?.Invoke(item.FullPath, item.FileName);
+                AppLogger.Log($"PlayFile command invoked. File: '{item.FileName}', FullPath: '{item.FullPath}'");
+                if (File.Exists(item.FullPath))
+                {
+                    _playMediaAction?.Invoke(item.FullPath, item.FileName);
+                }
+                else
+                {
+                    AppLogger.Log($"PlayFile failed. File does not exist at path: '{item.FullPath}'", "WARNING");
+                }
+            }
+        }
+
+        [RelayCommand]
+        private async Task DeleteFile(InstalledEpisodeItem item)
+        {
+            if (item != null)
+            {
+                AppLogger.Log($"DeleteFile command invoked for: '{item.FileName}'");
+                var result = MessageBox.Show($"Are you sure you want to permanently delete '{item.FileName}'?", 
+                                             "Confirm Delete", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+                if (result == MessageBoxResult.Yes)
+                {
+                    try
+                    {
+                        if (File.Exists(item.FullPath))
+                        {
+                            File.Delete(item.FullPath);
+                            AppLogger.Log($"Successfully deleted file: '{item.FullPath}'");
+                        }
+                        else
+                        {
+                            AppLogger.Log($"DeleteFile failed. File does not exist: '{item.FullPath}'", "WARNING");
+                        }
+                        await RefreshDownloads();
+                    }
+                    catch (Exception ex)
+                    {
+                        AppLogger.Log($"Failed to delete file: {ex.Message}", "ERROR");
+                        MessageBox.Show($"Failed to delete file: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                    }
+                }
             }
         }
     }

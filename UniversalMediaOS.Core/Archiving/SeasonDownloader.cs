@@ -3,13 +3,16 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using UniversalMediaOS.Core.Configuration;
 using UniversalMediaOS.Core.Routing;
+using UniversalMediaOS.Core.Helpers;
 using MonoTorrent;
 using MonoTorrent.Client;
+using MonoTorrent.Dht;
 
 namespace UniversalMediaOS.Core.Archiving
 {
@@ -47,6 +50,11 @@ namespace UniversalMediaOS.Core.Archiving
             Action<string> log, 
             Action<double> progressUpdate)
         {
+            var originalLog = log;
+            log = msg => {
+                originalLog(msg);
+                AppLogger.Log(msg);
+            };
             log($"[P2P Season Downloader] Initializing batch download search for: \"{animeTitle}\"...");
             progressUpdate(0);
 
@@ -340,7 +348,19 @@ namespace UniversalMediaOS.Core.Archiving
             var downloadedFiles = new List<string>();
             try
             {
-                using (var engine = new ClientEngine())
+                var settingsBuilder = new EngineSettingsBuilder
+                {
+                    AllowPortForwarding = true,
+                    AutoSaveLoadDhtCache = true,
+                    AutoSaveLoadFastResume = true,
+                    AutoSaveLoadMagnetLinkMetadata = true,
+                    DhtEndPoint = new IPEndPoint(IPAddress.Any, 0),
+                    ListenEndPoints = new Dictionary<string, IPEndPoint>
+                    {
+                        { "ipv4", new IPEndPoint(IPAddress.Any, 0) }
+                    }
+                };
+                using (var engine = new ClientEngine(settingsBuilder.ToSettings()))
                 {
                     var magnet = MagnetLink.Parse(magnetLink);
                     var manager = await engine.AddAsync(magnet, _downloadDir);
@@ -453,9 +473,16 @@ namespace UniversalMediaOS.Core.Archiving
             }
             catch (Exception)
             {
-                var info = new FileInfo(filePath);
-                bool fallback = info.Length > 1024 * 1024 * 5;
-                return fallback;
+                try
+                {
+                    var info = new FileInfo(filePath);
+                    if (info.Exists)
+                    {
+                        return info.Length > 1024 * 1024 * 5;
+                    }
+                }
+                catch { }
+                return false;
             }
         }
     }

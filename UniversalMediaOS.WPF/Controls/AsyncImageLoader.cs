@@ -33,6 +33,16 @@ namespace UniversalMediaOS.WPF.Controls
         public static string GetImageUrl(DependencyObject obj) => (string)obj.GetValue(ImageUrlProperty);
         public static void SetImageUrl(DependencyObject obj, string value) => obj.SetValue(ImageUrlProperty, value);
 
+        public static readonly DependencyProperty DecodeWidthProperty =
+            DependencyProperty.RegisterAttached(
+                "DecodeWidth", 
+                typeof(int), 
+                typeof(AsyncImageLoader), 
+                new PropertyMetadata(200));
+
+        public static int GetDecodeWidth(DependencyObject obj) => (int)obj.GetValue(DecodeWidthProperty);
+        public static void SetDecodeWidth(DependencyObject obj, int value) => obj.SetValue(DecodeWidthProperty, value);
+
         private static async void OnImageUrlChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         {
             if (d is not Image imageControl) return;
@@ -83,8 +93,11 @@ namespace UniversalMediaOS.WPF.Controls
                 bitmap.BeginInit();
                 bitmap.CacheOption = BitmapCacheOption.OnLoad;
                 bitmap.StreamSource = ms;
-                // Decode constraint (e.g. 200px max width for posters)
-                bitmap.DecodePixelWidth = 200; 
+                int decodeWidth = GetDecodeWidth(imageControl);
+                if (decodeWidth > 0)
+                {
+                    bitmap.DecodePixelWidth = decodeWidth;
+                }
                 bitmap.EndInit();
                 bitmap.Freeze(); // Mandatory Freezable Mandate
 

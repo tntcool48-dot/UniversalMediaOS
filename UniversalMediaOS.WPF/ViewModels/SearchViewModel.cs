@@ -34,15 +34,22 @@ namespace UniversalMediaOS.WPF.ViewModels
         {
             if (string.IsNullOrWhiteSpace(SearchQuery)) return;
 
+            UniversalMediaOS.Core.Helpers.AppLogger.Log($"SearchAsync invoked. Query: '{SearchQuery}'");
             IsSearching = true;
             try
             {
                 var results = await _searchService.SearchAnimeAsync(SearchQuery, token);
                 SearchResults.ReplaceRange(results);
+                UniversalMediaOS.Core.Helpers.AppLogger.Log($"SearchAsync complete. Found {results.Count} results.");
             }
             catch (OperationCanceledException)
             {
-                // Ignoring cancellation
+                UniversalMediaOS.Core.Helpers.AppLogger.Log("SearchAsync cancelled by user.");
+            }
+            catch (Exception ex)
+            {
+                UniversalMediaOS.Core.Helpers.AppLogger.Log($"SearchAsync failed. Error: {ex.Message}", "ERROR");
+                throw;
             }
             finally
             {
@@ -55,21 +62,40 @@ namespace UniversalMediaOS.WPF.ViewModels
         {
             if (result == null) return;
             
+            UniversalMediaOS.Core.Helpers.AppLogger.Log($"DownloadAsync invoked for: '{result.OfficialTitle}' (ID: {result.Id})");
             CommunityToolkit.Mvvm.Messaging.WeakReferenceMessenger.Default.Send(new ToastNotificationMessage($"Download initialized: {result.OfficialTitle}"));
             
-            // This relies on the SeasonDownloader backend working nicely with async
-            await _seasonDownloader.DownloadSeasonAsync(
-                result.OfficialTitle, 
-                msg => 
-                {
-                    CommunityToolkit.Mvvm.Messaging.WeakReferenceMessenger.Default.Send(new ToastNotificationMessage(msg));
-                }, 
-                pct => 
-                {
-                    // For now, percentage updates might spam the toast, so we skip or throttle.
-                    // We'll leave it empty to avoid spamming the toast.
-                }
-            );
+            try
+            {
+                bool success = await _seasonDownloader.DownloadSeasonAsync(
+                    result.OfficialTitle, 
+                    msg => 
+                    {
+                        UniversalMediaOS.Core.Helpers.AppLogger.Log($"[Download] {msg}");
+                        CommunityToolkit.Mvvm.Messaging.WeakReferenceMessenger.Default.Send(new ToastNotificationMessage(msg));
+                    }, 
+                    pct => 
+                    {
+                        // percentage
+                    }
+                );
+                UniversalMediaOS.Core.Helpers.AppLogger.Log($"Download finished. Success: {success}");
+            }
+            catch (Exception ex)
+            {
+                UniversalMediaOS.Core.Helpers.AppLogger.Log($"Download failed. Error: {ex.Message}", "ERROR");
+                throw;
+            }
+        }
+
+        [RelayCommand]
+        private void SelectAnime(MediaResult result)
+        {
+            if (result != null)
+            {
+                UniversalMediaOS.Core.Helpers.AppLogger.Log($"SelectAnime details requested for: '{result.OfficialTitle}' (ID: {result.Id})");
+                CommunityToolkit.Mvvm.Messaging.WeakReferenceMessenger.Default.Send(new NavigateToDetailsMessage(result));
+            }
         }
     }
 }

@@ -149,6 +149,12 @@ namespace UniversalMediaOS.WPF
         {
             _progressTimer.Stop();
             _malTimer.Stop();
+            if (_osdTimer != null)
+            {
+                _osdTimer.Stop();
+            }
+
+            Mouse.OverrideCursor = null; // Reset cursor so it is visible in the main application
 
             if (_malUpdateTask != null && !_malUpdateTask.IsCompleted)
             {
@@ -179,17 +185,34 @@ namespace UniversalMediaOS.WPF
             VlcPlayer.Visibility = Visibility.Visible;
             ControlsOverlay.Visibility = Visibility.Visible;
             
-            bool isLocal = File.Exists(url);
+            string path = url;
+            try
+            {
+                path = Uri.UnescapeDataString(path);
+            }
+            catch { }
+
+            if (path.StartsWith("file://", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    path = new Uri(path).LocalPath;
+                }
+                catch { }
+            }
+
+            path = path.Replace('/', System.IO.Path.DirectorySeparatorChar);
+            bool isLocal = File.Exists(path);
             var mediaType = isLocal ? FromType.FromPath : FromType.FromLocation;
             
-            var media = new Media(_libVLC, url, mediaType);
+            var media = new Media(_libVLC, path, mediaType);
             if (!isLocal && !string.IsNullOrEmpty(referer))
             {
                 media.AddOption($":http-referrer={referer}");
             }
             
             _mediaPlayer.Play(media);
-            System.Diagnostics.Debug.WriteLine($"[VLC] PlayLocalOrHttp. isLocal={isLocal} | path={url} | referer={referer}");
+            System.Diagnostics.Debug.WriteLine($"[VLC] PlayLocalOrHttp. isLocal={isLocal} | path={path} | referer={referer}");
         }
 
         public async System.Threading.Tasks.Task PlayEmbedAsync(string embedUrl)

@@ -4,13 +4,16 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
              xmlns:vlc="clr-namespace:LibVLCSharp.WPF;assembly=LibVLCSharp.WPF"
+             xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
              mc:Ignorable="d" 
              d:DesignHeight="720" d:DesignWidth="1080"
              Background="Black">
              
     <Grid>
         <!-- Native Video Surface -->
-        <vlc:VideoView MediaPlayer="{Binding MediaPlayer}" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
+        <vlc:VideoView x:Name="VlcPlayer" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
+        <!-- Embedded WebView for web stream endpoints -->
+        <wv2:WebView2 x:Name="WebViewPlayer" Visibility="Collapsed" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
 
         <!-- Cinematic Controls Layer -->
         <Border x:Name="ControlsLayer" Opacity="0">

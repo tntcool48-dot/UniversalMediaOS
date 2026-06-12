@@ -133,7 +133,7 @@ namespace UniversalMediaOS.WPF
                     await depBoot.EnsureDependenciesAsync();
 
                     Log("Generating scraper microservice...");
-                    var conBoot = new UniversalMediaOS.Core.Services.ConsumetBootstrapper(baseDir);
+                    var conBoot = new UniversalMediaOS.Core.Services.ConsumetBootstrapper(baseDir, _swapper);
                     await conBoot.EnsureLatestConsumetAsync();
 
                     Log("Initializing SQLite tracking database...");

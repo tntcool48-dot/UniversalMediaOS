@@ -66,6 +66,11 @@
                                 <TextBlock Text="{Binding FileSizeText}" Style="{StaticResource BodyText}" Foreground="{StaticResource TextMuted}" Margin="0,4,0,0"/>
                             </StackPanel>
                             
+                            <Button Grid.Column="2" Content="Delete" 
+                                    Command="{Binding DataContext.DeleteFileCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" 
+                                    CommandParameter="{Binding}" 
+                                    Width="100" Height="36" Background="#EF4444" Foreground="White" BorderThickness="0" Margin="16,0,0,0" Style="{StaticResource PremiumNavButton}"/>
+
                             <Button Grid.Column="3" Content="Play" 
                                     Command="{Binding DataContext.PlayFileCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" 
                                     CommandParameter="{Binding}" 
