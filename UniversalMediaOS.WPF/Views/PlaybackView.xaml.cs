@@ -163,13 +163,43 @@ namespace UniversalMediaOS.WPF.Views
             }
         }
 
+        public static async Task<CoreWebView2Environment?> CreateUBlockEnvironmentAsync()
+        {
+            try
+            {
+                string appData = Environment.GetEnvironmentVariable("APPDATA") ?? 
+                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+                string uBlockPath = System.IO.Path.Combine(appData, "UniversalMediaOS", "Extensions", "uBlock", "uBlock0.chromium");
+                
+                if (System.IO.Directory.Exists(uBlockPath))
+                {
+                    AppLogger.Log($"Loading uBlock Origin extension from: '{uBlockPath}'");
+                    var options = new CoreWebView2EnvironmentOptions
+                    {
+                        AdditionalBrowserArguments = $"--load-extension=\"{uBlockPath}\""
+                    };
+                    return await CoreWebView2Environment.CreateAsync(null, null, options);
+                }
+                else
+                {
+                    AppLogger.Log($"uBlock Origin extension path not found: '{uBlockPath}'. Starting default WebView2.", "WARNING");
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Log($"Failed to initialize WebView2 uBlock Environment: {ex.Message}", "WARNING");
+            }
+            return null;
+        }
+
         private async Task UpdateWebViewUrlAsync(ViewModels.PlaybackViewModel vm)
         {
             if (vm.IsWebViewActive && !string.IsNullOrEmpty(vm.EmbedUrl))
             {
                 try
                 {
-                    await WebViewPlayer.EnsureCoreWebView2Async(null);
+                    var env = await CreateUBlockEnvironmentAsync();
+                    await WebViewPlayer.EnsureCoreWebView2Async(env);
                     ConfigureAdBlocker(WebViewPlayer.CoreWebView2);
                     WebViewPlayer.CoreWebView2.Navigate(vm.EmbedUrl);
                 }

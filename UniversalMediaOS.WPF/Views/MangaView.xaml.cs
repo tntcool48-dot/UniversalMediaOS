@@ -52,7 +52,8 @@ namespace UniversalMediaOS.WPF.Views
             if (string.IsNullOrEmpty(url)) return;
             try
             {
-                await MangaWebReader.EnsureCoreWebView2Async(null);
+                var env = await PlaybackView.CreateUBlockEnvironmentAsync();
+                await MangaWebReader.EnsureCoreWebView2Async(env);
                 ConfigureAdBlocker(MangaWebReader.CoreWebView2);
                 AppLogger.Log($"[MangaView] Navigating WebView to external chapter: {url}");
                 MangaWebReader.CoreWebView2.Navigate(url);

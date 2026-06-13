@@ -311,7 +311,7 @@ namespace UniversalMediaOS.Core.Configuration
                 // Playback / UI preferences
                 { "DefaultAudioPref", "Sub" },
                 { "AutoPlayAfterDownload", "true" },
-                { "AutoManageServices", "false" },
+                { "AutoManageServices", "true" },
                 { "DownloadDirectory", "" },
 
                 // Redirectable API URLs

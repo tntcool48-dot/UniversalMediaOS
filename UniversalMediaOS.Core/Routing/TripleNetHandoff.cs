@@ -228,6 +228,11 @@ namespace UniversalMediaOS.Core.Routing
                     string provider = _config.GetSetting("ConsumetProvider");
                     if (string.IsNullOrEmpty(provider)) provider = "gogoanime";
 
+                    if (provider.Contains("/") || provider.Contains("\\"))
+                    {
+                        provider = "gogoanime";
+                    }
+
                     string searchUrl = $"{consumetBase.TrimEnd('/')}/anime/{provider}/{Uri.EscapeDataString(query)}";
                     Log($"> [Tier 2] Searching: {searchUrl}");
                     var searchResp = await GetWithRetriesAsync(searchUrl, Log, token);
