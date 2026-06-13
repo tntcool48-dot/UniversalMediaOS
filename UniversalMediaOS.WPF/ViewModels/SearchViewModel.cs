@@ -29,7 +29,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             _seasonDownloader = seasonDownloader;
         }
 
-        [RelayCommand(IncludeCancelCommand = true)]
+        [RelayCommand(IncludeCancelCommand = true, AllowConcurrentExecutions = false)]
         private async Task SearchAsync(CancellationToken token)
         {
             if (string.IsNullOrWhiteSpace(SearchQuery)) return;
@@ -57,8 +57,8 @@ namespace UniversalMediaOS.WPF.ViewModels
             }
         }
 
-        [RelayCommand]
-        private async Task DownloadAsync(MediaResult result)
+        [RelayCommand(IncludeCancelCommand = true, AllowConcurrentExecutions = false)]
+        private async Task DownloadAsync(MediaResult result, CancellationToken token)
         {
             if (result == null) return;
             
@@ -77,9 +77,15 @@ namespace UniversalMediaOS.WPF.ViewModels
                     pct => 
                     {
                         // percentage
-                    }
+                    },
+                    token
                 );
                 UniversalMediaOS.Core.Helpers.AppLogger.Log($"Download finished. Success: {success}");
+            }
+            catch (OperationCanceledException)
+            {
+                UniversalMediaOS.Core.Helpers.AppLogger.Log($"Download cancelled by user for: '{result.OfficialTitle}'");
+                CommunityToolkit.Mvvm.Messaging.WeakReferenceMessenger.Default.Send(new ToastNotificationMessage($"Download cancelled: {result.OfficialTitle}"));
             }
             catch (Exception ex)
             {

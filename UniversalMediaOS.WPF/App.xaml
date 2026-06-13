@@ -3,8 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:local="clr-namespace:UniversalMediaOS.WPF"
              xmlns:vm="clr-namespace:UniversalMediaOS.WPF.ViewModels"
-             xmlns:views="clr-namespace:UniversalMediaOS.WPF.Views"
-             StartupUri="MainWindow.xaml">
+             xmlns:views="clr-namespace:UniversalMediaOS.WPF.Views">
     <Application.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
@@ -32,24 +31,28 @@
                     <Setter.Value>
                         <ControlTemplate TargetType="Button">
                             <Border x:Name="Border" Background="{TemplateBinding Background}" CornerRadius="6">
-                                <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" 
-                                                  VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
+                                <Grid>
+                                    <Border x:Name="HoverOverlay" Background="#1AFFFFFF" Opacity="0" CornerRadius="6"/>
+                                    <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" 
+                                                      VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
+                                </Grid>
                             </Border>
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsMouseOver" Value="True">
                                     <Trigger.EnterActions>
-                                        <BeginStoryboard>
+                                        <BeginStoryboard Name="HoverOnStoryboard">
                                             <Storyboard>
-                                                <ColorAnimation Storyboard.TargetName="Border" Storyboard.TargetProperty="(Border.Background).(SolidColorBrush.Color)" 
-                                                                To="#1AFFFFFF" Duration="{StaticResource MotionFast}"/>
+                                                <DoubleAnimation Storyboard.TargetName="HoverOverlay" Storyboard.TargetProperty="Opacity" 
+                                                                 To="1" Duration="{StaticResource MotionFast}"/>
                                             </Storyboard>
                                         </BeginStoryboard>
                                     </Trigger.EnterActions>
                                     <Trigger.ExitActions>
-                                        <BeginStoryboard>
+                                        <StopStoryboard BeginStoryboardName="HoverOnStoryboard"/>
+                                        <BeginStoryboard Name="HoverOffStoryboard">
                                             <Storyboard>
-                                                <ColorAnimation Storyboard.TargetName="Border" Storyboard.TargetProperty="(Border.Background).(SolidColorBrush.Color)" 
-                                                                To="Transparent" Duration="{StaticResource MotionFast}"/>
+                                                <DoubleAnimation Storyboard.TargetName="HoverOverlay" Storyboard.TargetProperty="Opacity" 
+                                                                 To="0" Duration="{StaticResource MotionFast}"/>
                                             </Storyboard>
                                         </BeginStoryboard>
                                     </Trigger.ExitActions>

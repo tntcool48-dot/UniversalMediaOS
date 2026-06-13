@@ -11,6 +11,7 @@ namespace UniversalMediaOS.WPF.ViewModels
     public partial class SettingsViewModel : ObservableObject
     {
         private readonly DomainHotSwapper _config;
+        private readonly Helpers.IDialogService _dialogService;
 
         [ObservableProperty] private string _consumetApiBase = string.Empty;
         [ObservableProperty] private string _consumetProvider = string.Empty;
@@ -29,22 +30,25 @@ namespace UniversalMediaOS.WPF.ViewModels
         [ObservableProperty] private string _newSourceName = string.Empty;
         [ObservableProperty] private string _newSourceUrl = string.Empty;
 
-        public System.Collections.ObjectModel.ObservableCollection<CustomSource> CustomSourcesList { get; } = new();
+        public Helpers.ObservableRangeCollection<CustomSource> CustomSourcesList { get; } = new();
 
-        public SettingsViewModel(DomainHotSwapper config)
+        public SettingsViewModel(DomainHotSwapper config, Helpers.IDialogService dialogService)
         {
             _config = config;
-            Load();
+            _dialogService = dialogService;
+            
+            // Run load on a background thread to prevent blocking the UI thread on startup
+            _ = Task.Run(() => Load());
         }
 
         private void Load()
         {
             AppLogger.Log("Loading settings from configuration...");
-            ConsumetApiBase = _config.GetSetting("ConsumetApiBase");
-            if (string.IsNullOrEmpty(ConsumetApiBase)) ConsumetApiBase = "http://localhost:3000";
+            var baseApi = _config.GetSetting("ConsumetApiBase");
+            ConsumetApiBase = string.IsNullOrEmpty(baseApi) ? "http://localhost:3000" : baseApi;
 
-            ConsumetProvider = _config.GetSetting("ConsumetProvider");
-            if (string.IsNullOrEmpty(ConsumetProvider)) ConsumetProvider = "gogoanime";
+            var provider = _config.GetSetting("ConsumetProvider");
+            ConsumetProvider = string.IsNullOrEmpty(provider) ? "gogoanime" : provider;
 
             QbitHost     = _config.GetSetting("QBitHost");
             QbitPort     = _config.GetSetting("QBitPort");
@@ -54,20 +58,16 @@ namespace UniversalMediaOS.WPF.ViewModels
             DefaultAudioPref = _config.GetSetting("DefaultAudioPref");
             AutoPlayAfterDownload = _config.GetSetting("AutoPlayAfterDownload") == "true";
             EnableDebugLogging    = _config.GetSetting("EnableDebugLogging") != "false";
-            DownloadDirectory     = _config.GetSetting("DownloadDirectory");
-            if (string.IsNullOrEmpty(DownloadDirectory)) DownloadDirectory = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Downloads");
+            
+            var dDir = _config.GetSetting("DownloadDirectory");
+            DownloadDirectory = string.IsNullOrEmpty(dDir) ? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Downloads") : dDir;
             
             AppLogger.Log($"Settings loaded. ConsumetBase='{ConsumetApiBase}', ConsumetProvider='{ConsumetProvider}', QBitHost='{QbitHost}', DefaultAudioPref='{DefaultAudioPref}', EnableDebugLogging={EnableDebugLogging}");
-            RefreshLogSize();
+            _ = RefreshLogSizeAsync();
 
-            CustomSourcesList.Clear();
             var list = _config.GetCustomSources();
             AppLogger.Log($"Loading {list.Count} custom sources...");
-            foreach (var src in list)
-            {
-                CustomSourcesList.Add(src);
-                AppLogger.Log($"Loaded custom source: Name='{src.Name}', Url='{src.Url}'");
-            }
+            CustomSourcesList.ReplaceRange(list);
         }
 
         [RelayCommand]
@@ -77,7 +77,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             if (string.IsNullOrWhiteSpace(NewSourceName) || string.IsNullOrWhiteSpace(NewSourceUrl))
             {
                 AppLogger.Log("AddSource validation failed: Name or URL is empty.", "WARNING");
-                MessageBox.Show("Please enter both a name and a search URL.", "Validation Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+                _dialogService.ShowErrorDialog("Please enter both a name and a search URL.", "Validation Error");
                 return;
             }
 
@@ -98,54 +98,63 @@ namespace UniversalMediaOS.WPF.ViewModels
             }
         }
 
-        [RelayCommand]
-        private void Save()
+        [RelayCommand(AllowConcurrentExecutions = false)]
+        private async Task SaveAsync()
         {
             AppLogger.Log("Saving settings to configuration file...");
-            _config.SetSetting("ConsumetApiBase",        ConsumetApiBase);
-            _config.SetSetting("ConsumetProvider",       ConsumetProvider);
-            _config.SetSetting("QBitHost",               QbitHost);
-            _config.SetSetting("QBitPort",               QbitPort);
-            _config.SetSetting("QBitUsername",           QbitUsername);
-            _config.SetSetting("QBitPassword",           QbitPassword);
-            _config.SetSetting("MalOAuthToken",          MalOAuthToken);
-            _config.SetSetting("DefaultAudioPref",       DefaultAudioPref);
-            _config.SetSetting("AutoPlayAfterDownload",  AutoPlayAfterDownload ? "true" : "false");
-            _config.SetSetting("AutoManageServices",     AutoManageServices ? "true" : "false");
-            _config.SetSetting("EnableDebugLogging",     EnableDebugLogging ? "true" : "false");
-            _config.SetSetting("DownloadDirectory",      DownloadDirectory);
+            
+            var baseApi = ConsumetApiBase;
+            var provider = ConsumetProvider;
+            var host = QbitHost;
+            var port = QbitPort;
+            var user = QbitUsername;
+            var pass = QbitPassword;
+            var oauth = MalOAuthToken;
+            var audio = DefaultAudioPref;
+            var autoplay = AutoPlayAfterDownload;
+            var automanage = AutoManageServices;
+            var debug = EnableDebugLogging;
+            var dir = DownloadDirectory;
+            var list = System.Linq.Enumerable.ToList(CustomSourcesList);
+
+            await Task.Run(() =>
+            {
+                _config.SetSetting("ConsumetApiBase",        baseApi);
+                _config.SetSetting("ConsumetProvider",       provider);
+                _config.SetSetting("QBitHost",               host);
+                _config.SetSetting("QBitPort",               port);
+                _config.SetSetting("QBitUsername",           user);
+                _config.SetSetting("QBitPassword",           pass);
+                _config.SetSetting("MalOAuthToken",          oauth);
+                _config.SetSetting("DefaultAudioPref",       audio);
+                _config.SetSetting("AutoPlayAfterDownload",  autoplay ? "true" : "false");
+                _config.SetSetting("AutoManageServices",     automanage ? "true" : "false");
+                _config.SetSetting("EnableDebugLogging",     debug ? "true" : "false");
+                _config.SetSetting("DownloadDirectory",      dir);
+                _config.SaveCustomSources(list);
+            });
             
             AppLogger.IsEnabled = EnableDebugLogging;
-            AppLogger.Log($"AppLogger.IsEnabled set to {EnableDebugLogging}");
-
-            var list = new System.Collections.Generic.List<CustomSource>();
-            foreach (var src in CustomSourcesList)
-            {
-                list.Add(src);
-            }
-            _config.SaveCustomSources(list);
-            AppLogger.Log($"Saved {list.Count} custom sources to config.");
-
-            RefreshLogSize();
+            await RefreshLogSizeAsync();
 
             AppLogger.Log("Settings saved successfully.");
-            MessageBox.Show("Settings saved. Restart the app for service changes to take effect.", 
-                            "Settings Saved", MessageBoxButton.OK, MessageBoxImage.Information);
+            _dialogService.ShowInfoDialog("Settings saved. Restart the app for service changes to take effect.", "Settings Saved");
         }
 
-        [RelayCommand]
-        private void ClearLog()
+        [RelayCommand(AllowConcurrentExecutions = false)]
+        private async Task ClearLogAsync()
         {
             AppLogger.Log("ClearLog invoked by user.");
-            AppLogger.ClearLog();
-            RefreshLogSize();
-            MessageBox.Show("Debug log file cleared successfully.", "Logs", MessageBoxButton.OK, MessageBoxImage.Information);
+            await Task.Run(() => AppLogger.ClearLog());
+            await RefreshLogSizeAsync();
+            _dialogService.ShowInfoDialog("Debug log file cleared successfully.", "Logs");
         }
 
-        [RelayCommand]
-        private void RefreshLogSize()
+        [RelayCommand(AllowConcurrentExecutions = false)]
+        private async Task RefreshLogSizeAsync()
         {
-            LogFileSizeText = AppLogger.GetLogFileSize();
+            var sizeText = await Task.Run(() => AppLogger.GetLogFileSize());
+            LogFileSizeText = sizeText;
             AppLogger.Log($"Log file size refreshed: {LogFileSizeText}");
         }
 

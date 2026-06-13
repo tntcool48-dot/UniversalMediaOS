@@ -13,9 +13,8 @@ namespace UniversalMediaOS.WPF.Controls
     public static class AsyncImageLoader
     {
         private static readonly HttpClient _httpClient = new();
-        private static readonly ConcurrentDictionary<string, BitmapImage> _imageCache = new();
+        private static readonly LruCache<string, BitmapImage> _imageCache = new(150);
         
-        // Use ConditionalWeakTable or attached property to track cancellation per Image container
         private static readonly DependencyProperty CancellationTokenSourceProperty =
             DependencyProperty.RegisterAttached(
                 "CancellationTokenSource", 
@@ -51,10 +50,9 @@ namespace UniversalMediaOS.WPF.Controls
             if (imageControl.GetValue(CancellationTokenSourceProperty) is CancellationTokenSource oldCts)
             {
                 oldCts.Cancel();
-                oldCts.Dispose();
             }
 
-            string url = e.NewValue as string;
+            string? url = e.NewValue as string;
             
             // 2. Clear stale image immediately to prevent recycling flashes
             imageControl.Source = null;
@@ -69,6 +67,8 @@ namespace UniversalMediaOS.WPF.Controls
             if (_imageCache.TryGetValue(url, out var cachedImage))
             {
                 imageControl.Source = cachedImage;
+                imageControl.SetValue(CancellationTokenSourceProperty, null);
+                newCts.Dispose();
                 return;
             }
 
@@ -80,7 +80,6 @@ namespace UniversalMediaOS.WPF.Controls
 
                 using var stream = await response.Content.ReadAsStreamAsync(newCts.Token);
                 
-                // We need to copy it to a MemoryStream because decoding requires a seekable stream
                 using var ms = new MemoryStream();
                 await stream.CopyToAsync(ms, newCts.Token);
                 ms.Position = 0;
@@ -88,7 +87,6 @@ namespace UniversalMediaOS.WPF.Controls
                 newCts.Token.ThrowIfCancellationRequested();
 
                 // 6. Decode on UI thread using DecodePixelWidth constraint (Frozen)
-                // To avoid blocking UI thread entirely, we freeze it and only dispatch the initialization
                 BitmapImage bitmap = new BitmapImage();
                 bitmap.BeginInit();
                 bitmap.CacheOption = BitmapCacheOption.OnLoad;
@@ -99,21 +97,97 @@ namespace UniversalMediaOS.WPF.Controls
                     bitmap.DecodePixelWidth = decodeWidth;
                 }
                 bitmap.EndInit();
-                bitmap.Freeze(); // Mandatory Freezable Mandate
+                bitmap.Freeze();
 
                 if (!newCts.Token.IsCancellationRequested)
                 {
-                    _imageCache[url] = bitmap;
+                    _imageCache.Add(url, bitmap);
                     imageControl.Source = bitmap;
                 }
             }
             catch (OperationCanceledException)
             {
-                // Container was recycled before load finished. Safe to ignore.
+                // Container was recycled/cancelled. Safe to ignore.
             }
             catch (Exception)
             {
-                // Fallback or ignore network failure
+                // Ignore other failures
+            }
+            finally
+            {
+                // Ensure CTS is disposed. Only clear the DP if it still belongs to this run.
+                if (imageControl.GetValue(CancellationTokenSourceProperty) == newCts)
+                {
+                    imageControl.SetValue(CancellationTokenSourceProperty, null);
+                    newCts.Dispose();
+                }
+                else
+                {
+                    newCts.Dispose();
+                }
+            }
+        }
+
+        private class LruCache<TKey, TValue> where TKey : notnull
+        {
+            private readonly int _capacity;
+            private readonly System.Collections.Generic.Dictionary<TKey, System.Collections.Generic.LinkedListNode<CacheEntry>> _cacheMap = new();
+            private readonly System.Collections.Generic.LinkedList<CacheEntry> _lruList = new();
+            private readonly object _lock = new();
+
+            private struct CacheEntry
+            {
+                public TKey Key { get; }
+                public TValue Value { get; }
+                public CacheEntry(TKey key, TValue value) => (Key, Value) = (key, value);
+            }
+
+            public LruCache(int capacity)
+            {
+                _capacity = capacity;
+            }
+
+            public bool TryGetValue(TKey key, out TValue value)
+            {
+                lock (_lock)
+                {
+                    if (_cacheMap.TryGetValue(key, out var node))
+                    {
+                        _lruList.Remove(node);
+                        _lruList.AddFirst(node);
+                        value = node.Value.Value;
+                        return true;
+                    }
+                    value = default!;
+                    return false;
+                }
+            }
+
+            public void Add(TKey key, TValue value)
+            {
+                lock (_lock)
+                {
+                    if (_cacheMap.TryGetValue(key, out var node))
+                    {
+                        _lruList.Remove(node);
+                        _lruList.AddFirst(node);
+                        return;
+                    }
+
+                    if (_cacheMap.Count >= _capacity)
+                    {
+                        var lastNode = _lruList.Last;
+                        if (lastNode != null)
+                        {
+                            _cacheMap.Remove(lastNode.Value.Key);
+                            _lruList.RemoveLast();
+                        }
+                    }
+
+                    var newNode = new System.Collections.Generic.LinkedListNode<CacheEntry>(new CacheEntry(key, value));
+                    _lruList.AddFirst(newNode);
+                    _cacheMap[key] = newNode;
+                }
             }
         }
     }

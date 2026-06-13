@@ -16,8 +16,9 @@ using MonoTorrent.Dht;
 
 namespace UniversalMediaOS.Core.Archiving
 {
-    public class SeasonDownloader
+    public class SeasonDownloader : IDisposable
     {
+        private bool _disposed;
         private readonly string _downloadDir;
         private readonly DomainHotSwapper _config;
         private readonly DualTrackerRssParser _rssParser;
@@ -48,7 +49,8 @@ namespace UniversalMediaOS.Core.Archiving
         public async Task<bool> DownloadSeasonAsync(
             string animeTitle, 
             Action<string> log, 
-            Action<double> progressUpdate)
+            Action<double> progressUpdate,
+            System.Threading.CancellationToken token = default)
         {
             var originalLog = log;
             log = msg => {
@@ -60,6 +62,8 @@ namespace UniversalMediaOS.Core.Archiving
 
             try
             {
+                token.ThrowIfCancellationRequested();
+
                 // 1. Search Nyaa / AnimeTosho for season batch torrents
                 var torrents = await SearchForBatchTorrentsAsync(animeTitle, log);
                 if (torrents.Count == 0)
@@ -67,6 +71,8 @@ namespace UniversalMediaOS.Core.Archiving
                     log($"[P2P Season Downloader] ERROR: No torrents found matching \"{animeTitle}\" on Nyaa or AnimeTosho feeds.");
                     return false;
                 }
+
+                token.ThrowIfCancellationRequested();
 
                 // 2. Select the best batch torrent based on seeders and batch markers (e.g. "Batch", "01-", "01~", "Season")
                 var bestTorrent = SelectBestBatchTorrent(torrents, animeTitle, log);
@@ -83,9 +89,16 @@ namespace UniversalMediaOS.Core.Archiving
 
                 if (string.IsNullOrEmpty(infoHash))
                 {
-                    // Extract info hash from magnet link if missing
-                    var match = Regex.Match(magnetLink, @"btih:([a-fA-F0-9]{40})");
-                    if (match.Success) infoHash = match.Groups[1].Value;
+                    // Extract info hash from magnet link if missing (handles Hex 40 and Base32 32)
+                    var match = Regex.Match(magnetLink, @"btih:([a-fA-F0-9]{40}|[a-zA-Z2-7]{32})");
+                    if (match.Success)
+                    {
+                        infoHash = match.Groups[1].Value.ToUpperInvariant();
+                        if (infoHash.Length == 32)
+                        {
+                            infoHash = Base32ToHex(infoHash);
+                        }
+                    }
                 }
 
                 List<string> downloadedFiles = new List<string>();
@@ -95,11 +108,17 @@ namespace UniversalMediaOS.Core.Archiving
                 log("[P2P Season Downloader] Checking qBittorrent WebUI status...");
                 string qbitUser = _config.GetSetting("QBitUsername");
                 string qbitPass = _config.GetSetting("QBitPassword");
-                if (string.IsNullOrEmpty(qbitUser)) qbitUser = "admin";
-                if (string.IsNullOrEmpty(qbitPass)) qbitPass = "adminadmin";
-
-                bool qbitAuth = await _qbit.AuthenticateAsync(msg => log($"[QBit] {msg}"), qbitUser, qbitPass);
                 
+                // Let DomainHotSwapper defaults handle fallback if empty, or log warning instead of silent hardcode
+                if (string.IsNullOrEmpty(qbitUser) || string.IsNullOrEmpty(qbitPass))
+                {
+                    log("[P2P Season Downloader] WARNING: WebUI credentials not set in configuration. Attempting connection anyway.");
+                }
+
+                bool qbitAuth = await _qbit.AuthenticateAsync(msg => log($"[QBit] {msg}"), qbitUser ?? "admin", qbitPass ?? "adminadmin");
+                
+                token.ThrowIfCancellationRequested();
+
                 if (qbitAuth && !string.IsNullOrEmpty(infoHash))
                 {
                     log("[P2P Season Downloader] qBittorrent active. Injecting magnet link...");
@@ -109,11 +128,10 @@ namespace UniversalMediaOS.Core.Archiving
                         log("[P2P Season Downloader] Magnet successfully injected! Monitoring download progression...");
                         bool success = await _qbit.MonitorDownloadAsync(infoHash, msg => {
                             log(msg);
-                            // Parse progress percent from log string
                             var pctMatch = Regex.Match(msg, @"Download:\s+([\d\.]+)%");
                             if (pctMatch.Success && double.TryParse(pctMatch.Groups[1].Value, out double p))
                             {
-                                progressUpdate(p);
+                                progressUpdate(p * 0.95); // leave 5% for validation visual feedback
                             }
                         }, DownloadTimeoutSeconds);
 
@@ -134,11 +152,13 @@ namespace UniversalMediaOS.Core.Archiving
                     }
                 }
 
+                token.ThrowIfCancellationRequested();
+
                 // 4. Fallback to built-in MonoTorrent client
                 if (!downloadComplete)
                 {
                     log("[P2P Season Downloader] qBittorrent unavailable or failed. Booting built-in MonoTorrent client...");
-                    var result = await DownloadViaMonoTorrentAsync(magnetLink, log, progressUpdate);
+                    var result = await DownloadViaMonoTorrentAsync(magnetLink, log, progressUpdate, token);
                     if (result != null && result.Count > 0)
                     {
                         downloadedFiles = result;
@@ -154,7 +174,7 @@ namespace UniversalMediaOS.Core.Archiving
 
                 // 5. Scan and Validate all video files in the batch
                 log("[P2P Season Downloader] Download complete! Waiting 2 seconds for OS file locks to clear...");
-                await Task.Delay(2000);
+                await Task.Delay(2000, token);
                 log("[P2P Season Downloader] Running integrity validation checks on batch...");
                 var videoExtensions = new[] { ".mkv", ".mp4", ".avi", ".webm" };
                 var videoFiles = downloadedFiles
@@ -173,6 +193,11 @@ namespace UniversalMediaOS.Core.Archiving
 
                 for (int i = 0; i < videoFiles.Count; i++)
                 {
+                    token.ThrowIfCancellationRequested();
+                    
+                    double valProgress = 95.0 + 5.0 * ((double)i / videoFiles.Count);
+                    progressUpdate(valProgress);
+
                     string filePath = videoFiles[i];
                     
                     // Resolve actual path in case it downloaded to a subdirectory
@@ -183,7 +208,7 @@ namespace UniversalMediaOS.Core.Archiving
                         {
                             if (Directory.Exists(_downloadDir))
                             {
-                                var found = Directory.EnumerateFiles(_downloadDir, fileName, SearchOption.AllDirectories).FirstOrDefault();
+                                var found = await Task.Run(() => Directory.EnumerateFiles(_downloadDir, fileName, SearchOption.AllDirectories).FirstOrDefault());
                                 if (found != null)
                                 {
                                     filePath = found;
@@ -196,7 +221,7 @@ namespace UniversalMediaOS.Core.Archiving
                     string filename = Path.GetFileName(filePath);
                     log($"[P2P Season Downloader] ({i + 1}/{videoFiles.Count}) Validating: \"{filename}\"");
 
-                    bool valid = await ValidateMediaFileAsync(filePath);
+                    bool valid = await ValidateMediaFileAsync(filePath, token);
                     if (valid)
                     {
                         var fi = new FileInfo(filePath);
@@ -207,7 +232,7 @@ namespace UniversalMediaOS.Core.Archiving
                     else
                     {
                         log($"[P2P Season Downloader] -> ERROR: Validation FAILED for \"{filename}\" (corrupt, unreadable, or missing streams). Wiping file.");
-                        try { File.Delete(filePath); } catch { }
+                        await Task.Run(() => { try { File.Delete(filePath); } catch { } });
                         failed++;
                     }
                 }
@@ -229,6 +254,7 @@ namespace UniversalMediaOS.Core.Archiving
 
             string audioPref = _config.GetSetting("DefaultAudioPref");
             if (string.IsNullOrEmpty(audioPref)) audioPref = "Sub";
+            bool isDub = audioPref.StartsWith("Dub", StringComparison.OrdinalIgnoreCase);
 
             // Formulate search queries for batch season files
             var queries = new List<string> {
@@ -238,7 +264,7 @@ namespace UniversalMediaOS.Core.Archiving
                 $"{title} 01-"
             };
 
-            if (audioPref == "Dub")
+            if (isDub)
             {
                 queries.Add($"{title} Dub");
                 queries.Add($"{title} Dual Audio");
@@ -298,7 +324,7 @@ namespace UniversalMediaOS.Core.Archiving
             // 3. Filter by User Audio Preference
             string pref = _config.GetSetting("DefaultAudioPref");
             var candidates = seasonMatched;
-            if (pref == "Dubbed (English)")
+            if (pref.StartsWith("Dub", StringComparison.OrdinalIgnoreCase))
             {
                 var dubs = seasonMatched.Where(t => t.Title.IndexOf("Dub", StringComparison.OrdinalIgnoreCase) >= 0 || t.Title.IndexOf("Dual Audio", StringComparison.OrdinalIgnoreCase) >= 0).ToList();
                 if (dubs.Count > 0) candidates = dubs;
@@ -337,13 +363,24 @@ namespace UniversalMediaOS.Core.Archiving
             match = Regex.Match(title, @"(\d+)(?:st|nd|rd|th)\s*Season", RegexOptions.IgnoreCase);
             if (match.Success) return int.Parse(match.Groups[1].Value);
 
+            // 4. Check "Second Season" -> 2, "Third Season" -> 3, etc.
+            if (Regex.IsMatch(title, @"\bSecond\s+Season\b", RegexOptions.IgnoreCase)) return 2;
+            if (Regex.IsMatch(title, @"\bThird\s+Season\b", RegexOptions.IgnoreCase)) return 3;
+            if (Regex.IsMatch(title, @"\bFourth\s+Season\b", RegexOptions.IgnoreCase)) return 4;
+            if (Regex.IsMatch(title, @"\bFinal\s+Season\b", RegexOptions.IgnoreCase)) return 4; // standard final season mapping
+
+            // 5. Check "Part \d" -> return that part as season logic fallback
+            match = Regex.Match(title, @"Part\s*(\d+)", RegexOptions.IgnoreCase);
+            if (match.Success) return int.Parse(match.Groups[1].Value);
+
             return 1; // Default to Season 1
         }
 
         private async Task<List<string>> DownloadViaMonoTorrentAsync(
             string magnetLink, 
             Action<string> log, 
-            Action<double> progressUpdate)
+            Action<double> progressUpdate,
+            System.Threading.CancellationToken token)
         {
             var downloadedFiles = new List<string>();
             try
@@ -364,55 +401,79 @@ namespace UniversalMediaOS.Core.Archiving
                 {
                     var magnet = MagnetLink.Parse(magnetLink);
                     var manager = await engine.AddAsync(magnet, _downloadDir);
-                    await manager.StartAsync();
-
-                    // 1. Resolve magnet metadata
-                    log("[MonoTorrent] Resolving torrent metadata...");
-                    var metadataDeadline = DateTime.UtcNow.AddSeconds(MetadataTimeoutSeconds);
-                    while (!manager.HasMetadata)
+                    
+                    try
                     {
-                        if (DateTime.UtcNow > metadataDeadline)
+                        await manager.StartAsync();
+
+                        // 1. Resolve magnet metadata
+                        log("[MonoTorrent] Resolving torrent metadata...");
+                        var metadataDeadline = DateTime.UtcNow.AddSeconds(MetadataTimeoutSeconds);
+                        while (!manager.HasMetadata)
                         {
-                            log("[MonoTorrent] Metadata resolution timed out.");
+                            token.ThrowIfCancellationRequested();
+                            if (DateTime.UtcNow > metadataDeadline)
+                            {
+                                log("[MonoTorrent] Metadata resolution timed out.");
+                                return downloadedFiles;
+                            }
+                            await Task.Delay(1000, token);
+                        }
+
+                        log($"[MonoTorrent] Starting download: \"{manager.Torrent?.Name ?? "Torrent"}\"");
+
+                        // 2. Download loop
+                        var downloadDeadline = DateTime.UtcNow.AddSeconds(DownloadTimeoutSeconds);
+                        while (manager.State != TorrentState.Seeding && manager.State != TorrentState.Stopped)
+                        {
+                            token.ThrowIfCancellationRequested();
+                            if (DateTime.UtcNow > downloadDeadline)
+                            {
+                                log("[MonoTorrent] Download session timed out.");
+                                return downloadedFiles;
+                            }
+
+                            double progress = manager.Progress;
+                            progressUpdate(progress * 0.95); // leave 5% for validation visual feedback
+                            log($"[MonoTorrent] Progress: {progress:F1}% | Speed: {manager.Monitor.DownloadRate / 1024.0 / 1024.0:F2} MB/s | State: {manager.State}");
+
+                            await Task.Delay(3000, token);
+                            if (progress >= 100.0) break;
+                        }
+
+                        if (manager.Progress >= 100.0)
+                        {
+                            log("[Season Downloader] Torrent parsing success! Download complete.");
+
+                            foreach (var f in manager.Files)
+                            {
+                                string fullPath = f.FullPath;
+                                downloadedFiles.Add(fullPath);
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        if (manager.State != TorrentState.Stopped)
+                        {
                             await manager.StopAsync();
-                            return downloadedFiles;
                         }
-                        await Task.Delay(1000);
-                    }
-
-                    log($"[MonoTorrent] Starting download: \"{manager.Torrent?.Name ?? "Torrent"}\"");
-
-                    // 2. Download loop
-                    var downloadDeadline = DateTime.UtcNow.AddSeconds(DownloadTimeoutSeconds);
-                    while (manager.State != TorrentState.Seeding && manager.State != TorrentState.Stopped)
-                    {
-                        if (DateTime.UtcNow > downloadDeadline)
+                        if (manager.Progress < 100.0)
                         {
-                            log("[MonoTorrent] Download session timed out.");
-                            await manager.StopAsync();
-                            return downloadedFiles;
-                        }
-
-                        double progress = manager.Progress;
-                        progressUpdate(progress);
-                        log($"[MonoTorrent] Progress: {progress:F1}% | Speed: {manager.Monitor.DownloadRate / 1024.0 / 1024.0:F2} MB/s | State: {manager.State}");
-
-                        await Task.Delay(3000);
-                        if (progress >= 100.0) break;
-                    }
-
-                    if (manager.Progress >= 100.0)
-                    {
-                        log("[Season Downloader] Torrent parsing success! Download complete.");
-
-                        foreach (var f in manager.Files)
-                        {
-                            string fullPath = f.FullPath;
-                            downloadedFiles.Add(fullPath);
+                            // clean up incomplete files to prevent pollution
+                            foreach (var file in manager.Files)
+                            {
+                                try
+                                {
+                                    if (File.Exists(file.FullPath))
+                                    {
+                                        File.Delete(file.FullPath);
+                                    }
+                                }
+                                catch { }
+                            }
                         }
                     }
-
-                    await manager.StopAsync();
                 }
             }
             catch (Exception ex)
@@ -425,7 +486,7 @@ namespace UniversalMediaOS.Core.Archiving
         /// <summary>
         /// Validates file size and runs ffprobe to verify that the file actually contains readable video streams.
         /// </summary>
-        private async Task<bool> ValidateMediaFileAsync(string filePath)
+        private async Task<bool> ValidateMediaFileAsync(string filePath, System.Threading.CancellationToken token = default)
         {
             try
             {
@@ -452,18 +513,24 @@ namespace UniversalMediaOS.Core.Archiving
                 using var proc = Process.Start(startInfo);
                 if (proc != null)
                 {
-                    string output = (await proc.StandardOutput.ReadToEndAsync()).Trim();
-                    string error = (await proc.StandardError.ReadToEndAsync()).Trim();
-                    await proc.WaitForExitAsync();
+                    var outputTask = proc.StandardOutput.ReadToEndAsync();
+                    var errorTask = proc.StandardError.ReadToEndAsync();
+                    
+                    await Task.WhenAll(outputTask, errorTask);
+                    await proc.WaitForExitAsync(token);
 
+                    string output = (await outputTask).Trim();
+                    string error = (await errorTask).Trim();
+
+                    // If exit code is 0 and output contains stream type, file is valid.
                     if (proc.ExitCode == 0 && !string.IsNullOrEmpty(output))
                     {
                         return true;
                     }
                     else
                     {
-                        bool fallback = info.Length > 1024 * 1024 * 5;
-                        return fallback;
+                        // ffprobe ran but exited with error code - it's corrupted.
+                        return false;
                     }
                 }
                 else
@@ -473,6 +540,7 @@ namespace UniversalMediaOS.Core.Archiving
             }
             catch (Exception)
             {
+                // Fall back to size check only if ffprobe failed to start (e.g. not installed)
                 try
                 {
                     var info = new FileInfo(filePath);
@@ -483,6 +551,62 @@ namespace UniversalMediaOS.Core.Archiving
                 }
                 catch { }
                 return false;
+            }
+        }
+
+        private static string Base32ToHex(string base32)
+        {
+            string base32Chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+            base32 = base32.ToUpperInvariant();
+            List<byte> bytes = new List<byte>();
+            int byteVal = 0;
+            int bitsRemaining = 8;
+            foreach (char c in base32)
+            {
+                int val = base32Chars.IndexOf(c);
+                if (val < 0) continue; // skip invalid chars
+                if (bitsRemaining >= 5)
+                {
+                    byteVal = (byteVal << 5) | val;
+                    bitsRemaining -= 5;
+                }
+                else
+                {
+                    int shift = 5 - bitsRemaining;
+                    byteVal = (byteVal << bitsRemaining) | (val >> shift);
+                    bytes.Add((byte)byteVal);
+                    byteVal = val & ((1 << shift) - 1);
+                    bitsRemaining = 8 - shift;
+                }
+            }
+            if (bitsRemaining < 8 && bytes.Count < 20)
+            {
+                bytes.Add((byte)(byteVal << bitsRemaining));
+            }
+            
+            var sb = new System.Text.StringBuilder();
+            foreach (byte b in bytes)
+            {
+                sb.Append(b.ToString("X2"));
+            }
+            return sb.ToString();
+        }
+
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (!_disposed)
+            {
+                if (disposing)
+                {
+                    // Clean up any disposable resources here
+                }
+                _disposed = true;
             }
         }
     }

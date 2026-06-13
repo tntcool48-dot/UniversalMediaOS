@@ -1,17 +1,32 @@
 using System;
 using System.IO;
+using System.Net.Http;
+using System.Threading;
 using System.Threading.Tasks;
 using UniversalMediaOS.Core.Configuration;
 using UniversalMediaOS.Core.Helpers;
 
 namespace UniversalMediaOS.Core.Services
 {
-    public class ConsumetBootstrapper
+    public class ConsumetBootstrapper : IDisposable
     {
         private readonly string _servicesDir;
         private readonly string _consumetDir;
         private readonly DomainHotSwapper? _config;
         private System.Diagnostics.Process? _nodeProcess;
+        private bool _disposed;
+
+        private static readonly SemaphoreSlim _bootLock = new SemaphoreSlim(1, 1);
+        private static readonly HttpClient _healthCheckClient;
+
+        static ConsumetBootstrapper()
+        {
+            var handler = new SocketsHttpHandler
+            {
+                PooledConnectionLifetime = TimeSpan.FromMinutes(15)
+            };
+            _healthCheckClient = new HttpClient(handler) { Timeout = TimeSpan.FromMilliseconds(400) };
+        }
 
         public ConsumetBootstrapper(string baseDirectory, DomainHotSwapper? config = null)
         {
@@ -21,11 +36,32 @@ namespace UniversalMediaOS.Core.Services
             Directory.CreateDirectory(_servicesDir);
         }
 
-        public async Task<bool> EnsureLatestConsumetAsync()
+        private async Task<bool> IsPortInUseAsync(int port)
         {
-            AppLogger.Log("Ensuring latest Consumet microservice configuration...");
             try
             {
+                using var tcpClient = new System.Net.Sockets.TcpClient();
+                var connectTask = tcpClient.ConnectAsync("127.0.0.1", port);
+                var completedTask = await Task.WhenAny(connectTask, Task.Delay(200));
+                if (completedTask == connectTask)
+                {
+                    await connectTask; // Throws if connection failed
+                    return tcpClient.Connected;
+                }
+                return false;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        public async Task<bool> EnsureLatestConsumetAsync()
+        {
+            await _bootLock.WaitAsync();
+            try
+            {
+                AppLogger.Log("Ensuring latest Consumet microservice configuration...");
                 if (!Directory.Exists(_consumetDir)) Directory.CreateDirectory(_consumetDir);
                 string serverJsPath = Path.Combine(_consumetDir, "index.js");
 
@@ -33,11 +69,89 @@ namespace UniversalMediaOS.Core.Services
                 string gogoUrl = GetGogoBaseUrl();
                 AppLogger.Log($"Generating GogoAnime scraper microservice with base url '{gogoUrl}'...");
                 string serverCode = GetServerCode().Replace("{{GOGO_BASE_URL}}", gogoUrl);
-                await File.WriteAllTextAsync(serverJsPath, serverCode);
+                
+                string tempJsPath = serverJsPath + ".tmp";
+                try
+                {
+                    await File.WriteAllTextAsync(tempJsPath, serverCode);
+                    File.Move(tempJsPath, serverJsPath, overwrite: true);
+                }
+                catch
+                {
+                    try { if (File.Exists(tempJsPath)) File.Delete(tempJsPath); } catch { }
+                    throw;
+                }
+
+                // Check if port 3000 is already in use before starting
+                if (await IsPortInUseAsync(3000))
+                {
+                    AppLogger.Log("[Consumet Bootstrapper] Port 3000 is already in use. Checking for zombie Node processes...", "WARNING");
+                    try
+                    {
+                        var processes = System.Diagnostics.Process.GetProcessesByName("node");
+                        foreach (var p in processes)
+                        {
+                            try
+                            {
+                                string? mainModulePath = p.MainModule?.FileName;
+                                if (mainModulePath != null && mainModulePath.Contains(_servicesDir, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    AppLogger.Log($"Killing zombie Node process (PID={p.Id}) from our services directory...");
+                                    p.Kill(entireProcessTree: true);
+                                    p.WaitForExit(1000);
+                                }
+                            }
+                            catch { }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        AppLogger.Log($"Error checking/killing zombie node processes: {ex.Message}", "WARNING");
+                    }
+                    
+                    // Re-check
+                    if (await IsPortInUseAsync(3000))
+                    {
+                        AppLogger.Log("[Consumet Bootstrapper] Port 3000 is still occupied. Aborting Node server startup.", "ERROR");
+                        return false;
+                    }
+                }
 
                 // Start node process
                 StopServer();
                 StartNodeServer();
+
+                // Poll health check endpoint http://localhost:3000/
+                bool isUp = false;
+                for (int attempt = 1; attempt <= 10; attempt++)
+                {
+                    if (_nodeProcess == null || _nodeProcess.HasExited)
+                    {
+                        AppLogger.Log("[Consumet Bootstrapper] Node process has exited or failed to start.", "ERROR");
+                        break;
+                    }
+                    try
+                    {
+                        var response = await _healthCheckClient.GetAsync("http://localhost:3000/");
+                        if (response.IsSuccessStatusCode)
+                        {
+                            isUp = true;
+                            AppLogger.Log($"[Consumet Bootstrapper] Node server is up and responding (attempt {attempt}).");
+                            break;
+                        }
+                    }
+                    catch
+                    {
+                        // ignore and retry
+                    }
+                    await Task.Delay(500);
+                }
+
+                if (!isUp)
+                {
+                    AppLogger.Log("[Consumet Bootstrapper] Node server failed to respond within timeout.", "ERROR");
+                    return false;
+                }
 
                 return true;
             }
@@ -45,6 +159,10 @@ namespace UniversalMediaOS.Core.Services
             {
                 AppLogger.Log($"Error bootstrapping scraper server: {ex.Message}", "ERROR");
                 return false;
+            }
+            finally
+            {
+                _bootLock.Release();
             }
         }
 
@@ -70,20 +188,33 @@ namespace UniversalMediaOS.Core.Services
             return "https://anitaku.pe"; // Default fallback
         }
 
+        private string ResolveNodeExecutablePath()
+        {
+            string nodeBinaryName = System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows) ? "node.exe" : "node";
+            string portableNodePath = Path.Combine(_servicesDir, nodeBinaryName);
+            if (File.Exists(portableNodePath))
+            {
+                return portableNodePath;
+            }
+            // fallback to system PATH
+            return "node";
+        }
+
         private void StartNodeServer()
         {
             try
             {
+                string nodeExe = ResolveNodeExecutablePath();
                 var startInfo = new System.Diagnostics.ProcessStartInfo
                 {
-                    FileName = "cmd.exe",
-                    Arguments = "/c node index.js",
+                    FileName = nodeExe,
+                    Arguments = "index.js",
                     WorkingDirectory = _consumetDir,
                     CreateNoWindow = true,
                     UseShellExecute = false
                 };
                 _nodeProcess = System.Diagnostics.Process.Start(startInfo);
-                AppLogger.Log($"[Consumet Bootstrapper] Started Node server process. PID={_nodeProcess?.Id}");
+                AppLogger.Log($"[Consumet Bootstrapper] Started Node server process directly. PID={_nodeProcess?.Id}");
             }
             catch (Exception ex)
             {
@@ -649,16 +780,46 @@ server.listen(PORT, () => {
         {
             try
             {
-                if (_nodeProcess != null && !_nodeProcess.HasExited)
+                if (_nodeProcess != null)
                 {
-                    AppLogger.Log($"Stopping Consumet scraper microservice server (PID={_nodeProcess.Id})...");
-                    _nodeProcess.Kill(entireProcessTree: true);
-                    AppLogger.Log("Consumet scraper microservice server terminated.");
+                    if (!_nodeProcess.HasExited)
+                    {
+                        AppLogger.Log($"Stopping Consumet scraper microservice server (PID={_nodeProcess.Id})...");
+                        _nodeProcess.Kill(entireProcessTree: true);
+                        _nodeProcess.WaitForExit(3000);
+                        AppLogger.Log("Consumet scraper microservice server terminated.");
+                    }
                 }
             }
             catch (Exception ex)
             {
                 AppLogger.Log($"Error stopping Consumet scraper microservice server: {ex.Message}", "WARNING");
+            }
+            finally
+            {
+                if (_nodeProcess != null)
+                {
+                    try { _nodeProcess.Dispose(); } catch { }
+                    _nodeProcess = null;
+                }
+            }
+        }
+
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (!_disposed)
+            {
+                if (disposing)
+                {
+                    StopServer();
+                }
+                _disposed = true;
             }
         }
     }

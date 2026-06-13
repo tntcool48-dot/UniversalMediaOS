@@ -22,7 +22,11 @@
         <!-- Search Bar -->
         <Border Grid.Row="0" Background="{StaticResource BgBase}" CornerRadius="8" Margin="0,0,0,24" Padding="{StaticResource SpaceXs}">
             <Grid>
-                <TextBox Text="{Binding SearchQuery, UpdateSourceTrigger=PropertyChanged}"
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBox Grid.Column="0" Text="{Binding SearchQuery, UpdateSourceTrigger=PropertyChanged}"
                          Background="Transparent" Foreground="{StaticResource TextPrimary}"
                          CaretBrush="{StaticResource TextPrimary}"
                          FontSize="16" Padding="{StaticResource SpaceSm}"
@@ -55,7 +59,7 @@
                         <KeyBinding Key="Enter" Command="{Binding SearchCommand}" />
                     </TextBox.InputBindings>
                 </TextBox>
-                <TextBlock Text="Fuzzy search titles... (e.g. Frieren, Demon Slayer)" 
+                <TextBlock Grid.Column="0" Text="Fuzzy search titles... (e.g. Frieren, Demon Slayer)" 
                            IsHitTestVisible="False" VerticalAlignment="Center" Margin="{StaticResource SpaceMd}" 
                            Foreground="{StaticResource TextMuted}" FontSize="16">
                     <TextBlock.Style>
@@ -69,6 +73,10 @@
                         </Style>
                     </TextBlock.Style>
                 </TextBlock>
+                <Button Grid.Column="1" Content="ExecuteSearch" Command="{Binding SearchCommand}"
+                        Padding="16,8" Margin="4,0,0,0"
+                        Background="{StaticResource AccentPrimary}" Foreground="{StaticResource TextPrimary}"
+                        BorderThickness="0" Cursor="Hand"/>
             </Grid>
         </Border>
 

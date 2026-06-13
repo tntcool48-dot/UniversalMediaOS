@@ -35,7 +35,34 @@ namespace UniversalMediaOS.Core.Routing
         private readonly QBitLogicGate _qbit;
         private readonly Configuration.DomainHotSwapper _config;
         private readonly string _downloadDir;
-        private static readonly System.Net.Http.HttpClient _httpClient = new System.Net.Http.HttpClient { Timeout = System.TimeSpan.FromSeconds(10) };
+        private static readonly System.Net.Http.HttpClient _httpClient = new System.Net.Http.HttpClient { Timeout = System.TimeSpan.FromSeconds(30) };
+
+        private static readonly Dictionary<string, (List<string> Files, DateTime Timestamp)> _directoryCache = new Dictionary<string, (List<string>, DateTime)>();
+        private static readonly object _cacheLock = new object();
+
+        private List<string> GetCachedFiles(string dir)
+        {
+            lock (_cacheLock)
+            {
+                if (_directoryCache.TryGetValue(dir, out var cache) && (DateTime.UtcNow - cache.Timestamp).TotalSeconds < 10)
+                {
+                    return cache.Files;
+                }
+                
+                var files = new List<string>();
+                try
+                {
+                    if (Directory.Exists(dir))
+                    {
+                        files.AddRange(Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories));
+                    }
+                }
+                catch { }
+
+                _directoryCache[dir] = (files, DateTime.UtcNow);
+                return files;
+            }
+        }
 
         // Timeouts
         private const int MetadataTimeoutSeconds = 60;
@@ -43,7 +70,7 @@ namespace UniversalMediaOS.Core.Routing
 
         public TripleNetHandoff(Configuration.DomainHotSwapper config)
         {
-            _rssParser = new DualTrackerRssParser();
+            _rssParser = new DualTrackerRssParser(config);
             
             _config = config;
             
@@ -55,7 +82,7 @@ namespace UniversalMediaOS.Core.Routing
             _qbit = new QBitLogicGate($"http://{qbitHost}:{qbitPort}");
             
             string dDir = _config.GetSetting("DownloadDirectory");
-            _downloadDir = string.IsNullOrEmpty(dDir) ? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Downloads") : dDir;
+            _downloadDir = string.IsNullOrEmpty(dDir) ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UniversalMediaOS", "Downloads") : dDir;
             
             Directory.CreateDirectory(_downloadDir);
         }
@@ -94,7 +121,7 @@ namespace UniversalMediaOS.Core.Routing
             return filtered;
         }
 
-        public async Task<PlaybackSource?> InjectTorrentAsync(TorrentResult bestTorrent, Action<string>? onStatusUpdate = null)
+        public async Task<PlaybackSource?> InjectTorrentAsync(TorrentResult bestTorrent, Action<string>? onStatusUpdate = null, System.Threading.CancellationToken token = default)
         {
             void Log(string msg) { 
                 onStatusUpdate?.Invoke(msg); 
@@ -108,7 +135,7 @@ namespace UniversalMediaOS.Core.Routing
                 return null;
             }
 
-            return await _injectMagnetInternalAsync(bestTorrent, Log);
+            return await _injectMagnetInternalAsync(bestTorrent, Log, token);
         }
 
         public async Task<PlaybackSource?> ResolveBestSourceAsync(string query, string episodeId, string providerDomain, Action<string>? onStatusUpdate = null, SourceTier minimumTier = SourceTier.Tier1_LocalP2P, System.Threading.CancellationToken token = default)
@@ -323,7 +350,7 @@ namespace UniversalMediaOS.Core.Routing
         }
 
         // ── Shared magnet injection helper ──
-        private async Task<PlaybackSource?> _injectMagnetInternalAsync(TorrentResult torrent, Action<string> log)
+        private async Task<PlaybackSource?> _injectMagnetInternalAsync(TorrentResult torrent, Action<string> log, System.Threading.CancellationToken token = default)
         {
             string magnetLink = torrent.MagnetLink;
 
@@ -335,8 +362,8 @@ namespace UniversalMediaOS.Core.Routing
             if (string.IsNullOrEmpty(qbitUser)) qbitUser = "admin";
             if (string.IsNullOrEmpty(qbitPass)) qbitPass = "adminadmin";
             
-            bool qbitAuth = await _qbit.AuthenticateAsync(log, qbitUser, qbitPass);
-            if (qbitAuth && await _qbit.AddMagnetAsync(magnetLink, _downloadDir))
+            bool qbitAuth = await _qbit.AuthenticateAsync(log, qbitUser, qbitPass, token);
+            if (qbitAuth && await _qbit.AddMagnetAsync(magnetLink, _downloadDir, token))
             {
                 log("> [Tier 1] SUCCESS: Magnet injected into qBittorrent WebUI!");
                 log("> [Tier 1] Monitoring download progress...");
@@ -352,10 +379,10 @@ namespace UniversalMediaOS.Core.Routing
 
                 if (!string.IsNullOrEmpty(infoHash))
                 {
-                    bool completed = await _qbit.MonitorDownloadAsync(infoHash, log, DownloadTimeoutSeconds);
+                    bool completed = await _qbit.MonitorDownloadAsync(infoHash, log, DownloadTimeoutSeconds, token);
                     if (completed)
                     {
-                        var files = await _qbit.GetTorrentFilesAsync(infoHash);
+                        var files = await _qbit.GetTorrentFilesAsync(infoHash, token);
                         if (files.Count > 0)
                         {
                             // Find the largest video file using qBittorrent API reported byte size
@@ -431,32 +458,43 @@ namespace UniversalMediaOS.Core.Routing
                     // Metadata resolution with timeout
                     log("> [Tier 1] Resolving magnet metadata...");
                     var metadataDeadline = DateTime.UtcNow.AddSeconds(MetadataTimeoutSeconds);
-                    while (!manager.HasMetadata)
+                    try
                     {
-                        if (DateTime.UtcNow > metadataDeadline)
+                        while (!manager.HasMetadata)
                         {
-                            log($"> [Tier 1] Metadata resolution timed out after {MetadataTimeoutSeconds}s.");
-                            await manager.StopAsync();
-                            return null;
+                            token.ThrowIfCancellationRequested();
+                            if (DateTime.UtcNow > metadataDeadline)
+                            {
+                                log($"> [Tier 1] Metadata resolution timed out after {MetadataTimeoutSeconds}s.");
+                                await manager.StopAsync();
+                                return null;
+                            }
+                            await Task.Delay(1000, token);
                         }
-                        await Task.Delay(1000);
+
+                        log($"> [Tier 1] Downloading {manager.Torrent?.Name ?? "torrent"}...");
+
+                        // Download with timeout
+                        var downloadDeadline = DateTime.UtcNow.AddSeconds(DownloadTimeoutSeconds);
+                        while (manager.State != TorrentState.Seeding && manager.State != TorrentState.Stopped && manager.State != TorrentState.Error)
+                        {
+                            token.ThrowIfCancellationRequested();
+                            if (DateTime.UtcNow > downloadDeadline)
+                            {
+                                log($"> [Tier 1] Download timed out after {DownloadTimeoutSeconds / 60} minutes.");
+                                await manager.StopAsync();
+                                return null;
+                            }
+                            log($"> [Tier 1] Progress: {manager.Progress:0.00}% - {manager.Monitor.DownloadRate / 1024.0 / 1024.0:0.00} MB/s");
+                            await Task.Delay(2000, token);
+                            if (manager.Progress >= 100.0) break;
+                        }
                     }
-
-                    log($"> [Tier 1] Downloading {manager.Torrent.Name}...");
-
-                    // Download with timeout
-                    var downloadDeadline = DateTime.UtcNow.AddSeconds(DownloadTimeoutSeconds);
-                    while (manager.State != TorrentState.Seeding && manager.State != TorrentState.Stopped && manager.State != TorrentState.Error)
+                    catch (OperationCanceledException)
                     {
-                        if (DateTime.UtcNow > downloadDeadline)
-                        {
-                            log($"> [Tier 1] Download timed out after {DownloadTimeoutSeconds / 60} minutes.");
-                            await manager.StopAsync();
-                            return null;
-                        }
-                        log($"> [Tier 1] Progress: {manager.Progress:0.00}% - {manager.Monitor.DownloadRate / 1024.0 / 1024.0:0.00} MB/s");
-                        await Task.Delay(2000);
-                        if (manager.Progress >= 100.0) break;
+                        log("> [Tier 1] MonoTorrent download cancelled.");
+                        await manager.StopAsync();
+                        throw;
                     }
 
                     if (manager.Progress < 100.0)
@@ -506,8 +544,9 @@ namespace UniversalMediaOS.Core.Routing
             try
             {
                 string[] videoExtensions = { ".mkv", ".mp4", ".avi", ".webm" };
+                var files = GetCachedFiles(_downloadDir);
 
-                foreach (var file in Directory.EnumerateFiles(_downloadDir, "*", SearchOption.AllDirectories))
+                foreach (var file in files)
                 {
                     string ext = Path.GetExtension(file).ToLowerInvariant();
                     if (!videoExtensions.Contains(ext))
@@ -531,17 +570,19 @@ namespace UniversalMediaOS.Core.Routing
 
         private int ExtractSeasonNumber(string title)
         {
+            if (string.IsNullOrEmpty(title)) return 1;
+
             // 1. Check "Season X"
             var match = Regex.Match(title, @"Season\s*(\d+)", RegexOptions.IgnoreCase);
-            if (match.Success) return int.Parse(match.Groups[1].Value);
+            if (match.Success && int.TryParse(match.Groups[1].Value, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int s1)) return s1;
 
             // 2. Check "S X" (e.g. S1, S2, S01, S02) with boundary support for S02E05
             match = Regex.Match(title, @"\bS(\d+)(?=E\d|\b)", RegexOptions.IgnoreCase);
-            if (match.Success) return int.Parse(match.Groups[1].Value);
+            if (match.Success && int.TryParse(match.Groups[1].Value, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int s2)) return s2;
 
             // 3. Check "Xnd Season" ordinals (e.g. 2nd Season, 3rd Season)
             match = Regex.Match(title, @"(\d+)(?:st|nd|rd|th)\s*Season", RegexOptions.IgnoreCase);
-            if (match.Success) return int.Parse(match.Groups[1].Value);
+            if (match.Success && int.TryParse(match.Groups[1].Value, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int s3)) return s3;
 
             return 1; // Default to Season 1
         }

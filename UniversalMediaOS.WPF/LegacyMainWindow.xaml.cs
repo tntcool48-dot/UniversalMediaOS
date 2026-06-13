@@ -9,6 +9,7 @@ using System.Collections.Generic;
 using UniversalMediaOS.Core.Search;
 using UniversalMediaOS.Core.Configuration;
 using UniversalMediaOS.Core.Services;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace UniversalMediaOS.WPF
 {
@@ -24,6 +25,7 @@ namespace UniversalMediaOS.WPF
         private readonly FuzzyShieldSearch _searchService;
         private readonly UniversalMediaOS.Core.Routing.TripleNetHandoff _routingEngine;
         private UniversalMediaOS.Core.Services.ServiceManager? _svcMgr;
+        private DependencyBootstrapper? _depBoot;
         
         // Dynamic dynamic swapper
         private DomainHotSwapper _swapper;
@@ -50,8 +52,21 @@ namespace UniversalMediaOS.WPF
             InstalledFilesList.ItemsSource = InstalledFiles;
             MangaPagesList.ItemsSource = MangaPages;
             _searchService = new FuzzyShieldSearch();
-            string configPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "config.json");
-            _swapper = new DomainHotSwapper(configPath);
+            try
+            {
+                _swapper = App.Current.Services.GetRequiredService<DomainHotSwapper>();
+            }
+            catch
+            {
+                string appData = Environment.GetEnvironmentVariable("APPDATA");
+                if (string.IsNullOrEmpty(appData))
+                {
+                    appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+                }
+                string appDataDir = Path.Combine(appData, "UniversalMediaOS");
+                string configPath = Path.Combine(appDataDir, "config.json");
+                _swapper = new DomainHotSwapper(configPath);
+            }
             _routingEngine = new UniversalMediaOS.Core.Routing.TripleNetHandoff(_swapper);
             _mangaService = new MangaService();
             _epubReader = new EpubReaderService();
@@ -118,7 +133,18 @@ namespace UniversalMediaOS.WPF
             await EpubWebBrowser.EnsureCoreWebView2Async(null);
             await MangaWebBrowser.EnsureCoreWebView2Async(null);
             _ = StartDownloadManagerLoopAsync();
-            WelcomeText.Text = "Booting Services...";
+            WelcomeText.Text = "Loading...";
+
+            try
+            {
+                _depBoot = App.Current.Services.GetRequiredService<DependencyBootstrapper>();
+            }
+            catch
+            {
+                string localAppData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UniversalMediaOS");
+                _depBoot = new DependencyBootstrapper(localAppData);
+            }
+
             _ = Task.Run(async () =>
             {
                 var sysCheck = UniversalMediaOS.Core.Services.SystemResourceCheck.PerformStartupCheck();
@@ -126,16 +152,6 @@ namespace UniversalMediaOS.WPF
 
                 try
                 {
-                    var baseDir = AppDomain.CurrentDomain.BaseDirectory;
-
-                    Log("Bootstrapping dependencies...");
-                    var depBoot = new UniversalMediaOS.Core.Services.DependencyBootstrapper(baseDir);
-                    await depBoot.EnsureDependenciesAsync();
-
-                    Log("Generating scraper microservice...");
-                    var conBoot = new UniversalMediaOS.Core.Services.ConsumetBootstrapper(baseDir, _swapper);
-                    await conBoot.EnsureLatestConsumetAsync();
-
                     Log("Initializing SQLite tracking database...");
                     using (var db = new UniversalMediaOS.Core.Data.DatabaseContext())
                     {
@@ -145,35 +161,6 @@ namespace UniversalMediaOS.WPF
                     // Bind Inline configuration fields
                     Dispatcher.Invoke(() => LoadConfigurationIntoUI());
 
-                    // Start services
-                    Log("Starting background services...");
-                    _svcMgr = new UniversalMediaOS.Core.Services.ServiceManager();
-                    string nodePath = Path.Combine(baseDir, "services", "node.exe");
-                    string consumetPath = Path.Combine(baseDir, "services", "consumet", "index.js");
-                    if (File.Exists(nodePath) && File.Exists(consumetPath))
-                    {
-                        _svcMgr.StartService(nodePath, consumetPath, Path.Combine(baseDir, "services", "consumet"));
-                    }
-                    else
-                    {
-                        Log("Tier-2 scraper files not found. Node.js features will be disabled.");
-                    }
-                    
-                    string pythonPath = "python";
-                    string scraperScript = Path.Combine(baseDir, "services", "python_scraper", "app.py");
-                    if (File.Exists(scraperScript))
-                    {
-                        _svcMgr.StartService(pythonPath, $"-m uvicorn app:app --port 8000 --host 127.0.0.1", Path.Combine(baseDir, "services", "python_scraper"));
-                    }
-
-                    string qbitPath = UniversalMediaOS.Core.Services.DependencyBootstrapper.DetectedQBitPath;
-                    if (!string.IsNullOrEmpty(qbitPath) && File.Exists(qbitPath))
-                    {
-                        string port = _swapper.GetSetting("QBitPort");
-                        if (string.IsNullOrEmpty(port)) port = "8080";
-                        _svcMgr.StartService(qbitPath, $"--webui-port={port}", Path.GetDirectoryName(qbitPath) ?? baseDir);
-                    }
-
                     Dispatcher.Invoke(() => { 
                         WelcomeText.Text = "Trending Today"; 
                         SkeletonLoaderGrid.Visibility = Visibility.Visible;
@@ -181,33 +168,21 @@ namespace UniversalMediaOS.WPF
                     Log("Fetching trending anime from AniList...");
                     var results = await _searchService.SearchAnimeAsync("");
                     
-                    if (results.Count > 0)
-                    {
-                        _currentHeroMedia = results[0];
-                        Dispatcher.Invoke(() => {
-                            HeroTitle.Text = _currentHeroMedia.OfficialTitle;
-                            HeroDescription.Text = _currentHeroMedia.Synopsis;
-                            try {
-                                var bitmap = new System.Windows.Media.Imaging.BitmapImage(new Uri(_currentHeroMedia.CoverImageUrl));
-                                HeroBannerImage.Source = bitmap;
-                            } catch { }
-                        });
-                    }
-
                     Dispatcher.Invoke(() => {
                         UpdateCollection(SearchResults, results);
                         SkeletonLoaderGrid.Visibility = Visibility.Collapsed;
-                    });
-                    Dispatcher.Invoke(() =>
-                    {
-                        UpdateCollection(SearchResults, results);
                         if (results.Count > 0)
                         {
+                            _currentHeroMedia = results[0];
                             HeroTitle.Text = results[0].OfficialTitle;
                             HeroDescription.Text = results[0].Synopsis;
                             if (!string.IsNullOrEmpty(results[0].CoverImageUrl))
                             {
-                                HeroBannerImage.Source = new System.Windows.Media.Imaging.BitmapImage(new Uri(results[0].CoverImageUrl));
+                                try
+                                {
+                                    HeroBannerImage.Source = new System.Windows.Media.Imaging.BitmapImage(new Uri(results[0].CoverImageUrl));
+                                }
+                                catch { }
                             }
                         }
                     });
@@ -231,7 +206,7 @@ namespace UniversalMediaOS.WPF
             UpdateCollection(CustomSources, sources);
 
             // qBittorrent Configuration settings
-            QBitPathTxt.Text = DependencyBootstrapper.DetectedQBitPath;
+            QBitPathTxt.Text = _depBoot?.DetectedQBitPath;
             if (string.IsNullOrEmpty(QBitPathTxt.Text))
             {
                 QBitPathTxt.Text = "(Not detected — install qBittorrent or configure WebUI parameters below)";
@@ -247,7 +222,7 @@ namespace UniversalMediaOS.WPF
             if (string.IsNullOrEmpty(QBitPassTxt.Password)) QBitPassTxt.Password = "adminadmin";
 
             string dDir = _swapper.GetSetting("DownloadDirectory");
-            DownloadDirTxt.Text = string.IsNullOrEmpty(dDir) ? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Downloads") : dDir;
+            DownloadDirTxt.Text = string.IsNullOrEmpty(dDir) ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UniversalMediaOS", "Downloads") : dDir;
 
             // MAL Progress Settings
             MalTokenTxt.Text = _swapper.GetSetting("MalOAuthToken");
@@ -265,10 +240,11 @@ namespace UniversalMediaOS.WPF
 
         private async Task RefreshDiagnosticsTextAsync()
         {
-            var baseDir = AppDomain.CurrentDomain.BaseDirectory;
-            string nodePath = Path.Combine(baseDir, "services", "node.exe");
-            string consumetPath = Path.Combine(baseDir, "services", "consumet", "index.js");
-            string qbitDetected = DependencyBootstrapper.DetectedQBitPath;
+            string localAppData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UniversalMediaOS");
+            string nodeBinaryName = System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows) ? "node.exe" : "node";
+            string nodePath = Path.Combine(localAppData, "services", nodeBinaryName);
+            string consumetPath = Path.Combine(localAppData, "services", "consumet", "index.js");
+            string? qbitDetected = _depBoot?.DetectedQBitPath;
 
             bool isConsumetActive = await PollServiceAsync("http://localhost:3000/");
             bool isPythonActive = await PollServiceAsync("http://localhost:8000/");
@@ -277,7 +253,7 @@ namespace UniversalMediaOS.WPF
                            $"Local Consumet Server: {(isConsumetActive ? "✅ Active" : "❌ Offline")}\n" +
                            $"Python FFmpeg Scraper: {(isPythonActive ? "✅ Active" : "❌ Offline")}\n" +
                            $"qBittorrent client: {((!string.IsNullOrEmpty(qbitDetected) && File.Exists(qbitDetected)) ? $"✅ Detected at {qbitDetected}" : "⚠ WebUI fallback mode")}\n" +
-                           $"SQLite tracking database: {(File.Exists(Path.Combine(baseDir, "media_os.db")) ? "✅ Connected" : "⚠ Auto-recreates on launch")}\n" +
+                           $"SQLite tracking database: {(File.Exists(Path.Combine(localAppData, "media_os.db")) ? "✅ Connected" : "⚠ Auto-recreates on launch")}\n" +
                            $"Media Download Directory: {DownloadDirTxt.Text}\n" +
                            $"Current Resource load: {SystemResourceCheck.PerformStartupCheck().Message}";
 
@@ -584,7 +560,7 @@ namespace UniversalMediaOS.WPF
         private void RefreshInstalledEpisodes()
         {
             string dDir = _swapper.GetSetting("DownloadDirectory");
-            string downloadDir = string.IsNullOrEmpty(dDir) ? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Downloads") : dDir;
+            string downloadDir = string.IsNullOrEmpty(dDir) ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UniversalMediaOS", "Downloads") : dDir;
 
             if (Directory.Exists(downloadDir))
             {

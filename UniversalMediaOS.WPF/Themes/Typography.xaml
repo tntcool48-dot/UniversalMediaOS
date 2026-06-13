@@ -14,6 +14,7 @@
         <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
         <Setter Property="TextTrimming" Value="CharacterEllipsis" />
         <Setter Property="LineHeight" Value="32" />
+        <Setter Property="LineStackingStrategy" Value="BlockLineHeight" />
     </Style>
 
     <Style x:Key="TitleText" TargetType="TextBlock" BasedOn="{StaticResource BaseTextBlockStyle}">
@@ -22,6 +23,7 @@
         <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
         <Setter Property="TextTrimming" Value="CharacterEllipsis" />
         <Setter Property="LineHeight" Value="28" />
+        <Setter Property="LineStackingStrategy" Value="BlockLineHeight" />
     </Style>
 
     <Style x:Key="SubtitleText" TargetType="TextBlock" BasedOn="{StaticResource BaseTextBlockStyle}">
@@ -30,22 +32,23 @@
         <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
         <Setter Property="TextTrimming" Value="CharacterEllipsis" />
         <Setter Property="LineHeight" Value="24" />
+        <Setter Property="LineStackingStrategy" Value="BlockLineHeight" />
     </Style>
 
     <Style x:Key="BodyText" TargetType="TextBlock" BasedOn="{StaticResource BaseTextBlockStyle}">
         <Setter Property="FontSize" Value="14" />
         <Setter Property="FontWeight" Value="Normal" />
         <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
-        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
         <Setter Property="LineHeight" Value="20" />
+        <Setter Property="LineStackingStrategy" Value="BlockLineHeight" />
     </Style>
 
     <Style x:Key="CaptionText" TargetType="TextBlock" BasedOn="{StaticResource BaseTextBlockStyle}">
         <Setter Property="FontSize" Value="12" />
         <Setter Property="FontWeight" Value="Normal" />
         <Setter Property="Foreground" Value="{StaticResource TextMuted}" />
-        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
         <Setter Property="LineHeight" Value="16" />
+        <Setter Property="LineStackingStrategy" Value="BlockLineHeight" />
     </Style>
 
 </ResourceDictionary>

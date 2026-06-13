@@ -89,26 +89,36 @@
                                 </Style.Triggers>
                             </Style>
                         </Grid.Style>
-                        <TextBox Text="{Binding SearchQuery, UpdateSourceTrigger=PropertyChanged}" 
-                                 Style="{StaticResource SearchBoxStyle}">
-                            <TextBox.InputBindings>
-                                <KeyBinding Key="Enter" Command="{Binding SearchMangaCommand}" />
-                            </TextBox.InputBindings>
-                        </TextBox>
-                        <TextBlock Text="Search MangaDex..." IsHitTestVisible="False" 
-                                   VerticalAlignment="Center" Margin="{StaticResource SpaceMd}" 
-                                   Foreground="{StaticResource TextMuted}" FontSize="16">
-                            <TextBlock.Style>
-                                <Style TargetType="TextBlock">
-                                    <Setter Property="Visibility" Value="Collapsed"/>
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding SearchQuery}" Value="">
-                                            <Setter Property="Visibility" Value="Visible"/>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </TextBlock.Style>
-                        </TextBlock>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox Grid.Column="0" Text="{Binding SearchQuery, UpdateSourceTrigger=PropertyChanged}" 
+                                     Style="{StaticResource SearchBoxStyle}">
+                                <TextBox.InputBindings>
+                                    <KeyBinding Key="Enter" Command="{Binding SearchMangaCommand}" />
+                                </TextBox.InputBindings>
+                            </TextBox>
+                            <TextBlock Grid.Column="0" Text="Search MangaDex..." IsHitTestVisible="False" 
+                                       VerticalAlignment="Center" Margin="{StaticResource SpaceMd}" 
+                                       Foreground="{StaticResource TextMuted}" FontSize="16">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding SearchQuery}" Value="">
+                                                <Setter Property="Visibility" Value="Visible"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                            <Button Grid.Column="1" Content="ExecuteSearch" Command="{Binding SearchMangaCommand}"
+                                    Padding="16,8" Margin="4,0,0,0"
+                                    Background="{StaticResource AccentPrimary}" Foreground="{StaticResource TextPrimary}"
+                                    BorderThickness="0" Cursor="Hand"/>
+                        </Grid>
                     </Grid>
 
                     <!-- Breadcrumb — mode 1/2/3 -->

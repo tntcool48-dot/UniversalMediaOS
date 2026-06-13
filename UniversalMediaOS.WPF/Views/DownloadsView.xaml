@@ -32,7 +32,7 @@
                    Visibility="{Binding IsEmpty, Converter={StaticResource BoolToVis}}"/>
 
         <!-- Downloads Grid -->
-        <ListBox Grid.Row="1" ItemsSource="{Binding InstalledFiles}" Background="Transparent" BorderThickness="0"
+        <ListBox Grid.Row="1" x:Name="Progress" AutomationProperties.Name="Progress" ItemsSource="{Binding InstalledFiles}" Background="Transparent" BorderThickness="0"
                  ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                  VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
             <ListBox.ItemsPanel>

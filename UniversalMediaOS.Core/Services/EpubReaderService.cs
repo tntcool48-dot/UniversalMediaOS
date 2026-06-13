@@ -19,15 +19,23 @@ namespace UniversalMediaOS.Core.Services
         {
             if (!File.Exists(epubFilePath)) return null;
 
+            string localAppData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UniversalMediaOS");
+            string baseTemp = Path.Combine(localAppData, "epub_cache");
+            Directory.CreateDirectory(baseTemp);
+
+            string bookId = Guid.NewGuid().ToString("N");
+            string extractPath = Path.Combine(baseTemp, bookId);
+            Directory.CreateDirectory(extractPath);
+
+            string canonicalExtractPath = Path.GetFullPath(extractPath);
+            if (!canonicalExtractPath.EndsWith(Path.DirectorySeparatorChar.ToString()))
+            {
+                canonicalExtractPath += Path.DirectorySeparatorChar;
+            }
+
+            bool success = false;
             try
             {
-                string baseTemp = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "epub_cache");
-                Directory.CreateDirectory(baseTemp);
-
-                string bookId = Guid.NewGuid().ToString("N");
-                string extractPath = Path.Combine(baseTemp, bookId);
-                Directory.CreateDirectory(extractPath);
-
                 // Extract Zip
                 ZipFile.ExtractToDirectory(epubFilePath, extractPath, true);
 
@@ -42,8 +50,11 @@ namespace UniversalMediaOS.Core.Services
                 string opfPath = rootfile?.Attribute("full-path")?.Value ?? "";
                 if (string.IsNullOrEmpty(opfPath)) return null;
 
-                string fullOpfPath = Path.Combine(extractPath, opfPath);
-                if (!File.Exists(fullOpfPath)) return null;
+                string fullOpfPath = Path.GetFullPath(Path.Combine(extractPath, opfPath));
+                if (!fullOpfPath.StartsWith(canonicalExtractPath, StringComparison.OrdinalIgnoreCase) || !File.Exists(fullOpfPath))
+                {
+                    return null;
+                }
 
                 string opfDir = Path.GetDirectoryName(fullOpfPath) ?? extractPath;
 
@@ -89,7 +100,7 @@ namespace UniversalMediaOS.Core.Services
                         if (manifestItems.TryGetValue(idref, out string? relativePath))
                         {
                             string fullPath = Path.GetFullPath(Path.Combine(opfDir, relativePath));
-                            if (File.Exists(fullPath))
+                            if (fullPath.StartsWith(canonicalExtractPath, StringComparison.OrdinalIgnoreCase) && File.Exists(fullPath))
                             {
                                 chapters.Add(fullPath);
                             }
@@ -97,6 +108,7 @@ namespace UniversalMediaOS.Core.Services
                     }
                 }
 
+                success = true;
                 return new EpubBook
                 {
                     Title = title,
@@ -108,18 +120,40 @@ namespace UniversalMediaOS.Core.Services
                 System.Diagnostics.Debug.WriteLine($"EPUB Parse Error: {ex.Message}");
                 return null;
             }
+            finally
+            {
+                if (!success)
+                {
+                    try
+                    {
+                        if (Directory.Exists(extractPath))
+                        {
+                            Directory.Delete(extractPath, true);
+                        }
+                    }
+                    catch { }
+                }
+            }
         }
 
         public void CleanCache(string? excludePath = null)
         {
             try
             {
-                string baseTemp = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "epub_cache");
+                string localAppData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UniversalMediaOS");
+                string baseTemp = Path.Combine(localAppData, "epub_cache");
                 if (Directory.Exists(baseTemp))
                 {
+                    string? canonicalExclude = null;
+                    if (!string.IsNullOrEmpty(excludePath))
+                    {
+                        canonicalExclude = Path.GetFullPath(excludePath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                    }
+
                     foreach (var dir in Directory.GetDirectories(baseTemp))
                     {
-                        if (excludePath == null || !string.Equals(dir, excludePath, StringComparison.OrdinalIgnoreCase))
+                        string canonicalDir = Path.GetFullPath(dir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                        if (canonicalExclude == null || !string.Equals(canonicalDir, canonicalExclude, StringComparison.OrdinalIgnoreCase))
                         {
                             try { Directory.Delete(dir, true); } catch { }
                         }

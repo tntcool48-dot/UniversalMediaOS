@@ -18,9 +18,10 @@ namespace UniversalMediaOS.WPF.ViewModels
         private readonly DomainHotSwapper _config;
         private readonly TripleNetHandoff _routingEngine;
         private readonly SeasonDownloader _seasonDownloader;
+        private readonly Helpers.IDialogService _dialogService;
 
         [ObservableProperty]
-        private MediaResult _media = null!;
+        private MediaResult? _media;
 
         [ObservableProperty]
         private string _selectedEpisode = "1";
@@ -42,11 +43,13 @@ namespace UniversalMediaOS.WPF.ViewModels
         public AnimeDetailsViewModel(
             DomainHotSwapper config,
             TripleNetHandoff routingEngine,
-            SeasonDownloader seasonDownloader)
+            SeasonDownloader seasonDownloader,
+            Helpers.IDialogService dialogService)
         {
             _config = config;
             _routingEngine = routingEngine;
             _seasonDownloader = seasonDownloader;
+            _dialogService = dialogService;
 
             // Load scraping provider domains from config
             var customSources = _config.GetCustomSources();
@@ -66,11 +69,10 @@ namespace UniversalMediaOS.WPF.ViewModels
         {
             UniversalMediaOS.Core.Helpers.AppLogger.Log("GoBack command invoked. Returning to Search view.");
             WeakReferenceMessenger.Default.Send(new ToastNotificationMessage("Returning to search..."));
-            // Send back message or notify MainViewModel to switch back to SearchViewModel
-            WeakReferenceMessenger.Default.Send(new NavigateToDetailsMessage(null!));
+            WeakReferenceMessenger.Default.Send(new NavigateToDetailsMessage(null));
         }
 
-        [RelayCommand]
+        [RelayCommand(AllowConcurrentExecutions = false)]
         private async Task WatchNowAsync()
         {
             if (Media == null || IsRouting) return;
@@ -90,10 +92,15 @@ namespace UniversalMediaOS.WPF.ViewModels
 
                 Action<string> logger = (msg) =>
                 {
-                    App.Current.Dispatcher.Invoke(() =>
+                    var dispatcher = System.Windows.Application.Current?.Dispatcher;
+                    if (dispatcher != null)
+                    {
+                        dispatcher.InvokeAsync(() => WeakReferenceMessenger.Default.Send(new ToastNotificationMessage(msg)));
+                    }
+                    else
                     {
                         WeakReferenceMessenger.Default.Send(new ToastNotificationMessage(msg));
-                    });
+                    }
                 };
 
                 logger($"▶ Resolving: {Media.OfficialTitle} Ep {episodeNum}{audioPref}");
@@ -101,48 +108,24 @@ namespace UniversalMediaOS.WPF.ViewModels
 
                 var torrents = await _routingEngine.GetTorrentsAsync(Media.OfficialTitle + audioPref, episodeNum, logger);
 
-                // Open the Switchboard Selection window on the main thread
-                bool dialogResult = false;
-                SourceSelectionWindow? selectionWindow = null;
+                // Open the Switchboard Selection window via dialog service
+                var (dialogResult, selectedTier, selectedTorrent) = _dialogService.ShowSourceSelection(torrents);
 
-                App.Current.Dispatcher.Invoke(() =>
+                if (dialogResult)
                 {
-                    selectionWindow = new SourceSelectionWindow(torrents)
-                    {
-                        Owner = App.Current.MainWindow
-                    };
-                    dialogResult = selectionWindow.ShowDialog() == true;
-                });
-
-                if (dialogResult && selectionWindow != null)
-                {
-                    switch (selectionWindow.SelectedTier)
+                    switch (selectedTier)
                     {
                         case SelectedSourceTier.Tier1_Torrent:
                             logger("Tier 1 selected — scraping Nyaa P2P networks...");
-                            torrents = await _routingEngine.GetTorrentsAsync(Media.OfficialTitle + audioPref, episodeNum, logger);
-
                             if (torrents.Count == 0)
                             {
                                 logger("No torrents found on Nyaa/AnimeTosho. Select Tier 2 or Tier 3 fallbacks.");
                                 break;
                             }
 
-                            bool torrentDialogResult = false;
-                            SourceSelectionWindow? torrentSelection = null;
-
-                            App.Current.Dispatcher.Invoke(() =>
+                            if (selectedTorrent != null)
                             {
-                                torrentSelection = new SourceSelectionWindow(torrents)
-                                {
-                                    Owner = App.Current.MainWindow
-                                };
-                                torrentDialogResult = torrentSelection.ShowDialog() == true;
-                            });
-
-                            if (torrentDialogResult && torrentSelection != null && torrentSelection.SelectedTorrent != null)
-                            {
-                                source = await _routingEngine.InjectTorrentAsync(torrentSelection.SelectedTorrent, logger);
+                                source = await _routingEngine.InjectTorrentAsync(selectedTorrent, logger);
                             }
                             break;
 
@@ -162,7 +145,8 @@ namespace UniversalMediaOS.WPF.ViewModels
                 {
                     logger($"Source resolved successfully. Loading playback...");
 
-                    await App.Current.Dispatcher.InvokeAsync(() =>
+                    var dispatcher = System.Windows.Application.Current?.Dispatcher;
+                    Action playAction = () =>
                     {
                         if (source.Tier == SourceTier.Tier1_LocalP2P)
                         {
@@ -190,7 +174,16 @@ namespace UniversalMediaOS.WPF.ViewModels
                         {
                             WeakReferenceMessenger.Default.Send(new PlayMediaMessage(source.UrlOrPath, Media.OfficialTitle + " - Ep " + episodeNum, isWebView: true));
                         }
-                    });
+                    };
+
+                    if (dispatcher != null)
+                    {
+                        await dispatcher.InvokeAsync(playAction);
+                    }
+                    else
+                    {
+                        playAction();
+                    }
                 }
                 else
                 {
@@ -207,7 +200,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             }
         }
 
-        [RelayCommand]
+        [RelayCommand(AllowConcurrentExecutions = false)]
         private async Task DownloadSeasonAsync()
         {
             if (Media == null || IsDownloading) return;
@@ -219,25 +212,32 @@ namespace UniversalMediaOS.WPF.ViewModels
 
             try
             {
-                bool success = await Task.Run(async () =>
-                {
-                    return await _seasonDownloader.DownloadSeasonAsync(
-                        Media.OfficialTitle,
-                        msg =>
+                bool success = await _seasonDownloader.DownloadSeasonAsync(
+                    Media.OfficialTitle,
+                    msg =>
+                    {
+                        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+                        if (dispatcher != null)
                         {
-                            App.Current.Dispatcher.Invoke(() =>
-                            {
-                                WeakReferenceMessenger.Default.Send(new ToastNotificationMessage(msg));
-                            });
-                        },
-                        pct =>
+                            dispatcher.InvokeAsync(() => WeakReferenceMessenger.Default.Send(new ToastNotificationMessage(msg)));
+                        }
+                        else
                         {
-                            App.Current.Dispatcher.Invoke(() =>
-                            {
-                                DownloadButtonText = $"Downloading {pct:F0}%";
-                            });
-                        });
-                });
+                            WeakReferenceMessenger.Default.Send(new ToastNotificationMessage(msg));
+                        }
+                    },
+                    pct =>
+                    {
+                        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+                        if (dispatcher != null)
+                        {
+                            dispatcher.InvokeAsync(() => { DownloadButtonText = $"Downloading {pct:F0}%"; });
+                        }
+                        else
+                        {
+                            DownloadButtonText = $"Downloading {pct:F0}%";
+                        }
+                    });
 
                 if (success)
                 {
@@ -258,11 +258,28 @@ namespace UniversalMediaOS.WPF.ViewModels
             finally
             {
                 IsDownloading = false;
-                await Task.Delay(5000);
-                if (DownloadButtonText == "Done ✔" || DownloadButtonText == "Failed")
+                _ = Task.Run(async () =>
                 {
-                    DownloadButtonText = "📥 Season Download";
-                }
+                    await Task.Delay(5000);
+                    var dispatcher = System.Windows.Application.Current?.Dispatcher;
+                    if (dispatcher != null)
+                    {
+                        await dispatcher.InvokeAsync(() =>
+                        {
+                            if (DownloadButtonText == "Done ✔" || DownloadButtonText == "Failed")
+                            {
+                                DownloadButtonText = "📥 Season Download";
+                            }
+                        });
+                    }
+                    else
+                    {
+                        if (DownloadButtonText == "Done ✔" || DownloadButtonText == "Failed")
+                        {
+                            DownloadButtonText = "📥 Season Download";
+                        }
+                    }
+                });
             }
         }
     }

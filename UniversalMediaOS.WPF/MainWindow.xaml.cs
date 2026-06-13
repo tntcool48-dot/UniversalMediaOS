@@ -15,10 +15,10 @@ namespace UniversalMediaOS.WPF
 
         private const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
 
-        public MainWindow()
+        public MainWindow(ViewModels.MainViewModel viewModel)
         {
             InitializeComponent();
-            DataContext = App.Current.Services.GetRequiredService<ViewModels.MainViewModel>();
+            DataContext = viewModel;
             SourceInitialized += MainWindow_SourceInitialized;
             WindowHelper.EnableMica(this);
         }

@@ -25,7 +25,7 @@ namespace UniversalMediaOS.WPF.ViewModels
         [ObservableProperty] private string _searchQuery = string.Empty;
         [ObservableProperty] private bool _isSearching;
 
-        public ObservableCollection<MangaSearchResult> MangaResults { get; } = new();
+        public Helpers.ObservableRangeCollection<MangaSearchResult> MangaResults { get; } = new();
 
         // ── View Mode ────────────────────────────────────────
         [ObservableProperty] private int _currentViewMode; // 0=results, 1=chapters, 2=pages, 3=webview
@@ -33,12 +33,12 @@ namespace UniversalMediaOS.WPF.ViewModels
         // ── Selected Manga ───────────────────────────────────
         [ObservableProperty] private MangaSearchResult? _selectedManga;
         [ObservableProperty] private bool _isLoadingChapters;
-        public ObservableCollection<MangaChapter> Chapters { get; } = new();
+        public Helpers.ObservableRangeCollection<MangaChapter> Chapters { get; } = new();
 
         // ── Selected Chapter / Page Reader ───────────────────
         [ObservableProperty] private MangaChapter? _selectedChapter;
         [ObservableProperty] private bool _isLoadingPages;
-        public ObservableCollection<string> PageUrls { get; } = new();
+        public Helpers.ObservableRangeCollection<string> PageUrls { get; } = new();
 
         // ── External WebView ─────────────────────────────────
         [ObservableProperty] private string _externalUrl = string.Empty;
@@ -52,7 +52,7 @@ namespace UniversalMediaOS.WPF.ViewModels
         }
 
         // ── Search Command ───────────────────────────────────
-        [RelayCommand(IncludeCancelCommand = true)]
+        [RelayCommand(IncludeCancelCommand = true, AllowConcurrentExecutions = false)]
         private async Task SearchMangaAsync(CancellationToken token)
         {
             AppLogger.Log($"SearchMangaAsync invoked. Query='{SearchQuery}'");
@@ -67,9 +67,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             {
                 AppLogger.Log($"Querying manga service for: '{SearchQuery}'...");
                 var results = await _mangaService.SearchMangaAsync(SearchQuery, token);
-                MangaResults.Clear();
-                foreach (var result in results)
-                    MangaResults.Add(result);
+                MangaResults.ReplaceRange(results);
 
                 CurrentViewMode = 0;
                 AppLogger.Log($"SearchMangaAsync complete. Found {results.Count} results.");
@@ -89,7 +87,7 @@ namespace UniversalMediaOS.WPF.ViewModels
         }
 
         // ── Read Command (from results grid) ─────────────────
-        [RelayCommand]
+        [RelayCommand(AllowConcurrentExecutions = false)]
         private async Task ReadAsync(MangaSearchResult? manga)
         {
             if (manga == null) return;
@@ -106,8 +104,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             {
                 var chapters = await _mangaService.GetChaptersAsync(manga.Id);
                 AppLogger.Log($"Loaded {chapters.Count} chapters for '{manga.Title}'");
-                foreach (var ch in chapters)
-                    Chapters.Add(ch);
+                Chapters.ReplaceRange(chapters);
 
                 if (Chapters.Count == 0)
                 {
@@ -125,7 +122,7 @@ namespace UniversalMediaOS.WPF.ViewModels
         }
 
         // ── Select Chapter Command ────────────────────────────
-        [RelayCommand]
+        [RelayCommand(AllowConcurrentExecutions = false)]
         private async Task SelectChapterAsync(MangaChapter? chapter)
         {
             if (chapter == null) return;
@@ -152,8 +149,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             {
                 var pages = await _mangaService.GetPageUrlsAsync(chapter.Id);
                 AppLogger.Log($"Loaded {pages.Count} pages for chapter '{chapter.ChapterNumber}'");
-                foreach (var p in pages)
-                    PageUrls.Add(p);
+                PageUrls.ReplaceRange(pages);
 
                 if (PageUrls.Count == 0)
                 {

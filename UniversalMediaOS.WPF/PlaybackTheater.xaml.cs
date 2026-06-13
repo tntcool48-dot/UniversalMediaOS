@@ -5,11 +5,13 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
 using System.Windows.Controls;
+using Microsoft.Extensions.DependencyInjection;
 using LibVLCSharp.Shared;
 using UniversalMediaOS.Core.Casting;
 using UniversalMediaOS.Core.Data;
 using UniversalMediaOS.Core.Tracking;
 using UniversalMediaOS.Core.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace UniversalMediaOS.WPF
 {
@@ -110,7 +112,8 @@ namespace UniversalMediaOS.WPF
             // Fetch AniSkip timestamps
             try
             {
-                var skipService = new AniSkipIntegration();
+                var config = App.Current?.Services?.GetService<DomainHotSwapper>();
+                var skipService = new AniSkipIntegration(config);
                 var skipTimes = await skipService.GetSkipTimesAsync(idMal, int.TryParse(episodeNo, out int ep) ? ep : 1);
                 if (skipTimes != null)
                 {
@@ -136,7 +139,8 @@ namespace UniversalMediaOS.WPF
             try
             {
                 using var db = new DatabaseContext();
-                var castingMatcher = new HybridSourceMatcher(db);
+                var config = App.Current?.Services?.GetService<DomainHotSwapper>();
+                var castingMatcher = new HybridSourceMatcher(db, config);
                 await castingMatcher.FetchAndCacheCastAsync(mediaId, showTitle);
             }
             catch (Exception ex)
@@ -352,7 +356,8 @@ namespace UniversalMediaOS.WPF
                 try
                 {
                     using var db = new DatabaseContext();
-                    var matcher = new HybridSourceMatcher(db);
+                    var config = App.Current?.Services?.GetService<DomainHotSwapper>();
+                    var matcher = new HybridSourceMatcher(db, config);
                     var cast = await matcher.FetchAndCacheCastAsync(mediaId, showTitle);
                     
                     // Dispatch casting list back to the UI thread
@@ -403,10 +408,11 @@ namespace UniversalMediaOS.WPF
                 {
                     try
                     {
-                        var token = new UniversalMediaOS.Core.Configuration.DomainHotSwapper(System.IO.Path.Combine(System.AppDomain.CurrentDomain.BaseDirectory, "config.json")).GetSetting("MalOAuthToken");
+                        var config = App.Current?.Services?.GetService<DomainHotSwapper>() ?? new UniversalMediaOS.Core.Configuration.DomainHotSwapper(System.IO.Path.Combine(System.AppDomain.CurrentDomain.BaseDirectory, "config.json"));
+                        var token = config.GetSetting("MalOAuthToken");
                         if (!string.IsNullOrEmpty(token) && _idMal > 0)
                         {
-                            var mal = new UniversalMediaOS.Core.Tracking.MalRestApi(token);
+                            var mal = new UniversalMediaOS.Core.Tracking.MalRestApi(token, config);
                             bool ok = await mal.UpdateProgressAsync(_idMal, int.TryParse(_episodeNo, out int ep) ? ep : 1);
                             if (ok)
                             {
@@ -526,7 +532,8 @@ namespace UniversalMediaOS.WPF
                 try
                 {
                     using var db = new DatabaseContext();
-                    var matcher = new HybridSourceMatcher(db);
+                    var config = App.Current?.Services?.GetService<DomainHotSwapper>();
+                    var matcher = new HybridSourceMatcher(db, config);
                     var roles = await matcher.GetCharacterSwapGalleryAsync(vaName);
                     
                     if (roles.Count > 0)

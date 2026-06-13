@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Net.Http;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace UniversalMediaOS.Core.Services
@@ -25,22 +26,36 @@ namespace UniversalMediaOS.Core.Services
     public class MangaService
     {
         private const string UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+        private static readonly HttpClient _httpClient = new HttpClient();
+        private readonly string _mangaDexUrl;
+        private readonly string _mangaDexCoversUrl;
 
-        public async Task<List<MangaSearchResult>> SearchMangaAsync(string query, System.Threading.CancellationToken token = default)
+        static MangaService()
+        {
+            _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(UserAgent);
+        }
+
+        public MangaService(UniversalMediaOS.Core.Configuration.DomainHotSwapper? config = null)
+        {
+            _mangaDexUrl = config?.GetSetting("MangaDexUrl") ?? "https://api.mangadex.org";
+            if (string.IsNullOrEmpty(_mangaDexUrl)) _mangaDexUrl = "https://api.mangadex.org";
+
+            _mangaDexCoversUrl = config?.GetSetting("MangaDexCoversUrl") ?? "https://uploads.mangadex.org";
+            if (string.IsNullOrEmpty(_mangaDexCoversUrl)) _mangaDexCoversUrl = "https://uploads.mangadex.org";
+        }
+
+        public async Task<List<MangaSearchResult>> SearchMangaAsync(string query, CancellationToken token = default)
         {
             var results = new List<MangaSearchResult>();
             if (string.IsNullOrWhiteSpace(query)) return results;
 
             try
             {
-                using var client = new HttpClient();
-                client.DefaultRequestHeaders.Add("User-Agent", UserAgent);
-
-                string url = $"https://api.mangadex.org/manga?title={Uri.EscapeDataString(query)}&limit=15&includes[]=cover_art";
-                var response = await client.GetAsync(url, token);
+                string url = $"{_mangaDexUrl.TrimEnd('/')}/manga?title={Uri.EscapeDataString(query)}&limit=15&includes[]=cover_art";
+                using var response = await _httpClient.GetAsync(url, token);
                 if (!response.IsSuccessStatusCode) return results;
 
-                string json = await response.Content.ReadAsStringAsync();
+                string json = await response.Content.ReadAsStringAsync(token);
                 using var doc = JsonDocument.Parse(json);
 
                 if (doc.RootElement.TryGetProperty("data", out var dataArray) && dataArray.ValueKind == JsonValueKind.Array)
@@ -68,7 +83,6 @@ namespace UniversalMediaOS.Core.Services
                             }
                         }
 
-
                         // Parse cover art
                         string coverFileName = "";
                         if (item.TryGetProperty("relationships", out var rels) && rels.ValueKind == JsonValueKind.Array)
@@ -88,7 +102,7 @@ namespace UniversalMediaOS.Core.Services
                         string coverUrl = "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?w=400";
                         if (!string.IsNullOrEmpty(coverFileName) && !string.IsNullOrEmpty(id))
                         {
-                            coverUrl = $"https://uploads.mangadex.org/covers/{id}/{coverFileName}";
+                            coverUrl = $"{_mangaDexCoversUrl.TrimEnd('/')}/covers/{id}/{coverFileName}";
                         }
 
                         results.Add(new MangaSearchResult
@@ -108,26 +122,25 @@ namespace UniversalMediaOS.Core.Services
             return results;
         }
 
-        public async Task<List<MangaChapter>> GetChaptersAsync(string mangaId)
+        public async Task<List<MangaChapter>> GetChaptersAsync(string mangaId, CancellationToken token = default)
         {
             var chapters = new List<MangaChapter>();
             if (string.IsNullOrEmpty(mangaId)) return chapters;
 
             try
             {
-                using var client = new HttpClient();
-                client.DefaultRequestHeaders.Add("User-Agent", UserAgent);
-
                 int offset = 0;
                 int total = 1;
 
                 while (offset < total)
                 {
-                    string url = $"https://api.mangadex.org/manga/{mangaId}/feed?translatedLanguage[]=en&limit=100&offset={offset}&order[chapter]=asc";
-                    var response = await client.GetAsync(url);
+                    token.ThrowIfCancellationRequested();
+
+                    string url = $"{_mangaDexUrl.TrimEnd('/')}/manga/{mangaId}/feed?translatedLanguage[]=en&limit=100&offset={offset}&order[chapter]=asc";
+                    using var response = await _httpClient.GetAsync(url, token);
                     if (!response.IsSuccessStatusCode) break;
 
-                    string json = await response.Content.ReadAsStringAsync();
+                    string json = await response.Content.ReadAsStringAsync(token);
                     using var doc = JsonDocument.Parse(json);
 
                     if (doc.RootElement.TryGetProperty("total", out var totalProp) && totalProp.ValueKind == JsonValueKind.Number)
@@ -176,6 +189,10 @@ namespace UniversalMediaOS.Core.Services
                     offset += 100;
                 }
             }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"Manga Chapters Error: {ex.Message}");
@@ -184,21 +201,18 @@ namespace UniversalMediaOS.Core.Services
             return chapters;
         }
 
-        public async Task<List<string>> GetPageUrlsAsync(string chapterId)
+        public async Task<List<string>> GetPageUrlsAsync(string chapterId, CancellationToken token = default)
         {
             var pages = new List<string>();
             if (string.IsNullOrEmpty(chapterId)) return pages;
 
             try
             {
-                using var client = new HttpClient();
-                client.DefaultRequestHeaders.Add("User-Agent", UserAgent);
-
-                string url = $"https://api.mangadex.org/at-home/server/{chapterId}";
-                var response = await client.GetAsync(url);
+                string url = $"{_mangaDexUrl.TrimEnd('/')}/at-home/server/{chapterId}";
+                using var response = await _httpClient.GetAsync(url, token);
                 if (!response.IsSuccessStatusCode) return pages;
 
-                string json = await response.Content.ReadAsStringAsync();
+                string json = await response.Content.ReadAsStringAsync(token);
                 using var doc = JsonDocument.Parse(json);
 
                 var root = doc.RootElement;

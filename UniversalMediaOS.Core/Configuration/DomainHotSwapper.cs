@@ -4,7 +4,10 @@ using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
+using System.Threading.Tasks;
+using UniversalMediaOS.Core.Helpers;
 
 namespace UniversalMediaOS.Core.Configuration
 {
@@ -14,10 +17,24 @@ namespace UniversalMediaOS.Core.Configuration
         public string Url { get; set; } = string.Empty;
     }
 
+    public class SettingChangedEventArgs : EventArgs
+    {
+        public string Key { get; }
+        public string Value { get; }
+
+        public SettingChangedEventArgs(string key, string value)
+        {
+            Key = key;
+            Value = value;
+        }
+    }
+
     public class DomainHotSwapper
     {
         private readonly string _configPath;
-        private Dictionary<string, string> _domainMap = new Dictionary<string, string>();
+        private ConcurrentDictionary<string, string> _domainMap = new ConcurrentDictionary<string, string>();
+
+        public event EventHandler<SettingChangedEventArgs>? SettingChanged;
 
         public DomainHotSwapper(string configPath)
         {
@@ -25,11 +42,16 @@ namespace UniversalMediaOS.Core.Configuration
             LoadConfig();
         }
 
+        protected virtual void OnSettingChanged(string key, string value)
+        {
+            SettingChanged?.Invoke(this, new SettingChangedEventArgs(key, value));
+        }
+
         public void LoadConfig()
         {
             if (!File.Exists(_configPath))
             {
-                _domainMap = BuildDefaults();
+                _domainMap = new ConcurrentDictionary<string, string>(BuildDefaults());
                 SaveConfig();
             }
             else
@@ -37,21 +59,49 @@ namespace UniversalMediaOS.Core.Configuration
                 try
                 {
                     string json = File.ReadAllText(_configPath);
-                    _domainMap = JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? new Dictionary<string, string>();
+                    var dict = JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? new Dictionary<string, string>();
+                    _domainMap = new ConcurrentDictionary<string, string>(dict);
 
                     var defaults = BuildDefaults();
                     foreach (var kvp in defaults)
                     {
-                        if (!_domainMap.ContainsKey(kvp.Key))
-                        {
-                            _domainMap[kvp.Key] = kvp.Value;
-                        }
+                        _domainMap.TryAdd(kvp.Key, kvp.Value);
                     }
                 }
                 catch (Exception ex)
                 {
+                    AppLogger.Log($"Failed to load config synchronously: {ex.Message}", "ERROR");
                     System.Diagnostics.Debug.WriteLine($"Failed to load config: {ex.Message}");
-                    _domainMap = BuildDefaults();
+                    _domainMap = new ConcurrentDictionary<string, string>(BuildDefaults());
+                }
+            }
+        }
+
+        public async Task LoadConfigAsync()
+        {
+            if (!File.Exists(_configPath))
+            {
+                _domainMap = new ConcurrentDictionary<string, string>(BuildDefaults());
+                await SaveConfigAsync();
+            }
+            else
+            {
+                try
+                {
+                    string json = await File.ReadAllTextAsync(_configPath);
+                    var dict = JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? new Dictionary<string, string>();
+                    _domainMap = new ConcurrentDictionary<string, string>(dict);
+
+                    var defaults = BuildDefaults();
+                    foreach (var kvp in defaults)
+                    {
+                        _domainMap.TryAdd(kvp.Key, kvp.Value);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Log($"Failed to load config asynchronously: {ex.Message}", "ERROR");
+                    _domainMap = new ConcurrentDictionary<string, string>(BuildDefaults());
                 }
             }
         }
@@ -61,14 +111,54 @@ namespace UniversalMediaOS.Core.Configuration
             try
             {
                 string json = JsonSerializer.Serialize(_domainMap, new JsonSerializerOptions { WriteIndented = true });
-                File.WriteAllText(_configPath, json);
+                SaveConfigAtomic(json);
                 return true;
             }
             catch (Exception ex)
             {
+                AppLogger.Log($"Failed to save config synchronously: {ex.Message}", "ERROR");
                 System.Diagnostics.Debug.WriteLine($"Failed to save config: {ex.Message}");
                 return false;
             }
+        }
+
+        public async Task<bool> SaveConfigAsync()
+        {
+            try
+            {
+                string json = JsonSerializer.Serialize(_domainMap, new JsonSerializerOptions { WriteIndented = true });
+                await SaveConfigAtomicAsync(json);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Log($"Failed to save config asynchronously: {ex.Message}", "ERROR");
+                return false;
+            }
+        }
+
+        private void SaveConfigAtomic(string json)
+        {
+            string tempPath = _configPath + ".tmp";
+            string? dir = Path.GetDirectoryName(_configPath);
+            if (!string.IsNullOrEmpty(dir))
+            {
+                Directory.CreateDirectory(dir);
+            }
+            File.WriteAllText(tempPath, json);
+            File.Move(tempPath, _configPath, overwrite: true);
+        }
+
+        private async Task SaveConfigAtomicAsync(string json)
+        {
+            string tempPath = _configPath + ".tmp";
+            string? dir = Path.GetDirectoryName(_configPath);
+            if (!string.IsNullOrEmpty(dir))
+            {
+                Directory.CreateDirectory(dir);
+            }
+            await File.WriteAllTextAsync(tempPath, json);
+            File.Move(tempPath, _configPath, overwrite: true);
         }
 
         public string GetSetting(string key)
@@ -80,11 +170,19 @@ namespace UniversalMediaOS.Core.Configuration
                     if (string.IsNullOrEmpty(val) || val == "adminadmin") return val;
                     try
                     {
-                        var decrypted = ProtectedData.Unprotect(Convert.FromBase64String(val), null, DataProtectionScope.CurrentUser);
-                        return Encoding.UTF8.GetString(decrypted);
+                        if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows))
+                        {
+                            var decrypted = ProtectedData.Unprotect(Convert.FromBase64String(val), null, DataProtectionScope.CurrentUser);
+                            return Encoding.UTF8.GetString(decrypted);
+                        }
+                        else
+                        {
+                            return val; // Fallback plain text on non-Windows
+                        }
                     }
-                    catch
+                    catch (Exception ex)
                     {
+                        AppLogger.Log($"Decryption failed for key '{key}': {ex.Message}", "ERROR");
                         return string.Empty;
                     }
                 }
@@ -95,20 +193,66 @@ namespace UniversalMediaOS.Core.Configuration
 
         public void SetSetting(string key, string value)
         {
+            string storedValue = value;
             if (key == "QBitPassword" || key == "MalOAuthToken")
             {
                 if (!string.IsNullOrEmpty(value) && value != "adminadmin")
                 {
                     try
                     {
-                        var encrypted = ProtectedData.Protect(Encoding.UTF8.GetBytes(value), null, DataProtectionScope.CurrentUser);
-                        value = Convert.ToBase64String(encrypted);
+                        if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows))
+                        {
+                            var encrypted = ProtectedData.Protect(Encoding.UTF8.GetBytes(value), null, DataProtectionScope.CurrentUser);
+                            storedValue = Convert.ToBase64String(encrypted);
+                        }
+                        else
+                        {
+                            AppLogger.Log("DPAPI is not supported on this platform. Saving credentials unencrypted.", "WARNING");
+                        }
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        AppLogger.Log($"Encryption failed for key '{key}': {ex.Message}. Credentials not updated.", "ERROR");
+                        throw;
+                    }
                 }
             }
-            _domainMap[key] = value;
+            
+            _domainMap[key] = storedValue;
             SaveConfig();
+            OnSettingChanged(key, value);
+        }
+
+        public async Task SetSettingAsync(string key, string value)
+        {
+            string storedValue = value;
+            if (key == "QBitPassword" || key == "MalOAuthToken")
+            {
+                if (!string.IsNullOrEmpty(value) && value != "adminadmin")
+                {
+                    try
+                    {
+                        if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows))
+                        {
+                            var encrypted = ProtectedData.Protect(Encoding.UTF8.GetBytes(value), null, DataProtectionScope.CurrentUser);
+                            storedValue = Convert.ToBase64String(encrypted);
+                        }
+                        else
+                        {
+                            AppLogger.Log("DPAPI is not supported on this platform. Saving credentials unencrypted.", "WARNING");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        AppLogger.Log($"Encryption failed for key '{key}': {ex.Message}. Credentials not updated.", "ERROR");
+                        throw;
+                    }
+                }
+            }
+            
+            _domainMap[key] = storedValue;
+            await SaveConfigAsync();
+            OnSettingChanged(key, value);
         }
 
         /// <summary>
@@ -137,7 +281,13 @@ namespace UniversalMediaOS.Core.Configuration
         public void SaveCustomSources(List<CustomSource> sources)
         {
             string serialized = JsonSerializer.Serialize(sources);
-            SetSetting("CustomSources", serialized);
+            SetSetting( "CustomSources", serialized);
+        }
+
+        public async Task SaveCustomSourcesAsync(List<CustomSource> sources)
+        {
+            string serialized = JsonSerializer.Serialize(sources);
+            await SetSettingAsync("CustomSources", serialized);
         }
 
         private static Dictionary<string, string> BuildDefaults()
@@ -162,7 +312,19 @@ namespace UniversalMediaOS.Core.Configuration
                 { "DefaultAudioPref", "Sub" },
                 { "AutoPlayAfterDownload", "true" },
                 { "AutoManageServices", "false" },
-                { "DownloadDirectory", "" }
+                { "DownloadDirectory", "" },
+
+                // Redirectable API URLs
+                { "AniListUrl", "https://graphql.anilist.co" },
+                { "AniSkipUrl", "https://api.aniskip.com" },
+                { "MalApiUrl", "https://api.myanimelist.net" },
+                { "NyaaUrl", "https://nyaa.si/?page=rss&c=1_2&f=0&q=" },
+                { "AnimeToshoUrl", "https://feed.animetosho.org/rss2?q=" },
+                { "MangaDexUrl", "https://api.mangadex.org" },
+                { "MangaDexCoversUrl", "https://uploads.mangadex.org" },
+                { "DatabasePath", "" },
+                { "TmdbApiKey", "" },
+                { "JikanApiUrl", "https://api.jikan.moe/v4" }
             };
             return defaults;
         }

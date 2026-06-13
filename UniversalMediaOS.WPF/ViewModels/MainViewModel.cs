@@ -9,7 +9,7 @@ namespace UniversalMediaOS.WPF.ViewModels
 {
     public partial class MainViewModel : ObservableObject
     {
-        private readonly IServiceProvider _serviceProvider;
+        private readonly Func<AnimeDetailsViewModel> _detailsViewModelFactory;
 
         public SearchViewModel    SearchViewModel    { get; }
         public MangaViewModel     MangaViewModel     { get; }
@@ -33,14 +33,14 @@ namespace UniversalMediaOS.WPF.ViewModels
         private int _toastId;
 
         public MainViewModel(
-            IServiceProvider   serviceProvider,
+            Func<AnimeDetailsViewModel> detailsViewModelFactory,
             SearchViewModel    searchViewModel,
             MangaViewModel     mangaViewModel,
             DownloadsViewModel downloadsViewModel,
             PlaybackViewModel  playbackViewModel,
             SettingsViewModel  settingsViewModel)
         {
-            _serviceProvider   = serviceProvider;
+            _detailsViewModelFactory = detailsViewModelFactory;
             SearchViewModel    = searchViewModel;
             MangaViewModel     = mangaViewModel;
             DownloadsViewModel = downloadsViewModel;
@@ -54,22 +54,32 @@ namespace UniversalMediaOS.WPF.ViewModels
             WeakReferenceMessenger.Default.Register<ToastNotificationMessage>(this, (r, m) =>
             {
                 var vm = (MainViewModel)r;
-                System.Windows.Application.Current.Dispatcher.Invoke(async () =>
+                var dispatcher = System.Windows.Application.Current?.Dispatcher;
+                if (dispatcher != null)
+                {
+                    dispatcher.InvokeAsync(async () =>
+                    {
+                        vm.ToastText      = m.Message;
+                        vm.IsToastVisible = true;
+
+                        int currentId = System.Threading.Interlocked.Increment(ref vm._toastId);
+                        await Task.Delay(3000);
+                        if (System.Threading.Volatile.Read(ref vm._toastId) == currentId)
+                            vm.IsToastVisible = false;
+                    });
+                }
+                else
                 {
                     vm.ToastText      = m.Message;
                     vm.IsToastVisible = true;
-
-                    int currentId = ++vm._toastId;
-                    await Task.Delay(3000);
-                    if (vm._toastId == currentId)
-                        vm.IsToastVisible = false;
-                });
+                }
             });
 
             WeakReferenceMessenger.Default.Register<NavigateToDetailsMessage>(this, (r, m) =>
             {
                 var vm = (MainViewModel)r;
-                System.Windows.Application.Current.Dispatcher.Invoke(() =>
+                var dispatcher = System.Windows.Application.Current?.Dispatcher;
+                Action navAction = () =>
                 {
                     if (m.Media == null)
                     {
@@ -77,23 +87,42 @@ namespace UniversalMediaOS.WPF.ViewModels
                     }
                     else
                     {
-                        var detailsVm = vm._serviceProvider.GetRequiredService<AnimeDetailsViewModel>();
+                        var detailsVm = vm._detailsViewModelFactory();
                         detailsVm.Media = m.Media;
                         vm.CurrentViewModel = detailsVm;
                     }
-                });
+                };
+
+                if (dispatcher != null)
+                {
+                    dispatcher.Invoke(navAction);
+                }
+                else
+                {
+                    navAction();
+                }
             });
 
             WeakReferenceMessenger.Default.Register<PlayMediaMessage>(this, (r, m) =>
             {
                 var vm = (MainViewModel)r;
-                System.Windows.Application.Current.Dispatcher.Invoke(() =>
+                var dispatcher = System.Windows.Application.Current?.Dispatcher;
+                Action playAction = () =>
                 {
                     if (m.IsWebView)
                         vm.PlayEmbed(m.Value, m.Title);
                     else
                         vm.PlayMedia(m.Value, m.Title, m.Referer);
-                });
+                };
+
+                if (dispatcher != null)
+                {
+                    dispatcher.Invoke(playAction);
+                }
+                else
+                {
+                    playAction();
+                }
             });
         }
 

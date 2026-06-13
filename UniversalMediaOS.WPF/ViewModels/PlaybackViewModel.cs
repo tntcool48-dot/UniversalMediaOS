@@ -41,27 +41,39 @@ namespace UniversalMediaOS.WPF.ViewModels
             _libVLC = new LibVLC(enableDebugLogs: false);
             _mediaPlayer = new MediaPlayer(_libVLC);
             
-            _mediaPlayer.Playing      += (s, e) => App.Current.Dispatcher.InvokeAsync(() => {
+            _mediaPlayer.Playing      += (s, e) => RunOnDispatcher(() => {
                 IsPlaying = true;
                 AppLogger.Log($"LibVLC playing event fired for: '{MediaTitle}'");
             });
-            _mediaPlayer.Paused       += (s, e) => App.Current.Dispatcher.InvokeAsync(() => {
+            _mediaPlayer.Paused       += (s, e) => RunOnDispatcher(() => {
                 IsPlaying = false;
                 AppLogger.Log($"LibVLC paused event fired for: '{MediaTitle}'");
             });
-            _mediaPlayer.Stopped      += (s, e) => App.Current.Dispatcher.InvokeAsync(() => {
+            _mediaPlayer.Stopped      += (s, e) => RunOnDispatcher(() => {
                 IsPlaying = false;
                 AppLogger.Log($"LibVLC stopped event fired for: '{MediaTitle}'");
             });
             _mediaPlayer.TimeChanged  += MediaPlayer_TimeChanged;
-            _mediaPlayer.LengthChanged += (s, e) => App.Current.Dispatcher.InvokeAsync(() => {
+            _mediaPlayer.LengthChanged += (s, e) => RunOnDispatcher(() => {
                 PlaybackDuration = e.Length;
                 AppLogger.Log($"LibVLC length changed: {e.Length} ms for: '{MediaTitle}'");
             });
         }
 
         private DateTime _lastTimeUpdate = DateTime.MinValue;
-        private bool _isUpdatingTimeFromPlayer;
+        private volatile bool _isUpdatingTimeFromPlayer;
+
+        private void RunOnDispatcher(Action action)
+        {
+            if (App.Current?.Dispatcher is { } dispatcher)
+            {
+                dispatcher.InvokeAsync(action);
+            }
+            else
+            {
+                action();
+            }
+        }
 
         private void MediaPlayer_TimeChanged(object? sender, MediaPlayerTimeChangedEventArgs e)
         {
@@ -69,7 +81,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             if ((DateTime.Now - _lastTimeUpdate).TotalMilliseconds > 250)
             {
                 _lastTimeUpdate = DateTime.Now;
-                App.Current.Dispatcher.InvokeAsync(() =>
+                RunOnDispatcher(() =>
                 {
                     _isUpdatingTimeFromPlayer = true;
                     try

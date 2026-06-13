@@ -15,10 +15,22 @@ namespace UniversalMediaOS.WPF.Helpers
 
         public static void EnableMica(Window window)
         {
+            if (window == null) throw new ArgumentNullException(nameof(window));
+
             var helper = new WindowInteropHelper(window);
             if (helper.Handle == IntPtr.Zero)
             {
-                window.SourceInitialized += (s, e) => ApplyMica(new WindowInteropHelper(window).Handle);
+                EventHandler? handler = null;
+                handler = (s, e) =>
+                {
+                    window.SourceInitialized -= handler;
+                    var hwnd = new WindowInteropHelper(window).Handle;
+                    if (hwnd != IntPtr.Zero)
+                    {
+                        ApplyMica(hwnd);
+                    }
+                };
+                window.SourceInitialized += handler;
             }
             else
             {
@@ -28,6 +40,8 @@ namespace UniversalMediaOS.WPF.Helpers
 
         private static void ApplyMica(IntPtr handle)
         {
+            if (handle == IntPtr.Zero) return;
+
             int trueValue = 1;
             // Windows 11 Build 22523+ Backdrop type
             int micaBackdrop = 2; 
@@ -38,7 +52,11 @@ namespace UniversalMediaOS.WPF.Helpers
             if (hr != 0)
             {
                 // Fallback for earlier Windows 11 builds
-                DwmSetWindowAttribute(handle, DWMWA_MICA_EFFECT, ref trueValue, Marshal.SizeOf(typeof(int)));
+                int hr2 = DwmSetWindowAttribute(handle, DWMWA_MICA_EFFECT, ref trueValue, Marshal.SizeOf(typeof(int)));
+                if (hr2 != 0)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Failed to set Mica effect (HRESULT {hr} / {hr2})");
+                }
             }
         }
     }
