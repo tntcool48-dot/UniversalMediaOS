@@ -294,10 +294,8 @@ namespace UniversalMediaOS.Core.Configuration
         {
             var defaults = new Dictionary<string, string>
             {
-                { "PythonScraperBase", "http://localhost:8000" },
-                
                 // Serialized dynamic CustomSources
-                { "CustomSources", "[{\"Name\":\"GogoAnime\",\"Url\":\"https://gogoanime3.co/search.html?keyword={query}\"},{\"Name\":\"AnimePahe\",\"Url\":\"https://animepahe.ru/anime/{query}\"},{\"Name\":\"Zoro\",\"Url\":\"https://hianime.to/search?keyword={query}\"}]" },
+                { "CustomSources", "[{\"Name\":\"AnimePahe\",\"Url\":\"https://animepahe.ru/anime/{query}\"},{\"Name\":\"KickAssAnime\",\"Url\":\"https://kickass-anime.am/search?query={query}\"},{\"Name\":\"AnimeKai\",\"Url\":\"https://anikai.to/search?keyword={query}\"}]" },
 
                 // qBittorrent settings
                 { "QBitHost", "localhost" },
@@ -312,6 +310,7 @@ namespace UniversalMediaOS.Core.Configuration
                 { "DefaultAudioPref", "Sub" },
                 { "AutoPlayAfterDownload", "true" },
                 { "AutoManageServices", "true" },
+                { "ScraperSiteAttemptLimit", "6" },
                 { "DownloadDirectory", "" },
 
                 // Redirectable API URLs

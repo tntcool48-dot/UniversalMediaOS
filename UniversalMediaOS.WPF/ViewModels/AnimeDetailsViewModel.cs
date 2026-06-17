@@ -106,86 +106,66 @@ namespace UniversalMediaOS.WPF.ViewModels
                 logger($"▶ Resolving: {Media.OfficialTitle} Ep {episodeNum}{audioPref}");
                 PlaybackSource? source = null;
 
-                var torrents = await _routingEngine.GetTorrentsAsync(Media.OfficialTitle + audioPref, episodeNum, logger);
-
-                // Open the Switchboard Selection window via dialog service
-                var (dialogResult, selectedTier, selectedTorrent) = _dialogService.ShowSourceSelection(torrents);
+                var (dialogResult, selectedTier) = _dialogService.ShowSourceSelection();
 
                 if (dialogResult)
                 {
                     switch (selectedTier)
                     {
-                        case SelectedSourceTier.Tier1_Torrent:
-                            logger("Tier 1 selected — scraping Nyaa P2P networks...");
-                            if (torrents.Count == 0)
-                            {
-                                logger("No torrents found on Nyaa/AnimeTosho. Select Tier 2 or Tier 3 fallbacks.");
-                                break;
-                            }
-
-                            if (selectedTorrent != null)
-                            {
-                                source = await _routingEngine.InjectTorrentAsync(selectedTorrent, logger);
-                            }
+                        case SelectedSourceTier.Stream_Auto:
+                            logger("Auto stream: Python scraper → HLS proxy → WebView fallback...");
+                            source = await _routingEngine.ResolveBestSourceAsync(
+                                Media.OfficialTitle + audioPref, episodeNum, providerDomain, logger,
+                                SourceTier.Tier1_PythonScraper);
                             break;
 
-                        case SelectedSourceTier.Tier2_Consumet:
-                            logger("Tier 2 selected — querying Consumet scraper...");
-                            source = await _routingEngine.ResolveBestSourceAsync(Media.OfficialTitle + audioPref, episodeNum, providerDomain, logger, SourceTier.Tier2_ConsumetHttp);
+                        case SelectedSourceTier.Stream_WebView:
+                            logger("WebView2 player selected — loading embedded browser...");
+                            source = await _routingEngine.ResolveBestSourceAsync(
+                                Media.OfficialTitle + audioPref, episodeNum, providerDomain, logger,
+                                SourceTier.Tier2_WebViewEmbed);
                             break;
 
-                        case SelectedSourceTier.Tier3_WebProvider:
-                            logger("Tier 3 selected — launching WebView2 embed...");
-                            source = await _routingEngine.ResolveBestSourceAsync(Media.OfficialTitle + audioPref, episodeNum, providerDomain, logger, SourceTier.Tier3_WebViewEmbed);
+                        case SelectedSourceTier.Download_Season:
+                            logger("P2P season download initiated via SeasonDownloader...");
+                            await DownloadSeasonAsync();
+                            break;
+
+                        default:
                             break;
                     }
                 }
 
                 if (source != null)
                 {
-                    logger($"Source resolved successfully. Loading playback...");
+                    logger("Source resolved successfully. Loading playback...");
 
                     var dispatcher = System.Windows.Application.Current?.Dispatcher;
                     Action playAction = () =>
                     {
-                        if (source.Tier == SourceTier.Tier1_LocalP2P)
+                        if (source.Tier == SourceTier.Tier1_PythonScraper)
                         {
-                            if (File.Exists(source.UrlOrPath))
-                            {
-                                if (_config.GetSetting("AutoPlayAfterDownload") != "false")
-                                {
-                                    WeakReferenceMessenger.Default.Send(new PlayMediaMessage(source.UrlOrPath, Media.OfficialTitle + " - Ep " + episodeNum));
-                                }
-                                else
-                                {
-                                    logger("Download complete. AutoPlay disabled.");
-                                }
-                            }
-                            else
-                            {
-                                logger($"ERROR: Download file inaccessible: {source.UrlOrPath}");
-                            }
+                            WeakReferenceMessenger.Default.Send(
+                                new PlayMediaMessage(source.UrlOrPath,
+                                    Media.OfficialTitle + " - Ep " + episodeNum,
+                                    isWebView: false,
+                                    referer: source.EmbedOrigin));
                         }
-                        else if (source.Tier == SourceTier.Tier2_ConsumetHttp)
+                        else if (source.Tier == SourceTier.Tier2_WebViewEmbed)
                         {
-                            WeakReferenceMessenger.Default.Send(new PlayMediaMessage(source.UrlOrPath, Media.OfficialTitle + " - Ep " + episodeNum, isWebView: false, referer: source.EmbedOrigin));
-                        }
-                        else if (source.Tier == SourceTier.Tier3_WebViewEmbed)
-                        {
-                            WeakReferenceMessenger.Default.Send(new PlayMediaMessage(source.UrlOrPath, Media.OfficialTitle + " - Ep " + episodeNum, isWebView: true));
+                            WeakReferenceMessenger.Default.Send(
+                                new PlayMediaMessage(source.UrlOrPath,
+                                    Media.OfficialTitle + " - Ep " + episodeNum,
+                                    isWebView: true));
                         }
                     };
 
                     if (dispatcher != null)
-                    {
                         await dispatcher.InvokeAsync(playAction);
-                    }
                     else
-                    {
                         playAction();
-                    }
                 }
-                else
+                else if (selectedTier != SelectedSourceTier.Download_Season)
                 {
                     logger("Playback resolution aborted.");
                 }
@@ -200,15 +180,30 @@ namespace UniversalMediaOS.WPF.ViewModels
             }
         }
 
-        [RelayCommand(AllowConcurrentExecutions = false)]
+        private CancellationTokenSource? _downloadCts;
+
+        [RelayCommand(AllowConcurrentExecutions = true)]
         private async Task DownloadSeasonAsync()
         {
-            if (Media == null || IsDownloading) return;
+            if (IsDownloading)
+            {
+                if (_downloadCts != null && !_downloadCts.IsCancellationRequested)
+                {
+                    UniversalMediaOS.Core.Helpers.AppLogger.Log("Cancellation requested by user clicking the download button again.");
+                    _downloadCts.Cancel();
+                }
+                return;
+            }
+
+            if (Media == null) return;
 
             UniversalMediaOS.Core.Helpers.AppLogger.Log($"DownloadSeasonAsync invoked for: '{Media.OfficialTitle}' (ID: {Media.Id})");
             IsDownloading = true;
-            DownloadButtonText = "Queued...";
+            DownloadButtonText = "Queued... (Cancel)";
             WeakReferenceMessenger.Default.Send(new ToastNotificationMessage($"Batch Season Download Queued: {Media.OfficialTitle}"));
+
+            _downloadCts = new CancellationTokenSource();
+            var token = _downloadCts.Token;
 
             try
             {
@@ -231,13 +226,14 @@ namespace UniversalMediaOS.WPF.ViewModels
                         var dispatcher = System.Windows.Application.Current?.Dispatcher;
                         if (dispatcher != null)
                         {
-                            dispatcher.InvokeAsync(() => { DownloadButtonText = $"Downloading {pct:F0}%"; });
+                            dispatcher.InvokeAsync(() => { DownloadButtonText = $"Downloading {pct:F0}% (Cancel)"; });
                         }
                         else
                         {
-                            DownloadButtonText = $"Downloading {pct:F0}%";
+                            DownloadButtonText = $"Downloading {pct:F0}% (Cancel)";
                         }
-                    });
+                    },
+                    token);
 
                 if (success)
                 {
@@ -250,6 +246,11 @@ namespace UniversalMediaOS.WPF.ViewModels
                     WeakReferenceMessenger.Default.Send(new ToastNotificationMessage($"Failed: Season batch download failed for {Media.OfficialTitle}"));
                 }
             }
+            catch (OperationCanceledException)
+            {
+                DownloadButtonText = "Cancelled";
+                WeakReferenceMessenger.Default.Send(new ToastNotificationMessage($"Download cancelled by user: {Media.OfficialTitle}"));
+            }
             catch (Exception ex)
             {
                 DownloadButtonText = "Failed";
@@ -258,6 +259,9 @@ namespace UniversalMediaOS.WPF.ViewModels
             finally
             {
                 IsDownloading = false;
+                _downloadCts?.Dispose();
+                _downloadCts = null;
+
                 _ = Task.Run(async () =>
                 {
                     await Task.Delay(5000);
@@ -266,7 +270,7 @@ namespace UniversalMediaOS.WPF.ViewModels
                     {
                         await dispatcher.InvokeAsync(() =>
                         {
-                            if (DownloadButtonText == "Done ✔" || DownloadButtonText == "Failed")
+                            if (DownloadButtonText == "Done ✔" || DownloadButtonText == "Failed" || DownloadButtonText == "Cancelled")
                             {
                                 DownloadButtonText = "📥 Season Download";
                             }
@@ -274,7 +278,7 @@ namespace UniversalMediaOS.WPF.ViewModels
                     }
                     else
                     {
-                        if (DownloadButtonText == "Done ✔" || DownloadButtonText == "Failed")
+                        if (DownloadButtonText == "Done ✔" || DownloadButtonText == "Failed" || DownloadButtonText == "Cancelled")
                         {
                             DownloadButtonText = "📥 Season Download";
                         }

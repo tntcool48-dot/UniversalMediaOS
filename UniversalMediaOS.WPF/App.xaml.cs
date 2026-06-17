@@ -18,8 +18,8 @@ namespace UniversalMediaOS.WPF
 
         public new static App Current => (App)Application.Current;
 
-        private ConsumetBootstrapper? _consumetServer;
         private PythonBootstrapper? _pythonServer;
+        private UniversalMediaOS.Core.Streaming.HlsLoopbackProxy? _hlsProxy;
         private System.Diagnostics.Process? _qbitProcess;
 
         public App()
@@ -54,12 +54,13 @@ namespace UniversalMediaOS.WPF
             var mainWindow = Services.GetRequiredService<MainWindow>();
             mainWindow.Show();
 
+            _hlsProxy = Services.GetRequiredService<UniversalMediaOS.Core.Streaming.HlsLoopbackProxy>();
+            _hlsProxy.Start();
+
             // Auto-manage local services if the user has enabled it in Settings
             if (config.GetSetting("AutoManageServices") == "true")
             {
-                _consumetServer = Services.GetRequiredService<ConsumetBootstrapper>();
                 _pythonServer = Services.GetRequiredService<PythonBootstrapper>();
-
                 _ = InitServicesAsync();
             }
         }
@@ -71,13 +72,9 @@ namespace UniversalMediaOS.WPF
                 var dep = Services.GetRequiredService<DependencyBootstrapper>();
                 await dep.EnsureDependenciesAsync();
 
-                if (_consumetServer != null)
-                {
-                    await _consumetServer.EnsureLatestConsumetAsync();
-                }
                 if (_pythonServer != null)
                 {
-                    await _pythonServer.BootPythonServiceAsync();
+                    await _pythonServer.EnsureScraperReadyAsync();
                 }
 
                 if (!string.IsNullOrEmpty(dep.DetectedQBitPath))
@@ -135,18 +132,14 @@ namespace UniversalMediaOS.WPF
 
         protected override void OnExit(ExitEventArgs e)
         {
-            try { _consumetServer?.Dispose(); } catch { }
+            try { _hlsProxy?.Dispose(); } catch { }
             try { _pythonServer?.Dispose(); } catch { }
 
             try
             {
                 if (_qbitProcess != null)
                 {
-                    if (!_qbitProcess.HasExited)
-                    {
-                        _qbitProcess.Kill(entireProcessTree: true);
-                        _qbitProcess.WaitForExit(3000);
-                    }
+                    UniversalMediaOS.Core.Helpers.AppLogger.Log("Leaving qBittorrent running on app exit to preserve active downloads.");
                 }
             }
             catch { }
@@ -177,16 +170,13 @@ namespace UniversalMediaOS.WPF
             // Core Services
             services.AddSingleton<DomainHotSwapper>(provider => new DomainHotSwapper(configPath));
             services.AddSingleton<DependencyBootstrapper>(provider => new DependencyBootstrapper(localAppData));
-            services.AddSingleton<ConsumetBootstrapper>(provider =>
-            {
-                var config = provider.GetRequiredService<DomainHotSwapper>();
-                return new ConsumetBootstrapper(localAppData, config);
-            });
-            services.AddSingleton<PythonBootstrapper>(provider => new PythonBootstrapper(localAppData));
+            services.AddSingleton<PythonBootstrapper>(provider => new PythonBootstrapper());
+            services.AddSingleton<UniversalMediaOS.Core.Streaming.HlsLoopbackProxy>();
+            services.AddSingleton<UniversalMediaOS.Core.Services.ScraperEngine>();
 
             services.AddTransient<FuzzyShieldSearch>();
             services.AddTransient<MangaService>();
-            services.AddTransient<TripleNetHandoff>();
+            services.AddSingleton<TripleNetHandoff>();
             services.AddTransient<SeasonDownloader>();
             services.AddTransient<ServiceManager>();
             services.AddTransient<EpubReaderService>();

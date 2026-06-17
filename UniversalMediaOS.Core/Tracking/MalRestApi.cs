@@ -32,7 +32,7 @@ namespace UniversalMediaOS.Core.Tracking
                 using var request = new HttpRequestMessage(HttpMethod.Put, $"{_malApiUrl.TrimEnd('/')}/v2/anime/{animeId}/my_list_status");
                 request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _accessToken);
 
-                using var content = new StringContent($"num_watched_episodes={numWatchedEpisodes}", Encoding.UTF8, "application/x-www-form-urlencoded");
+                using var content = new StringContent($"status=watching&num_watched_episodes={numWatchedEpisodes}", Encoding.UTF8, "application/x-www-form-urlencoded");
                 request.Content = content;
 
                 using var response = await _httpClient.SendAsync(request, token);

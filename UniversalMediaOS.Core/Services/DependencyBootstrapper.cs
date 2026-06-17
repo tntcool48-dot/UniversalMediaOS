@@ -31,6 +31,11 @@ namespace UniversalMediaOS.Core.Services
         /// Path to the detected qBittorrent executable, or null if not found.
         /// </summary>
         public string? DetectedQBitPath { get; private set; }
+        public bool IsFfmpegAvailable { get; private set; }
+        public string FfmpegStatus { get; private set; } = "Not checked.";
+        public bool IsUBlockOriginAvailable { get; private set; }
+        public string UBlockOriginStatus { get; private set; } = "Not checked.";
+        public string ServicesDirectory => _servicesDir;
 
         public DependencyBootstrapper(string baseDirectory) : this(baseDirectory, null)
         {
@@ -38,30 +43,41 @@ namespace UniversalMediaOS.Core.Services
 
         public DependencyBootstrapper(string baseDirectory, ILogger<DependencyBootstrapper>? logger = null)
         {
-            _servicesDir = Path.Combine(baseDirectory, "services");
+            // Always use AppData — avoids write permission issues in Program Files / sandboxed dirs
+            string appData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            _servicesDir = Path.Combine(appData, "UniversalMediaOS", "Services");
             Directory.CreateDirectory(_servicesDir);
             _logger = logger;
         }
 
         public async Task EnsureDependenciesAsync()
         {
-            // Yield control to ensure caller doesn't block synchronously
             await Task.Yield();
 
+            await RunDependencyStepAsync("qBittorrent detection", () =>
+            {
+                DetectQBittorrent();
+                return Task.CompletedTask;
+            });
+
+            await RunDependencyStepAsync("FFmpeg verification", () =>
+            {
+                IsFfmpegAvailable = VerifyFFmpeg();
+                return Task.CompletedTask;
+            });
+
+            await RunDependencyStepAsync("uBlock Origin setup", EnsureUBlockOriginAsync);
+        }
+
+        private async Task RunDependencyStepAsync(string name, Func<Task> step)
+        {
             try
             {
-                await EnsureNodeAsync();
-
-                await Task.Run(() =>
-                {
-                    DetectQBittorrent();
-                    VerifyFFmpeg();
-                });
+                await step();
             }
             catch (Exception ex)
             {
-                LogError("Exception during EnsureDependenciesAsync", ex);
-                throw;
+                LogWarning("{0} failed: {1}", name, ex.Message);
             }
         }
 
@@ -207,32 +223,19 @@ namespace UniversalMediaOS.Core.Services
 
         private void DetectQBittorrent()
         {
-            string[] candidatePaths;
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                DetectedQBitPath = null;
+                LogInformation("qBittorrent detection skipped: UniversalMediaOS is Windows-only.");
+                return;
+            }
 
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            string[] candidatePaths =
             {
-                candidatePaths = new[]
-                {
-                    @"C:\Program Files\qBittorrent\qbittorrent.exe",
-                    @"C:\Program Files (x86)\qBittorrent\qbittorrent.exe",
-                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "qBittorrent", "qbittorrent.exe")
-                };
-            }
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-            {
-                candidatePaths = new[]
-                {
-                    "/Applications/qbittorrent.app/Contents/MacOS/qbittorrent"
-                };
-            }
-            else
-            {
-                candidatePaths = new[]
-                {
-                    "/usr/bin/qbittorrent",
-                    "/usr/local/bin/qbittorrent"
-                };
-            }
+                @"C:\Program Files\qBittorrent\qbittorrent.exe",
+                @"C:\Program Files (x86)\qBittorrent\qbittorrent.exe",
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "qBittorrent", "qbittorrent.exe")
+            };
 
             foreach (var path in candidatePaths)
             {
@@ -248,17 +251,16 @@ namespace UniversalMediaOS.Core.Services
             DetectedQBitPath = null;
         }
 
-        private void VerifyFFmpeg()
+        private bool VerifyFFmpeg()
         {
-            string ffmpegBin = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "ffmpeg.exe" : "ffmpeg";
-            string ffprobeBin = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "ffprobe.exe" : "ffprobe";
-            string[] binaries = { ffmpegBin, ffprobeBin };
+            string[] binaries = { "ffmpeg.exe", "ffprobe.exe" };
+            var missing = new System.Collections.Generic.List<string>();
 
             foreach (var bin in binaries)
             {
-                if (!File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, bin)))
+                if (!File.Exists(Path.Combine(_servicesDir, bin)))
                 {
-                    // Fallback to checking PATH
+                    // Managed path not found — check PATH
                     var pathEnv = Environment.GetEnvironmentVariable("PATH");
                     bool found = false;
                     if (pathEnv != null)
@@ -300,11 +302,106 @@ namespace UniversalMediaOS.Core.Services
 
                     if (!found)
                     {
-                        throw new FileNotFoundException($"Critical dependency missing: {bin} could not be found in AppDirectory or PATH.");
+                        missing.Add(bin);
                     }
                 }
             }
+
+            if (missing.Count > 0)
+            {
+                FfmpegStatus = $"Missing {string.Join(", ", missing)} in managed services directory or PATH.";
+                LogWarning("FFmpeg verification warning: {0}", FfmpegStatus);
+                return false;
+            }
+
+            FfmpegStatus = "FFmpeg and ffprobe verified.";
             LogInformation("FFmpeg dependencies verified.");
+            return true;
+        }
+
+        /// <summary>
+        /// Downloads the latest uBlock Origin Chromium extension from GitHub releases
+        /// and extracts it to %LocalAppData%\UniversalMediaOS\Extensions\ublock-origin\.
+        /// Skipped if manifest.json already exists (already installed).
+        /// </summary>
+        public async Task EnsureUBlockOriginAsync()
+        {
+            string appData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            string uboDir = Path.Combine(appData, "UniversalMediaOS", "Extensions", "ublock-origin");
+            string manifestPath = Path.Combine(uboDir, "manifest.json");
+
+            if (File.Exists(manifestPath))
+            {
+                IsUBlockOriginAvailable = true;
+                UBlockOriginStatus = $"Installed at {uboDir}";
+                LogInformation("uBlock Origin already installed at: {0}", uboDir);
+                return;
+            }
+
+            LogInformation("Downloading uBlock Origin from GitHub...");
+
+            try
+            {
+                // 1. Fetch latest release metadata
+                using var req = new HttpRequestMessage(HttpMethod.Get,
+                    "https://api.github.com/repos/gorhill/uBlock/releases/latest");
+                req.Headers.TryAddWithoutValidation("User-Agent", "UniversalMediaOS/1.0");
+                using var resp = await _httpClient.SendAsync(req);
+                resp.EnsureSuccessStatusCode();
+
+                using var doc = System.Text.Json.JsonDocument.Parse(
+                    await resp.Content.ReadAsStringAsync());
+
+                // 2. Find asset ending with .chromium.zip — name is versioned e.g. uBlock0_1.58.0.chromium.zip
+                string? downloadUrl = null;
+                if (doc.RootElement.TryGetProperty("assets", out var assets))
+                {
+                    foreach (var asset in assets.EnumerateArray())
+                    {
+                        string name = asset.GetProperty("name").GetString() ?? "";
+                        if (name.EndsWith(".chromium.zip", StringComparison.OrdinalIgnoreCase))
+                        {
+                            downloadUrl = asset.GetProperty("browser_download_url").GetString();
+                            break;
+                        }
+                    }
+                }
+
+                if (downloadUrl == null)
+                {
+                    IsUBlockOriginAvailable = false;
+                    UBlockOriginStatus = "Could not find a Chromium extension asset in the latest release.";
+                    LogWarning("Could not find .chromium.zip asset in uBlock Origin release. Skipping.");
+                    return;
+                }
+
+                // 3. Download zip
+                Directory.CreateDirectory(uboDir);
+                string zipPath = uboDir + ".zip";
+
+                using var zipResp = await _httpClient.GetAsync(downloadUrl);
+                zipResp.EnsureSuccessStatusCode();
+                await using var fs = File.Create(zipPath);
+                await zipResp.Content.CopyToAsync(fs);
+                fs.Close();
+
+                // 4. Extract — zip root contains manifest.json directly (unpacked extension)
+                ZipFile.ExtractToDirectory(zipPath, uboDir, overwriteFiles: true);
+                File.Delete(zipPath);
+
+                IsUBlockOriginAvailable = File.Exists(manifestPath);
+                UBlockOriginStatus = IsUBlockOriginAvailable
+                    ? $"Installed at {uboDir}"
+                    : "Download completed, but manifest.json was not found.";
+                LogInformation("uBlock Origin installed to: {0}", uboDir);
+            }
+            catch (Exception ex)
+            {
+                // Non-fatal — WebView2 will work without it, just without ad-blocking
+                IsUBlockOriginAvailable = false;
+                UBlockOriginStatus = ex.Message;
+                LogWarning("Failed to download uBlock Origin: {0}", ex.Message);
+            }
         }
 
         private void LogInformation(string message, params object?[] args)

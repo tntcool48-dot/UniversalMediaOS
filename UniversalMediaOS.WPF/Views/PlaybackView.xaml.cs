@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using System.Windows.Controls;
 using Microsoft.Web.WebView2.Core;
+using Microsoft.Web.WebView2.Wpf;
 using UniversalMediaOS.Core.Helpers;
 
 namespace UniversalMediaOS.WPF.Views
@@ -80,6 +81,7 @@ namespace UniversalMediaOS.WPF.Views
         }
 
         private bool _viewLoaded;
+        private bool _adBlockerConfigured;
 
         private async void PlaybackView_Loaded(object sender, System.Windows.RoutedEventArgs e)
         {
@@ -167,23 +169,19 @@ namespace UniversalMediaOS.WPF.Views
         {
             try
             {
-                string appData = Environment.GetEnvironmentVariable("APPDATA") ?? 
-                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-                string uBlockPath = System.IO.Path.Combine(appData, "UniversalMediaOS", "Extensions", "uBlock", "uBlock0.chromium");
-                
-                if (System.IO.Directory.Exists(uBlockPath))
+                string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+                string userDataPath = System.IO.Path.Combine(localAppData, "UniversalMediaOS", "WebView2UserData");
+                string uBlockPath = GetUBlockOriginPath();
+
+                var options = new CoreWebView2EnvironmentOptions
                 {
-                    AppLogger.Log($"Loading uBlock Origin extension from: '{uBlockPath}'");
-                    var options = new CoreWebView2EnvironmentOptions
-                    {
-                        AdditionalBrowserArguments = $"--load-extension=\"{uBlockPath}\""
-                    };
-                    return await CoreWebView2Environment.CreateAsync(null, null, options);
-                }
-                else
-                {
-                    AppLogger.Log($"uBlock Origin extension path not found: '{uBlockPath}'. Starting default WebView2.", "WARNING");
-                }
+                    AreBrowserExtensionsEnabled = true
+                };
+
+                if (!System.IO.File.Exists(System.IO.Path.Combine(uBlockPath, "manifest.json")))
+                    AppLogger.Log($"uBlock Origin extension path not found: '{uBlockPath}'. Starting WebView2 with script blocker fallback.", "WARNING");
+
+                return await CoreWebView2Environment.CreateAsync(null, userDataPath, options);
             }
             catch (Exception ex)
             {
@@ -192,14 +190,40 @@ namespace UniversalMediaOS.WPF.Views
             return null;
         }
 
+        public static string GetUBlockOriginPath()
+        {
+            string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            return System.IO.Path.Combine(localAppData, "UniversalMediaOS", "Extensions", "ublock-origin");
+        }
+
+        public static async Task EnsureWebViewWithUBlockAsync(WebView2 webView)
+        {
+            var env = await CreateUBlockEnvironmentAsync();
+            await webView.EnsureCoreWebView2Async(env);
+
+            string uBlockPath = GetUBlockOriginPath();
+            string manifestPath = System.IO.Path.Combine(uBlockPath, "manifest.json");
+            if (!System.IO.File.Exists(manifestPath))
+                return;
+
+            try
+            {
+                var ext = await webView.CoreWebView2.Profile.AddBrowserExtensionAsync(uBlockPath);
+                AppLogger.Log($"[uBlock] Loaded WebView2 extension: {ext.Name}");
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Log($"[uBlock] Extension load skipped or failed: {ex.Message}", "WARNING");
+            }
+        }
+
         private async Task UpdateWebViewUrlAsync(ViewModels.PlaybackViewModel vm)
         {
             if (vm.IsWebViewActive && !string.IsNullOrEmpty(vm.EmbedUrl))
             {
                 try
                 {
-                    var env = await CreateUBlockEnvironmentAsync();
-                    await WebViewPlayer.EnsureCoreWebView2Async(env);
+                    await EnsureWebViewWithUBlockAsync(WebViewPlayer);
                     ConfigureAdBlocker(WebViewPlayer.CoreWebView2);
                     WebViewPlayer.CoreWebView2.Navigate(vm.EmbedUrl);
                 }
@@ -210,7 +234,6 @@ namespace UniversalMediaOS.WPF.Views
             }
         }
 
-        private static bool _adBlockerConfigured = false;
         private void ConfigureAdBlocker(CoreWebView2 core)
         {
             if (_adBlockerConfigured) return;
@@ -248,24 +271,8 @@ namespace UniversalMediaOS.WPF.Views
             // Suppress new window popup requests (ads opening new windows)
             core.NewWindowRequested += (s, e) =>
             {
-                try
-                {
-                    if (!Uri.TryCreate(e.Uri, UriKind.Absolute, out var uri)) { e.Handled = true; return; }
-                    string host = uri.Host.TrimStart('.');
-                    foreach (var domain in BlockedDomains)
-                    {
-                        if (host == domain || host.EndsWith("." + domain, StringComparison.OrdinalIgnoreCase))
-                        {
-                            AppLogger.Log($"[AdBlock] Blocked popup: {e.Uri}");
-                            e.Handled = true;
-                            return;
-                        }
-                    }
-                    // Block any popup that isn't from the same origin
-                    e.Handled = true;
-                    AppLogger.Log($"[AdBlock] Blocked unsolicited new window: {e.Uri}");
-                }
-                catch { e.Handled = true; }
+                e.Handled = true;
+                AppLogger.Log($"[AdBlock] Blocked new window popup: {e.Uri}");
             };
 
             AppLogger.Log("[AdBlock] Playback WebView2 ad-blocker configured.");

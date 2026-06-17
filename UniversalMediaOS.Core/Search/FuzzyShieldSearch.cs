@@ -192,6 +192,6 @@ namespace UniversalMediaOS.Core.Search
         public string CoverImageUrl { get; set; } = string.Empty;
         public string Synopsis { get; set; } = string.Empty;
         public string TargetEpisode { get; set; } = "1";
-        public string TargetProviderDomain { get; set; } = "https://gogoanime3.co/search.html?keyword={query}";
+        public string TargetProviderDomain { get; set; } = "https://animepahe.ru/anime/{query}";
     }
 }

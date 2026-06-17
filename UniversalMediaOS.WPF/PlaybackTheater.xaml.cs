@@ -6,6 +6,7 @@ using System.Windows.Input;
 using System.Windows.Threading;
 using System.Windows.Controls;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Web.WebView2.Core;
 using LibVLCSharp.Shared;
 using UniversalMediaOS.Core.Casting;
 using UniversalMediaOS.Core.Data;
@@ -175,11 +176,40 @@ namespace UniversalMediaOS.WPF
 
         private async System.Threading.Tasks.Task EnsureWebViewAsync()
         {
-            if (!_isWebViewInitialized)
+            if (_isWebViewInitialized) return;
+
+            string appData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            string uboPath = Path.Combine(appData, "UniversalMediaOS", "Extensions", "ublock-origin");
+            string wv2DataPath = Path.Combine(appData, "UniversalMediaOS", "WebView2UserData");
+
+            var env = await CoreWebView2Environment.CreateAsync(
+                browserExecutableFolder: null,
+                userDataFolder: wv2DataPath,
+                options: new CoreWebView2EnvironmentOptions
+                {
+                    AreBrowserExtensionsEnabled = true
+                });
+
+            await WebViewPlayer.EnsureCoreWebView2Async(env);
+
+            // Load uBlock Origin from local unpacked Chromium extension directory.
+            // DependencyBootstrapper downloads and extracts it from GitHub on first boot.
+            if (Directory.Exists(uboPath) &&
+                File.Exists(Path.Combine(uboPath, "manifest.json")))
             {
-                await WebViewPlayer.EnsureCoreWebView2Async(null);
-                _isWebViewInitialized = true;
+                try
+                {
+                    var ext = await WebViewPlayer.CoreWebView2.Profile
+                        .AddBrowserExtensionAsync(uboPath);
+                    System.Diagnostics.Debug.WriteLine($"[uBlock] Loaded: {ext.Name}");
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[uBlock] Extension load failed: {ex.Message}");
+                }
             }
+
+            _isWebViewInitialized = true;
         }
 
         public void PlayLocalOrHttp(string url, string referer = null)

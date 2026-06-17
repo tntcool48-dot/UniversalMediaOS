@@ -11,6 +11,7 @@ namespace UniversalMediaOS.Core.Services
     public class ServiceManager : IDisposable
     {
         private readonly List<Process> _managedProcesses = new List<Process>();
+        private readonly Dictionary<Process, EventHandler> _exitedHandlers = new();
         private readonly object _lock = new object();
         private bool _disposed;
 
@@ -44,14 +45,24 @@ namespace UniversalMediaOS.Core.Services
                     if (args.Data != null) AppLogger.Log($"[{procName} ERROR] {args.Data}", "ERROR");
                 };
 
-                process.Exited += (sender, args) =>
+                // Store delegate so it can be removed before Kill() in StopAll(),
+                // preventing the Exited event from firing on an already-cleared list.
+                EventHandler exitedHandler = null!;
+                exitedHandler = (sender, args) =>
                 {
                     lock (_lock)
                     {
                         _managedProcesses.Remove(process);
+                        _exitedHandlers.Remove(process);
                     }
                     try { process.Dispose(); } catch {}
                 };
+                process.Exited += exitedHandler;
+
+                lock (_lock)
+                {
+                    _exitedHandlers[process] = exitedHandler;
+                }
 
                 process.Start();
                 process.BeginOutputReadLine();
@@ -88,6 +99,16 @@ namespace UniversalMediaOS.Core.Services
             {
                 try
                 {
+                    // Unsubscribe before Kill so Exited doesn't fire on a cleared list
+                    lock (_lock)
+                    {
+                        if (_exitedHandlers.TryGetValue(process, out var handler))
+                        {
+                            process.Exited -= handler;
+                            _exitedHandlers.Remove(process);
+                        }
+                    }
+
                     if (!process.HasExited)
                     {
                         process.Kill(entireProcessTree: true);

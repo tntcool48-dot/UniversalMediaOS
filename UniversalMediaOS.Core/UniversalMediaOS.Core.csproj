@@ -20,4 +20,11 @@
     <PackageReference Include="System.ServiceModel.Syndication" Version="10.0.8" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Python scraper deployed alongside the build output -->
+    <Content Include="scraper.py">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
 </Project>

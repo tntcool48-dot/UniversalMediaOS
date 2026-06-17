@@ -5,6 +5,8 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using UniversalMediaOS.Core.Configuration;
 using UniversalMediaOS.Core.Helpers;
+using UniversalMediaOS.Core.Services;
+using UniversalMediaOS.Core.Streaming;
 
 namespace UniversalMediaOS.WPF.ViewModels
 {
@@ -12,9 +14,9 @@ namespace UniversalMediaOS.WPF.ViewModels
     {
         private readonly DomainHotSwapper _config;
         private readonly Helpers.IDialogService _dialogService;
+        private readonly DependencyBootstrapper _dependencies;
+        private readonly HlsLoopbackProxy _hlsProxy;
 
-        [ObservableProperty] private string _consumetApiBase = string.Empty;
-        [ObservableProperty] private string _consumetProvider = string.Empty;
         [ObservableProperty] private string _qbitHost = string.Empty;
         [ObservableProperty] private string _qbitPort = string.Empty;
         [ObservableProperty] private string _qbitUsername = string.Empty;
@@ -23,32 +25,33 @@ namespace UniversalMediaOS.WPF.ViewModels
         [ObservableProperty] private string _defaultAudioPref = "Sub";
         [ObservableProperty] private bool _autoPlayAfterDownload;
         [ObservableProperty] private bool _autoManageServices;
+        [ObservableProperty] private string _scraperSiteAttemptLimit = "6";
         [ObservableProperty] private bool _enableDebugLogging;
         [ObservableProperty] private string _logFileSizeText = "0 KB";
         [ObservableProperty] private string _downloadDirectory = string.Empty;
+        [ObservableProperty] private string _serviceHealthText = "Checking services...";
 
         [ObservableProperty] private string _newSourceName = string.Empty;
         [ObservableProperty] private string _newSourceUrl = string.Empty;
 
         public Helpers.ObservableRangeCollection<CustomSource> CustomSourcesList { get; } = new();
 
-        public SettingsViewModel(DomainHotSwapper config, Helpers.IDialogService dialogService)
+        public SettingsViewModel(
+            DomainHotSwapper config,
+            Helpers.IDialogService dialogService,
+            DependencyBootstrapper dependencies,
+            HlsLoopbackProxy hlsProxy)
         {
             _config = config;
             _dialogService = dialogService;
-            
-            // Run load on a background thread to prevent blocking the UI thread on startup
+            _dependencies = dependencies;
+            _hlsProxy = hlsProxy;
             _ = Task.Run(() => Load());
         }
 
         private void Load()
         {
             AppLogger.Log("Loading settings from configuration...");
-            var baseApi = _config.GetSetting("ConsumetApiBase");
-            ConsumetApiBase = string.IsNullOrEmpty(baseApi) ? "http://localhost:3000" : baseApi;
-
-            var provider = _config.GetSetting("ConsumetProvider");
-            ConsumetProvider = string.IsNullOrEmpty(provider) ? "gogoanime" : provider;
 
             QbitHost     = _config.GetSetting("QBitHost");
             QbitPort     = _config.GetSetting("QBitPort");
@@ -57,17 +60,57 @@ namespace UniversalMediaOS.WPF.ViewModels
             MalOAuthToken = _config.GetSetting("MalOAuthToken");
             DefaultAudioPref = _config.GetSetting("DefaultAudioPref");
             AutoPlayAfterDownload = _config.GetSetting("AutoPlayAfterDownload") == "true";
+            AutoManageServices    = _config.GetSetting("AutoManageServices") != "false";
+            ScraperSiteAttemptLimit = string.IsNullOrWhiteSpace(_config.GetSetting("ScraperSiteAttemptLimit"))
+                ? "6"
+                : _config.GetSetting("ScraperSiteAttemptLimit");
             EnableDebugLogging    = _config.GetSetting("EnableDebugLogging") != "false";
             
             var dDir = _config.GetSetting("DownloadDirectory");
             DownloadDirectory = string.IsNullOrEmpty(dDir) ? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Downloads") : dDir;
             
-            AppLogger.Log($"Settings loaded. ConsumetBase='{ConsumetApiBase}', ConsumetProvider='{ConsumetProvider}', QBitHost='{QbitHost}', DefaultAudioPref='{DefaultAudioPref}', EnableDebugLogging={EnableDebugLogging}");
+            AppLogger.Log($"Settings loaded. QBitHost='{QbitHost}', DefaultAudioPref='{DefaultAudioPref}', EnableDebugLogging={EnableDebugLogging}");
             _ = RefreshLogSizeAsync();
+            RefreshServiceHealth();
 
             var list = _config.GetCustomSources();
             AppLogger.Log($"Loading {list.Count} custom sources...");
             CustomSourcesList.ReplaceRange(list);
+        }
+
+        [RelayCommand]
+        private void RefreshServiceHealth()
+        {
+            string scraperPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "UniversalMediaOS", "Services", "scraper.py");
+
+            string scraper = File.Exists(scraperPath)
+                ? $"Ready ({scraperPath})"
+                : "Not deployed yet";
+
+            string proxy = _hlsProxy.IsRunning
+                ? "Listening on 127.0.0.1:19475"
+                : $"Offline{(string.IsNullOrWhiteSpace(_hlsProxy.LastStartupError) ? "" : $": {_hlsProxy.LastStartupError}")}";
+
+            string qbit = !string.IsNullOrWhiteSpace(_dependencies.DetectedQBitPath)
+                ? $"Detected ({_dependencies.DetectedQBitPath})"
+                : "Not detected locally; WebUI settings will still be used";
+
+            string ublock = _dependencies.IsUBlockOriginAvailable
+                ? _dependencies.UBlockOriginStatus
+                : $"Unavailable: {_dependencies.UBlockOriginStatus}";
+
+            string ffmpeg = _dependencies.IsFfmpegAvailable
+                ? _dependencies.FfmpegStatus
+                : $"Warning: {_dependencies.FfmpegStatus}";
+
+            ServiceHealthText =
+                $"Python scraper: {scraper}\n" +
+                $"HLS proxy: {proxy}\n" +
+                $"uBlock Origin: {ublock}\n" +
+                $"FFmpeg: {ffmpeg}\n" +
+                $"qBittorrent: {qbit}";
         }
 
         [RelayCommand]
@@ -103,8 +146,6 @@ namespace UniversalMediaOS.WPF.ViewModels
         {
             AppLogger.Log("Saving settings to configuration file...");
             
-            var baseApi = ConsumetApiBase;
-            var provider = ConsumetProvider;
             var host = QbitHost;
             var port = QbitPort;
             var user = QbitUsername;
@@ -113,14 +154,13 @@ namespace UniversalMediaOS.WPF.ViewModels
             var audio = DefaultAudioPref;
             var autoplay = AutoPlayAfterDownload;
             var automanage = AutoManageServices;
+            var scraperLimit = NormalizeScraperSiteAttemptLimit(ScraperSiteAttemptLimit);
             var debug = EnableDebugLogging;
             var dir = DownloadDirectory;
             var list = System.Linq.Enumerable.ToList(CustomSourcesList);
 
             await Task.Run(() =>
             {
-                _config.SetSetting("ConsumetApiBase",        baseApi);
-                _config.SetSetting("ConsumetProvider",       provider);
                 _config.SetSetting("QBitHost",               host);
                 _config.SetSetting("QBitPort",               port);
                 _config.SetSetting("QBitUsername",           user);
@@ -129,16 +169,26 @@ namespace UniversalMediaOS.WPF.ViewModels
                 _config.SetSetting("DefaultAudioPref",       audio);
                 _config.SetSetting("AutoPlayAfterDownload",  autoplay ? "true" : "false");
                 _config.SetSetting("AutoManageServices",     automanage ? "true" : "false");
+                _config.SetSetting("ScraperSiteAttemptLimit", scraperLimit);
                 _config.SetSetting("EnableDebugLogging",     debug ? "true" : "false");
                 _config.SetSetting("DownloadDirectory",      dir);
                 _config.SaveCustomSources(list);
             });
-            
+
             AppLogger.IsEnabled = EnableDebugLogging;
+            ScraperSiteAttemptLimit = scraperLimit;
             await RefreshLogSizeAsync();
 
             AppLogger.Log("Settings saved successfully.");
-            _dialogService.ShowInfoDialog("Settings saved. Restart the app for service changes to take effect.", "Settings Saved");
+            _dialogService.ShowInfoDialog("Settings saved.", "Settings Saved");
+        }
+
+        private static string NormalizeScraperSiteAttemptLimit(string value)
+        {
+            if (!int.TryParse(value, out int limit))
+                limit = 6;
+
+            return Math.Clamp(limit, 1, 30).ToString();
         }
 
         [RelayCommand(AllowConcurrentExecutions = false)]

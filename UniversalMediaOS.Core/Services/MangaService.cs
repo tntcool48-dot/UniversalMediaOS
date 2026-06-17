@@ -186,6 +186,8 @@ namespace UniversalMediaOS.Core.Services
                         break;
                     }
 
+                    // MangaDex rate limit: ~5 req/s. Pause between paginated requests to avoid HTTP 429.
+                    await Task.Delay(250, token);
                     offset += 100;
                 }
             }

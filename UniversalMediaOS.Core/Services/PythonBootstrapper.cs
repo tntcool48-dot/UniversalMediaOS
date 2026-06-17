@@ -1,7 +1,6 @@
 using System;
 using System.Diagnostics;
 using System.IO;
-using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -9,248 +8,217 @@ using UniversalMediaOS.Core.Helpers;
 
 namespace UniversalMediaOS.Core.Services
 {
-    public class PythonBootstrapper : IDisposable
+    /// <summary>
+    /// Manages the Python environment and the stateless scraper.py CLI tool.
+    /// No server is started — the scraper is invoked as a fresh subprocess per request.
+    ///
+    /// scraper.py is shipped as a build Content item (CopyToOutputDirectory=Always)
+    /// and copied to %LocalAppData%\UniversalMediaOS\Services\scraper.py on each boot.
+    /// Always overwriting ensures scraper logic updates ship automatically with the app.
+    /// </summary>
+    public sealed class PythonBootstrapper : IDisposable
     {
-        private readonly string _pythonServiceDir;
-        private Process? _pythonProcess;
-        private bool _disposed;
+        private readonly string _scraperDir;
+        private static readonly SemaphoreSlim _pipLock = new SemaphoreSlim(1, 1);
 
-        private static readonly SemaphoreSlim _bootLock = new SemaphoreSlim(1, 1);
-        private static readonly HttpClient _healthCheckClient;
-
-        static PythonBootstrapper()
+        private static readonly (string Package, string ImportName)[] RequiredPackages =
         {
-            var handler = new SocketsHttpHandler
-            {
-                PooledConnectionLifetime = TimeSpan.FromMinutes(15)
-            };
-            _healthCheckClient = new HttpClient(handler) { Timeout = TimeSpan.FromMilliseconds(400) };
+            ("drissionpage", "DrissionPage"),
+            ("curl_cffi", "curl_cffi"),
+            ("httpx", "httpx"),
+            ("beautifulsoup4", "bs4"),
+            ("lxml", "lxml")
+        };
+
+        public PythonBootstrapper()
+        {
+            string appData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            _scraperDir = Path.Combine(appData, "UniversalMediaOS", "Services");
+            Directory.CreateDirectory(_scraperDir);
         }
 
-        public PythonBootstrapper(string baseDirectory)
+        // ── Public API ───────────────────────────────────────────────────────
+
+        public bool IsAvailable =>
+            ResolvePythonExecutable() != null && File.Exists(GetScraperPath());
+
+        public string GetScraperPath() =>
+            Path.Combine(_scraperDir, "scraper.py");
+
+        /// <summary>
+        /// Copies scraper.py from the application's output directory to AppData
+        /// (always overwrites to pick up updates), then installs pip packages.
+        /// </summary>
+        public async Task EnsureScraperReadyAsync(CancellationToken token = default)
         {
-            _pythonServiceDir = Path.Combine(baseDirectory, "Scrapers", "PythonService");
-        }
+            string destPath = GetScraperPath();
 
-        public async Task<bool> BootPythonServiceAsync()
-        {
-            await _bootLock.WaitAsync();
-            try
+            // Source: shipped alongside the app binary as a Content item
+            string appDir = AppContext.BaseDirectory;
+            string srcPath = Path.Combine(appDir, "scraper.py");
+
+            if (!File.Exists(srcPath))
             {
-                AppLogger.Log("Booting Python scrapers service...");
-                
-                // Idempotency check: check if already running and healthy
-                if (await IsServerHealthyAsync())
-                {
-                    AppLogger.Log("[Python Bootstrapper] Python scraper service is already running and healthy.");
-                    return true;
-                }
-
-                if (!Directory.Exists(_pythonServiceDir) || !File.Exists(Path.Combine(_pythonServiceDir, "main.py")))
-                {
-                    AppLogger.Log($"[Python Bootstrapper] main.py not found at {_pythonServiceDir}", "ERROR");
-                    return false;
-                }
-
-                string pythonExe = ResolvePythonExecutable();
-                AppLogger.Log($"[Python Bootstrapper] Using Python executable: {pythonExe}");
-
-                AppLogger.Log("[Python Bootstrapper] Installing pip dependencies (fastapi uvicorn curl_cffi beautifulsoup4)...");
-                bool pipOk = await RunPipInstallAsync(pythonExe);
-                if (!pipOk)
-                {
-                    AppLogger.Log("[Python Bootstrapper] pip dependencies installation failed. Aborting startup.", "ERROR");
-                    return false;
-                }
-
-                AppLogger.Log("[Python Bootstrapper] Starting FastAPI server on localhost:8000...");
-                StopServer(); // Ensure any previously started process by this instance is stopped
-                StartPythonServer(pythonExe);
-
-                // Readiness probe/health check
-                bool isUp = false;
-                for (int attempt = 1; attempt <= 15; attempt++)
-                {
-                    if (_pythonProcess == null || _pythonProcess.HasExited)
-                    {
-                        AppLogger.Log("[Python Bootstrapper] Python process has exited or failed to start.", "ERROR");
-                        break;
-                    }
-
-                    if (await IsServerHealthyAsync())
-                    {
-                        isUp = true;
-                        AppLogger.Log($"[Python Bootstrapper] Python server is up and responding (attempt {attempt}).");
-                        break;
-                    }
-
-                    await Task.Delay(500);
-                }
-
-                if (!isUp)
-                {
-                    AppLogger.Log("[Python Bootstrapper] Python server failed to respond within timeout.", "ERROR");
-                    StopServer();
-                    return false;
-                }
-
-                AppLogger.Log("[Python Bootstrapper] Python scraper service booted successfully.");
-                return true;
-            }
-            catch (Exception ex)
-            {
-                AppLogger.Log($"[Python Bootstrapper] Error booting service: {ex.Message}", "ERROR");
-                return false;
-            }
-            finally
-            {
-                _bootLock.Release();
-            }
-        }
-
-        private async Task<bool> IsServerHealthyAsync()
-        {
-            try
-            {
-                using var response = await _healthCheckClient.GetAsync("http://localhost:8000/");
-                return response.IsSuccessStatusCode;
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-        private string ResolvePythonExecutable()
-        {
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            {
-                return "python.exe";
+                AppLogger.Log($"[PythonBootstrapper] WARNING: scraper.py not found at {srcPath}. " +
+                              "Scraper (Tier 1) will be unavailable.", "WARNING");
             }
             else
             {
-                return "python3";
+                File.Copy(srcPath, destPath, overwrite: true);
+                AppLogger.Log($"[PythonBootstrapper] scraper.py deployed to: {destPath}");
+            }
+
+            await RunPipInstallAsync(token);
+        }
+
+        /// <summary>
+        /// Resolves the Python executable path. Returns null if Python is not installed.
+        /// </summary>
+        public string? ResolvePythonExecutable()
+        {
+            // On Windows, try python.exe, then py.exe (Python Launcher), then python3.exe
+            string[] candidates = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+                ? new[] { "python.exe", "python3.exe", "py.exe" }
+                : new[] { "python3", "python" };
+
+            foreach (var candidate in candidates)
+            {
+                try
+                {
+                    var psi = new ProcessStartInfo
+                    {
+                        FileName = candidate,
+                        Arguments = "--version",
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true
+                    };
+                    using var proc = Process.Start(psi);
+                    proc?.WaitForExit(2000);
+                    if (proc?.ExitCode == 0)
+                    {
+                        AppLogger.Log($"[PythonBootstrapper] Python resolved: {candidate}");
+                        return candidate;
+                    }
+                }
+                catch { }
+            }
+
+            AppLogger.Log("[PythonBootstrapper] Python not found on PATH.", "WARNING");
+            return null;
+        }
+
+        // ── Pip Install ──────────────────────────────────────────────────────
+
+        private async Task RunPipInstallAsync(CancellationToken token)
+        {
+            string? python = ResolvePythonExecutable();
+            if (python == null)
+            {
+                AppLogger.Log("[PythonBootstrapper] Skipping pip install — Python not found.", "WARNING");
+                return;
+            }
+
+            await _pipLock.WaitAsync(token);
+            try
+            {
+                foreach (var requirement in RequiredPackages)
+                {
+                    token.ThrowIfCancellationRequested();
+                    AppLogger.Log($"[PythonBootstrapper] Checking Python package: {requirement.Package}");
+
+                    if (await IsPackageImportableAsync(python, requirement.ImportName, token))
+                    {
+                        AppLogger.Log($"[PythonBootstrapper] Package already available: {requirement.Package}");
+                        continue;
+                    }
+
+                    AppLogger.Log($"[PythonBootstrapper] Installing missing pip package: {requirement.Package}");
+
+                    var psi = new ProcessStartInfo
+                    {
+                        FileName = python,
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true
+                    };
+                    psi.ArgumentList.Add("-m");
+                    psi.ArgumentList.Add("pip");
+                    psi.ArgumentList.Add("install");
+                    psi.ArgumentList.Add("--quiet");
+                    psi.ArgumentList.Add(requirement.Package);
+
+                    using var proc = Process.Start(psi);
+                    if (proc != null)
+                    {
+                        using var installCts = CancellationTokenSource.CreateLinkedTokenSource(token);
+                        installCts.CancelAfter(TimeSpan.FromSeconds(60));
+
+                        try
+                        {
+                            await proc.WaitForExitAsync(installCts.Token);
+                            if (proc.ExitCode != 0)
+                            {
+                                string err = await proc.StandardError.ReadToEndAsync(token);
+                                AppLogger.Log($"[PythonBootstrapper] pip install {requirement.Package} failed: {err}", "WARNING");
+                            }
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            try { proc.Kill(entireProcessTree: true); } catch { }
+                            AppLogger.Log($"[PythonBootstrapper] pip install {requirement.Package} timed out or was cancelled.", "WARNING");
+                        }
+                    }
+                }
+                AppLogger.Log("[PythonBootstrapper] All pip packages verified.");
+            }
+            finally
+            {
+                _pipLock.Release();
             }
         }
 
-        private async Task<bool> RunPipInstallAsync(string pythonExe)
+        private static async Task<bool> IsPackageImportableAsync(
+            string python,
+            string importName,
+            CancellationToken token)
         {
+            var psi = new ProcessStartInfo
+            {
+                FileName = python,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+            psi.ArgumentList.Add("-c");
+            psi.ArgumentList.Add($"import {importName}");
+
+            using var proc = Process.Start(psi);
+            if (proc == null)
+                return false;
+
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(token);
+            cts.CancelAfter(TimeSpan.FromSeconds(10));
+
             try
             {
-                var startInfo = new ProcessStartInfo
-                {
-                    FileName = pythonExe,
-                    Arguments = "-m pip install fastapi uvicorn curl_cffi beautifulsoup4",
-                    WorkingDirectory = _pythonServiceDir,
-                    CreateNoWindow = true,
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true
-                };
-
-                using var process = new Process { StartInfo = startInfo };
-                process.OutputDataReceived += (s, e) => { if (e.Data != null) AppLogger.Log($"[Python pip] {e.Data}"); };
-                process.ErrorDataReceived += (s, e) => { if (e.Data != null) AppLogger.Log($"[Python pip ERROR] {e.Data}", "WARNING"); };
-
-                process.Start();
-                process.BeginOutputReadLine();
-                process.BeginErrorReadLine();
-
-                await process.WaitForExitAsync();
-                
-                AppLogger.Log($"[Python Bootstrapper] pip dependencies installation exited with code {process.ExitCode}");
-                return process.ExitCode == 0;
+                await proc.WaitForExitAsync(cts.Token);
+                return proc.ExitCode == 0;
             }
-            catch (Exception ex)
+            catch (OperationCanceledException)
             {
-                AppLogger.Log($"[Python Bootstrapper] failed to run pip install: {ex.Message}", "ERROR");
+                try { proc.Kill(entireProcessTree: true); } catch { }
                 return false;
             }
         }
 
-        private void StartPythonServer(string pythonExe)
-        {
-            try
-            {
-                var startInfo = new ProcessStartInfo
-                {
-                    FileName = pythonExe,
-                    Arguments = "main.py",
-                    WorkingDirectory = _pythonServiceDir,
-                    CreateNoWindow = true,
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true
-                };
-
-                _pythonProcess = new Process { StartInfo = startInfo };
-                _pythonProcess.OutputDataReceived += (s, e) => { if (e.Data != null) AppLogger.Log($"[Python Server] {e.Data}"); };
-                _pythonProcess.ErrorDataReceived += (s, e) => { if (e.Data != null) AppLogger.Log($"[Python Server ERROR] {e.Data}", "ERROR"); };
-
-                _pythonProcess.Start();
-                _pythonProcess.BeginOutputReadLine();
-                _pythonProcess.BeginErrorReadLine();
-
-                AppLogger.Log($"[Python Bootstrapper] python main.py process started. PID={_pythonProcess.Id}");
-            }
-            catch (Exception ex)
-            {
-                AppLogger.Log($"[Python Bootstrapper] failed to start python server: {ex.Message}", "ERROR");
-            }
-        }
-
-        public void StopServer()
-        {
-            try
-            {
-                if (_pythonProcess != null)
-                {
-                    try
-                    {
-                        if (!_pythonProcess.HasExited)
-                        {
-                            AppLogger.Log($"Stopping Python scrapers service server (PID={_pythonProcess.Id})...");
-                            _pythonProcess.Kill(entireProcessTree: true);
-                            _pythonProcess.WaitForExit(3000);
-                            AppLogger.Log("Python scrapers service server terminated.");
-                        }
-                    }
-                    catch (Exception ex) when (ex is InvalidOperationException || ex is System.ComponentModel.Win32Exception)
-                    {
-                        AppLogger.Log($"Python scrapers process already exited or cannot be killed: {ex.Message}");
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                AppLogger.Log($"Error stopping Python scrapers service server: {ex.Message}", "WARNING");
-            }
-            finally
-            {
-                if (_pythonProcess != null)
-                {
-                    try { _pythonProcess.Dispose(); } catch { }
-                    _pythonProcess = null;
-                }
-            }
-        }
+        // ── IDisposable ──────────────────────────────────────────────────────
 
         public void Dispose()
         {
-            Dispose(true);
-            GC.SuppressFinalize(this);
-        }
-
-        protected virtual void Dispose(bool disposing)
-        {
-            if (!_disposed)
-            {
-                if (disposing)
-                {
-                    StopServer();
-                }
-                _disposed = true;
-            }
         }
     }
 }

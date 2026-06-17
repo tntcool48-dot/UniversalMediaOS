@@ -113,26 +113,25 @@ namespace UniversalMediaOS.Core.Routing
         /// <summary>
         /// Polls the qBittorrent WebUI for download progress until the torrent completes or times out.
         /// </summary>
-        public async Task<bool> MonitorDownloadAsync(string infoHash, Action<string> logger, int timeoutSeconds = 300, CancellationToken token = default)
+        public async Task<bool> MonitorDownloadAsync(string infoHash, Action<string> logger, int stallTimeoutSeconds = 1800, CancellationToken token = default)
         {
             void Log(string msg) { logger?.Invoke(msg); System.Diagnostics.Debug.WriteLine(msg); }
             if (string.IsNullOrEmpty(Cookie)) return false;
 
-            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
-            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(timeoutCts.Token, token);
-            var mergedToken = linkedCts.Token;
+            double lastProgress = -1.0;
+            var lastProgressAt = DateTime.UtcNow;
 
-            while (!mergedToken.IsCancellationRequested)
+            while (!token.IsCancellationRequested)
             {
                 try
                 {
                     using var request = new HttpRequestMessage(HttpMethod.Get, $"{_qbitUrl}/api/v2/torrents/info?hashes={infoHash}");
                     request.Headers.Add("Cookie", Cookie);
 
-                    using var response = await _httpClient.SendAsync(request, mergedToken);
+                    using var response = await _httpClient.SendAsync(request, token);
                     if (response.IsSuccessStatusCode)
                     {
-                        var json = await response.Content.ReadAsStringAsync(mergedToken);
+                        var json = await response.Content.ReadAsStringAsync(token);
                         using var doc = JsonDocument.Parse(json);
 
                         if (doc.RootElement.GetArrayLength() > 0)
@@ -152,15 +151,27 @@ namespace UniversalMediaOS.Core.Routing
                             string speedStr = dlSpeed > 0 ? $"{dlSpeed / 1024.0:F1} KB/s" : "0 KB/s";
                             Log($"> [QBit] Download: {pct:F1}% | Speed: {speedStr} | State: {state}");
 
+                            if (progress > lastProgress + 0.001)
+                            {
+                                lastProgress = progress;
+                                lastProgressAt = DateTime.UtcNow;
+                            }
+
                             if (progress >= 1.0)
                             {
                                 Log("> [QBit] Download complete!");
                                 return true;
                             }
+
+                            if (DateTime.UtcNow - lastProgressAt > TimeSpan.FromSeconds(stallTimeoutSeconds))
+                            {
+                                Log($"> [QBit] Download stalled for {stallTimeoutSeconds}s with no progress.");
+                                return false;
+                            }
                         }
                     }
                 }
-                catch (OperationCanceledException) when (mergedToken.IsCancellationRequested)
+                catch (OperationCanceledException) when (token.IsCancellationRequested)
                 {
                     break;
                 }
@@ -169,9 +180,15 @@ namespace UniversalMediaOS.Core.Routing
                     Log($"> [QBit] Monitor error: {ex.Message}");
                 }
 
+                if (DateTime.UtcNow - lastProgressAt > TimeSpan.FromSeconds(stallTimeoutSeconds))
+                {
+                    Log($"> [QBit] Download stalled for {stallTimeoutSeconds}s with no visible torrent progress.");
+                    return false;
+                }
+
                 try
                 {
-                    await Task.Delay(3000, mergedToken);
+                    await Task.Delay(3000, token);
                 }
                 catch (OperationCanceledException)
                 {
@@ -185,7 +202,7 @@ namespace UniversalMediaOS.Core.Routing
             }
             else
             {
-                Log($"> [QBit] Download timed out after {timeoutSeconds}s.");
+                Log($"> [QBit] Download monitoring stopped.");
             }
             return false;
         }
@@ -261,6 +278,32 @@ namespace UniversalMediaOS.Core.Routing
                 System.Diagnostics.Debug.WriteLine($"Failed to get transfer info: {ex.Message}");
             }
             return null;
+        }
+
+        public async Task<bool> DeleteTorrentAsync(string infoHash, bool deleteFiles, CancellationToken token = default)
+        {
+            if (string.IsNullOrEmpty(Cookie)) return false;
+
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Post, $"{_qbitUrl}/api/v2/torrents/delete");
+                request.Headers.Add("Cookie", Cookie);
+
+                using var content = new FormUrlEncodedContent(new[]
+                {
+                    new KeyValuePair<string, string>("hashes", infoHash),
+                    new KeyValuePair<string, string>("deleteFiles", deleteFiles.ToString().ToLowerInvariant())
+                });
+
+                request.Content = content;
+                using var response = await _httpClient.SendAsync(request, token);
+                return response.IsSuccessStatusCode;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Failed to delete torrent {infoHash}: {ex.Message}");
+            }
+            return false;
         }
     }
 

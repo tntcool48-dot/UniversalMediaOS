@@ -1,20 +1,17 @@
-using System.Collections.Generic;
 using System.Windows;
-using UniversalMediaOS.Core.Routing;
 
 namespace UniversalMediaOS.WPF.Helpers
 {
     public class WpfDialogService : IDialogService
     {
-        public (bool DialogResult, SelectedSourceTier SelectedTier, TorrentResult? SelectedTorrent) ShowSourceSelection(List<TorrentResult> torrents)
+        public (bool DialogResult, SelectedSourceTier SelectedTier) ShowSourceSelection()
         {
             bool result = false;
             SelectedSourceTier tier = SelectedSourceTier.None;
-            TorrentResult? torrent = null;
 
             Application.Current.Dispatcher.Invoke(() =>
             {
-                var window = new SourceSelectionWindow(torrents)
+                var window = new SourceSelectionWindow
                 {
                     Owner = Application.Current.MainWindow
                 };
@@ -22,11 +19,10 @@ namespace UniversalMediaOS.WPF.Helpers
                 {
                     result = true;
                     tier = window.SelectedTier;
-                    torrent = window.SelectedTorrent;
                 }
             });
 
-            return (result, tier, torrent);
+            return (result, tier);
         }
 
         public bool ShowConfirmDialog(string message, string title)
@@ -34,7 +30,8 @@ namespace UniversalMediaOS.WPF.Helpers
             bool result = false;
             Application.Current.Dispatcher.Invoke(() =>
             {
-                result = MessageBox.Show(message, title, MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes;
+                result = MessageBox.Show(message, title, MessageBoxButton.YesNo, MessageBoxImage.Warning)
+                         == MessageBoxResult.Yes;
             });
             return result;
         }

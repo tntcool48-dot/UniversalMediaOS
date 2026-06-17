@@ -24,7 +24,8 @@ namespace UniversalMediaOS.Core.Archiving
         private readonly DualTrackerRssParser _rssParser;
         private readonly QBitLogicGate _qbit;
 
-        private const int DownloadTimeoutSeconds = 3600; // 60 min max for full season
+        // A stalled transfer is one that has made no measurable progress for this long.
+        private const int StallTimeoutSeconds = 1800; // 30 minutes
         private const int MetadataTimeoutSeconds = 60;
 
         public SeasonDownloader(DomainHotSwapper config)
@@ -44,12 +45,25 @@ namespace UniversalMediaOS.Core.Archiving
         }
 
         /// <summary>
+        /// Calculates a realistic download timeout from the current transfer rate.
+        /// Adds 20% headroom + 5 min buffer. Clamps to the 2h hard ceiling.
+        /// </summary>
+        private static int CalculateDynamicTimeout(long remainingBytes, double speedBytesPerSec)
+        {
+            if (speedBytesPerSec <= 0 || remainingBytes <= 0)
+                return StallTimeoutSeconds;
+
+            int estimated = (int)((remainingBytes / speedBytesPerSec) * 1.20) + 300;
+            return Math.Min(estimated, StallTimeoutSeconds);
+        }
+
+        /// <summary>
         /// Searches Nyaa/AnimeTosho for a season batch torrent, downloads it via P2P, and validates all media files.
         /// </summary>
         public async Task<bool> DownloadSeasonAsync(
-            string animeTitle, 
-            Action<string> log, 
-            Action<double> progressUpdate,
+            string animeTitle,
+            Action<string> log,
+            Action<double>? progressUpdate = null,
             System.Threading.CancellationToken token = default)
         {
             var originalLog = log;
@@ -58,7 +72,7 @@ namespace UniversalMediaOS.Core.Archiving
                 AppLogger.Log(msg);
             };
             log($"[P2P Season Downloader] Initializing batch download search for: \"{animeTitle}\"...");
-            progressUpdate(0);
+            progressUpdate?.Invoke(0);
 
             try
             {
@@ -115,35 +129,48 @@ namespace UniversalMediaOS.Core.Archiving
                     log("[P2P Season Downloader] WARNING: WebUI credentials not set in configuration. Attempting connection anyway.");
                 }
 
-                bool qbitAuth = await _qbit.AuthenticateAsync(msg => log($"[QBit] {msg}"), qbitUser ?? "admin", qbitPass ?? "adminadmin");
+                bool qbitAuth = await _qbit.AuthenticateAsync(msg => log($"[QBit] {msg}"), qbitUser ?? "admin", qbitPass ?? "adminadmin", token);
                 
                 token.ThrowIfCancellationRequested();
 
                 if (qbitAuth && !string.IsNullOrEmpty(infoHash))
                 {
                     log("[P2P Season Downloader] qBittorrent active. Injecting magnet link...");
-                    bool added = await _qbit.AddMagnetAsync(magnetLink, _downloadDir);
+                    bool added = await _qbit.AddMagnetAsync(magnetLink, _downloadDir, token);
                     if (added)
                     {
                         log("[P2P Season Downloader] Magnet successfully injected! Monitoring download progression...");
-                        bool success = await _qbit.MonitorDownloadAsync(infoHash, msg => {
-                            log(msg);
-                            var pctMatch = Regex.Match(msg, @"Download:\s+([\d\.]+)%");
-                            if (pctMatch.Success && double.TryParse(pctMatch.Groups[1].Value, out double p))
-                            {
-                                progressUpdate(p * 0.95); // leave 5% for validation visual feedback
-                            }
-                        }, DownloadTimeoutSeconds);
+                        bool success = false;
+                        try
+                        {
+                            success = await _qbit.MonitorDownloadAsync(infoHash, msg => {
+                                log(msg);
+                                var pctMatch = Regex.Match(msg, @"Download:\s+([\d\.]+)%");
+                                if (pctMatch.Success && double.TryParse(pctMatch.Groups[1].Value, out double p))
+                                {
+                                    progressUpdate?.Invoke(p * 0.95); // leave 5% for validation visual feedback
+                                }
+                            }, StallTimeoutSeconds, token);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            log("[P2P Season Downloader] Download cancelled. Partial qBittorrent data was left in place for resume.");
+                            throw;
+                        }
 
                         if (success)
                         {
-                            var relativePaths = await _qbit.GetTorrentFilesAsync(infoHash);
+                            var relativePaths = await _qbit.GetTorrentFilesAsync(infoHash, token);
                             foreach (var p in relativePaths)
                             {
                                 string fullPath = Path.Combine(_downloadDir, p.Name);
                                 downloadedFiles.Add(fullPath);
                             }
                             downloadComplete = true;
+                        }
+                        else
+                        {
+                            log("[P2P Season Downloader] Download stalled or failed. Partial qBittorrent data was left in place for resume.");
                         }
                     }
                     else
@@ -196,7 +223,7 @@ namespace UniversalMediaOS.Core.Archiving
                     token.ThrowIfCancellationRequested();
                     
                     double valProgress = 95.0 + 5.0 * ((double)i / videoFiles.Count);
-                    progressUpdate(valProgress);
+                    progressUpdate?.Invoke(valProgress);
 
                     string filePath = videoFiles[i];
                     
@@ -238,7 +265,7 @@ namespace UniversalMediaOS.Core.Archiving
                 }
 
                 log($"[P2P Season Downloader] BATCH PROCESS COMPLETED! Season items verified: {passed} OK | {failed} Corrupted/Purged.");
-                progressUpdate(100);
+                progressUpdate?.Invoke(100);
                 return passed > 0;
             }
             catch (Exception ex)
@@ -379,18 +406,23 @@ namespace UniversalMediaOS.Core.Archiving
         private async Task<List<string>> DownloadViaMonoTorrentAsync(
             string magnetLink, 
             Action<string> log, 
-            Action<double> progressUpdate,
+            Action<double>? progressUpdate,
             System.Threading.CancellationToken token)
         {
             var downloadedFiles = new List<string>();
             try
             {
+                string cacheDir = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "UniversalMediaOS", "TorrentCache");
+                try { Directory.CreateDirectory(cacheDir); } catch { }
                 var settingsBuilder = new EngineSettingsBuilder
                 {
                     AllowPortForwarding = true,
                     AutoSaveLoadDhtCache = true,
                     AutoSaveLoadFastResume = true,
                     AutoSaveLoadMagnetLinkMetadata = true,
+                    CacheDirectory = cacheDir,
                     DhtEndPoint = new IPEndPoint(IPAddress.Any, 0),
                     ListenEndPoints = new Dictionary<string, IPEndPoint>
                     {
@@ -423,18 +455,26 @@ namespace UniversalMediaOS.Core.Archiving
                         log($"[MonoTorrent] Starting download: \"{manager.Torrent?.Name ?? "Torrent"}\"");
 
                         // 2. Download loop
-                        var downloadDeadline = DateTime.UtcNow.AddSeconds(DownloadTimeoutSeconds);
+                        double lastProgress = manager.Progress;
+                        var lastProgressAt = DateTime.UtcNow;
                         while (manager.State != TorrentState.Seeding && manager.State != TorrentState.Stopped)
                         {
                             token.ThrowIfCancellationRequested();
-                            if (DateTime.UtcNow > downloadDeadline)
+
+                            double progress = manager.Progress;
+                            if (progress > lastProgress + 0.1)
                             {
-                                log("[MonoTorrent] Download session timed out.");
+                                lastProgress = progress;
+                                lastProgressAt = DateTime.UtcNow;
+                            }
+
+                            if (DateTime.UtcNow - lastProgressAt > TimeSpan.FromSeconds(StallTimeoutSeconds))
+                            {
+                                log("[MonoTorrent] Download stalled with no measurable progress. Partial files were left in place for resume.");
                                 return downloadedFiles;
                             }
 
-                            double progress = manager.Progress;
-                            progressUpdate(progress * 0.95); // leave 5% for validation visual feedback
+                            progressUpdate?.Invoke(progress * 0.95); // leave 5% for validation visual feedback
                             log($"[MonoTorrent] Progress: {progress:F1}% | Speed: {manager.Monitor.DownloadRate / 1024.0 / 1024.0:F2} MB/s | State: {manager.State}");
 
                             await Task.Delay(3000, token);
@@ -454,24 +494,11 @@ namespace UniversalMediaOS.Core.Archiving
                     }
                     finally
                     {
+                        // Stop gracefully — MonoTorrent will persist .resume files organically.
+                        // Do NOT delete partial files; they allow resuming interrupted downloads.
                         if (manager.State != TorrentState.Stopped)
                         {
                             await manager.StopAsync();
-                        }
-                        if (manager.Progress < 100.0)
-                        {
-                            // clean up incomplete files to prevent pollution
-                            foreach (var file in manager.Files)
-                            {
-                                try
-                                {
-                                    if (File.Exists(file.FullPath))
-                                    {
-                                        File.Delete(file.FullPath);
-                                    }
-                                }
-                                catch { }
-                            }
                         }
                     }
                 }
@@ -500,9 +527,14 @@ namespace UniversalMediaOS.Core.Archiving
                     return false;
                 }
 
+                // Use managed ffprobe if available, fall back to PATH
+                string managedFfprobe = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "UniversalMediaOS", "Services", "ffprobe.exe");
+
                 var startInfo = new ProcessStartInfo
                 {
-                    FileName = "ffprobe",
+                    FileName = File.Exists(managedFfprobe) ? managedFfprobe : "ffprobe",
                     Arguments = $"-v error -select_streams v:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 \"{filePath}\"",
                     UseShellExecute = false,
                     CreateNoWindow = true,

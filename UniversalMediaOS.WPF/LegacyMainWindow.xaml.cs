@@ -67,7 +67,11 @@ namespace UniversalMediaOS.WPF
                 string configPath = Path.Combine(appDataDir, "config.json");
                 _swapper = new DomainHotSwapper(configPath);
             }
-            _routingEngine = new UniversalMediaOS.Core.Routing.TripleNetHandoff(_swapper);
+            var pythonBoot = new UniversalMediaOS.Core.Services.PythonBootstrapper();
+            var scraper = new UniversalMediaOS.Core.Services.ScraperEngine(pythonBoot);
+            var hlsProxy = new UniversalMediaOS.Core.Streaming.HlsLoopbackProxy();
+            hlsProxy.Start();
+            _routingEngine = new UniversalMediaOS.Core.Routing.TripleNetHandoff(_swapper, scraper, hlsProxy);
             _mangaService = new MangaService();
             _epubReader = new EpubReaderService();
 
@@ -97,19 +101,9 @@ namespace UniversalMediaOS.WPF
         }
 
         // ── Lifecycle ────────────────────────────────────────────
-        private async void MainWindow_Closed(object sender, EventArgs e)
+        private void MainWindow_Closed(object sender, EventArgs e)
         {
-            string host = _swapper.GetSetting("QBitHost") ?? "localhost";
-            string port = _swapper.GetSetting("QBitPort") ?? "8080";
-            string user = _swapper.GetSetting("QBitUsername") ?? "admin";
-            string pass = _swapper.GetSetting("QBitPassword") ?? "adminadmin";
-            
-            var qbit = new UniversalMediaOS.Core.Routing.QBitLogicGate($"http://{host}:{port}");
-            if (await qbit.AuthenticateAsync(null, user, pass))
-            {
-                await qbit.ShutdownAsync();
-                await Task.Delay(2000); // Allow qBittorrent time to flush fastresume data
-            }
+            Log("Leaving qBittorrent running on app exit to preserve active downloads.");
 
             _svcMgr?.StopAll();
             _epubReader.CleanCache();
@@ -723,6 +717,9 @@ namespace UniversalMediaOS.WPF
 
             try
             {
+                using var _playCts = new System.Threading.CancellationTokenSource();
+                var token = _playCts.Token;
+
                 var mediaList = SearchResultsList.ItemsSource as List<MediaResult>;
                 var target = mediaList?.Find(m => m.Id == mediaId);
 
@@ -753,41 +750,33 @@ namespace UniversalMediaOS.WPF
                 Log($"▶ Resolving: {target.OfficialTitle} Ep {episodeNum}{audioPref}");
                 UniversalMediaOS.Core.Routing.PlaybackSource? source = null;
 
-                var torrents = await _routingEngine.GetTorrentsAsync(target.OfficialTitle + audioPref, episodeNum, logger);
-
-                // Load switchboard selection dialog
-                var selectionWindow = new SourceSelectionWindow(torrents);
+                // Load source selection dialog (no async work before dialog shows)
+                var selectionWindow = new SourceSelectionWindow();
                 selectionWindow.Owner = this;
                 if (selectionWindow.ShowDialog() == true)
                 {
                     switch (selectionWindow.SelectedTier)
                     {
-                        case SelectedSourceTier.Tier1_Torrent:
-                            Log("Tier 1 selected — scraping Nyaa P2P networks...");
-                            torrents = await _routingEngine.GetTorrentsAsync(target.OfficialTitle + audioPref, episodeNum, logger);
-
-                            if (torrents.Count == 0)
-                            {
-                                Log("No torrents found on Nyaa/AnimeTosho. Select Tier 2 or Tier 3 fallbacks.");
-                                break;
-                            }
-
-                            var torrentSelection = new SourceSelectionWindow(torrents);
-                            torrentSelection.Owner = this;
-                            if (torrentSelection.ShowDialog() == true && torrentSelection.SelectedTorrent != null)
-                            {
-                                source = await _routingEngine.InjectTorrentAsync(torrentSelection.SelectedTorrent, logger);
-                            }
+                        case SelectedSourceTier.Stream_Auto:
+                            Log("Auto stream: Python scraper → HLS proxy → WebView fallback...");
+                            source = await _routingEngine.ResolveBestSourceAsync(
+                                target.OfficialTitle + audioPref, episodeNum, providerDomain, logger,
+                                UniversalMediaOS.Core.Routing.SourceTier.Tier1_PythonScraper, token);
                             break;
 
-                        case SelectedSourceTier.Tier2_Consumet:
-                            Log("Tier 2 selected — querying Consumet scraper...");
-                            source = await _routingEngine.ResolveBestSourceAsync(target.OfficialTitle + audioPref, episodeNum, providerDomain, logger, UniversalMediaOS.Core.Routing.SourceTier.Tier2_ConsumetHttp);
+                        case SelectedSourceTier.Stream_WebView:
+                            Log("WebView2 player selected — loading embedded browser...");
+                            source = await _routingEngine.ResolveBestSourceAsync(
+                                target.OfficialTitle + audioPref, episodeNum, providerDomain, logger,
+                                UniversalMediaOS.Core.Routing.SourceTier.Tier2_WebViewEmbed, token);
                             break;
 
-                        case SelectedSourceTier.Tier3_WebProvider:
-                            Log("Tier 3 selected — launching dynamic Webview2 embed...");
-                            source = await _routingEngine.ResolveBestSourceAsync(target.OfficialTitle + audioPref, episodeNum, providerDomain, logger, UniversalMediaOS.Core.Routing.SourceTier.Tier3_WebViewEmbed);
+                        case SelectedSourceTier.Download_Season:
+                            Log("P2P season download initiated...");
+                            await LaunchSeasonDownloaderAsync(target.OfficialTitle, logger, token);
+                            break;
+
+                        default:
                             break;
                     }
                 }
@@ -796,49 +785,24 @@ namespace UniversalMediaOS.WPF
                 {
                     Log($"Source resolved: Tier={source.Tier}, URL={source.UrlOrPath}");
 
-                    // Launch playback theater
                     var player = new PlaybackTheater();
                     player.Owner = this;
-                    
-                    // Wire Casting cache overlay, AniSkip and Resume states!
                     await player.InitializeMediaAsync(mediaId, target.IdMal, target.OfficialTitle, episodeNum, audioPref);
 
-                    if (source.Tier == UniversalMediaOS.Core.Routing.SourceTier.Tier1_LocalP2P)
+                    if (source.Tier == UniversalMediaOS.Core.Routing.SourceTier.Tier1_PythonScraper)
                     {
-                        if (File.Exists(source.UrlOrPath))
-                        {
-                            if (_swapper.GetSetting("AutoPlayAfterDownload") != "false")
-                            {
-                                player.Show();
-                                player.PlayLocalOrHttp(source.UrlOrPath, source.EmbedOrigin);
-                            }
-                            else
-                            {
-                                Log("Download completed. AutoPlay is disabled.");
-                                player.Close();
-                                RefreshInstalledEpisodes();
-                            }
-                        }
-                        else
-                        {
-                            Log($"ERROR: Torrents download file path unreachable: {source.UrlOrPath}");
-                            player.Close();
-                        }
-                    }
-                    else if (source.Tier == UniversalMediaOS.Core.Routing.SourceTier.Tier2_ConsumetHttp)
-                    {
-                        Log("Opening VLC engine for HTTP m3u8 stream...");
+                        Log("Opening LibVLC engine for proxied HLS stream...");
                         player.Show();
                         player.PlayLocalOrHttp(source.UrlOrPath, source.EmbedOrigin);
                     }
-                    else if (source.Tier == UniversalMediaOS.Core.Routing.SourceTier.Tier3_WebViewEmbed)
+                    else if (source.Tier == UniversalMediaOS.Core.Routing.SourceTier.Tier2_WebViewEmbed)
                     {
                         Log("Opening WebView2 containment player...");
                         player.Show();
                         await player.PlayEmbedAsync(source.UrlOrPath);
                     }
                 }
-                else
+                else if (selectionWindow.SelectedTier != SelectedSourceTier.Download_Season)
                 {
                     Log("Playback resolution terminated.");
                 }
@@ -851,6 +815,27 @@ namespace UniversalMediaOS.WPF
             {
                 btn.Content = "Watch";
                 btn.IsEnabled = true;
+            }
+        }
+
+        private async Task LaunchSeasonDownloaderAsync(
+            string animeTitle,
+            Action<string> log,
+            System.Threading.CancellationToken token)
+        {
+            try
+            {
+                var downloader = new UniversalMediaOS.Core.Archiving.SeasonDownloader(_swapper);
+                await downloader.DownloadSeasonAsync(animeTitle, log, null, token);
+                Dispatcher.Invoke(RefreshInstalledEpisodes);
+            }
+            catch (OperationCanceledException)
+            {
+                log("Season download cancelled.");
+            }
+            catch (Exception ex)
+            {
+                log($"Season download error: {ex.Message}");
             }
         }
 
@@ -1093,15 +1078,16 @@ namespace UniversalMediaOS.WPF
             Log($"▶ Resolving featured Spotlight: {title} Ep {episode}{audioPref}");
             try 
             {
-                var source = await _routingEngine.ResolveBestSourceAsync(title + audioPref, episode, providerDomain, msg => Log(msg), UniversalMediaOS.Core.Routing.SourceTier.Tier2_ConsumetHttp);
+                var source = await _routingEngine.ResolveBestSourceAsync(
+                    title + audioPref, episode, providerDomain, msg => Log(msg));
                 if (source != null)
                 {
                     var player = new PlaybackTheater();
                     player.Owner = this;
                     await player.InitializeMediaAsync(mediaId, 0, title, episode, audioPref);
                     player.Show();
-                    
-                    if (source.Tier == UniversalMediaOS.Core.Routing.SourceTier.Tier3_WebViewEmbed)
+
+                    if (source.Tier == UniversalMediaOS.Core.Routing.SourceTier.Tier2_WebViewEmbed)
                     {
                         await player.PlayEmbedAsync(source.UrlOrPath);
                     }

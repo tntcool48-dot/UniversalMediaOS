@@ -1,78 +1,82 @@
 <Window x:Class="UniversalMediaOS.WPF.SourceSelectionWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Select Source" Height="400" Width="600"
+        Title="Select Source" Height="360" Width="600"
         WindowStartupLocation="CenterOwner"
         Background="#0B0F19" Foreground="White" FontFamily="Segoe UI">
-    <Grid Margin="20">
+    <Grid Margin="24">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
-        <StackPanel Grid.Row="0" Margin="0,0,0,10">
-            <TextBlock Text="Master Routing Switchboard" FontSize="26" FontWeight="Black" Foreground="#F8FAFC" Margin="0,0,0,10"/>
-            <TextBlock Text="Select the architecture tier you want to use for this request." FontSize="14" Foreground="#94A3B8" Margin="0,0,0,20"/>
+
+        <!-- Header -->
+        <StackPanel Grid.Row="0" Margin="0,0,0,20">
+            <TextBlock Text="Select Playback Mode" FontSize="22" FontWeight="Black" Foreground="#F8FAFC"/>
+            <TextBlock Text="Choose how you want to watch this episode." FontSize="13" Foreground="#64748B" Margin="0,4,0,0"/>
         </StackPanel>
-        
-        <!-- Tier 1: Nyaa P2P -->
-        <Border Grid.Row="1" Background="#1E293B" CornerRadius="12" Padding="15" Margin="0,0,0,15">
-            <Grid>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="*"/>
-                    <RowDefinition Height="Auto"/>
-                </Grid.RowDefinitions>
-                <TextBlock Grid.Row="0" Text="Tier 1: P2P Torrent (Nyaa)" FontSize="18" FontWeight="Bold" Foreground="#10B981" Margin="0,0,0,10"/>
-                <ListBox x:Name="TorrentsList" Grid.Row="1" Background="#0F172A" Foreground="White" BorderThickness="0" Margin="0,0,0,10">
-                    <ListBox.ItemTemplate>
-                        <DataTemplate>
-                            <Border BorderBrush="#334155" BorderThickness="0,0,0,1" Padding="5">
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Text="{Binding Title}" TextWrapping="Wrap" FontSize="14"/>
-                                    <TextBlock Grid.Column="1" Text="{Binding Seeders, StringFormat='{}Seeders: {0}'}" Foreground="#10B981" FontWeight="Bold" VerticalAlignment="Center" Margin="10,0,0,0"/>
-                                </Grid>
-                            </Border>
-                        </DataTemplate>
-                    </ListBox.ItemTemplate>
-                </ListBox>
-                <Button Grid.Row="2" VerticalAlignment="Bottom" Content="Inject Selected Torrent" Background="#10B981" Foreground="Black" FontWeight="Bold" Padding="10" BorderThickness="0" Click="SelectTorrent_Click"/>
-            </Grid>
-        </Border>
 
-        <!-- Tier 2: Consumet API -->
-        <Border Grid.Row="2" Background="#1E293B" CornerRadius="12" Padding="15" Margin="0,0,0,15">
+        <!-- Stream Auto -->
+        <Border Grid.Row="1" Background="#1E293B" CornerRadius="10" Padding="16" Margin="0,0,0,10">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <StackPanel>
-                    <TextBlock Text="Tier 2: Consumet API (Local Node)" FontSize="18" FontWeight="Bold" Foreground="#3B82F6"/>
-                    <TextBlock Text="Direct HTTP extraction via localhost:3000 microservice" FontSize="12" Foreground="#94A3B8"/>
+                    <TextBlock Text="⚡  Stream (Auto)" FontSize="16" FontWeight="Bold" Foreground="#10B981"/>
+                    <TextBlock Text="Python scraper → dynamic mirror pool → HLS proxy → LibVLC" FontSize="11" Foreground="#94A3B8" Margin="0,2,0,0"/>
                 </StackPanel>
-                <Button Grid.Column="1" Content="Stream via Consumet" Background="#3B82F6" Foreground="White" FontWeight="Bold" Padding="15,10" BorderThickness="0" Click="ConsumetButton_Click"/>
+                <Button x:Name="StreamAutoBtn" Grid.Column="1"
+                        Content="Stream" Background="#10B981" Foreground="Black"
+                        FontWeight="Bold" Padding="18,8" BorderThickness="0"
+                        Cursor="Hand" Click="StreamAutoButton_Click"/>
             </Grid>
         </Border>
 
-        <!-- Tier 3: Web Provider -->
-        <Border Grid.Row="3" Background="#1E293B" CornerRadius="12" Padding="15">
+        <!-- Stream WebView -->
+        <Border Grid.Row="2" Background="#1E293B" CornerRadius="10" Padding="16" Margin="0,0,0,10">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <StackPanel>
-                    <TextBlock Text="Tier 3: Web Provider Fallback" FontSize="18" FontWeight="Bold" Foreground="#8B5CF6"/>
-                    <TextBlock Text="Embedded browser player using chosen scraper domain" FontSize="12" Foreground="#94A3B8"/>
+                    <TextBlock Text="🌐  Stream (WebView)" FontSize="16" FontWeight="Bold" Foreground="#3B82F6"/>
+                    <TextBlock Text="Embedded browser player with uBlock Origin — ad-free" FontSize="11" Foreground="#94A3B8" Margin="0,2,0,0"/>
                 </StackPanel>
-                <Button Grid.Column="1" Content="Launch Web Embed" Background="#8B5CF6" Foreground="White" FontWeight="Bold" Padding="15,10" BorderThickness="0" Click="WebProviderButton_Click"/>
+                <Button x:Name="StreamWebViewBtn" Grid.Column="1"
+                        Content="Open WebView" Background="#3B82F6" Foreground="White"
+                        FontWeight="Bold" Padding="18,8" BorderThickness="0"
+                        Cursor="Hand" Click="StreamWebViewButton_Click"/>
             </Grid>
         </Border>
+
+        <!-- Download Season -->
+        <Border Grid.Row="3" Background="#1E293B" CornerRadius="10" Padding="16" Margin="0,0,0,10">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock Text="⬇  Download Season (P2P)" FontSize="16" FontWeight="Bold" Foreground="#F59E0B"/>
+                    <TextBlock Text="Downloads full season via qBittorrent / MonoTorrent from Nyaa" FontSize="11" Foreground="#94A3B8" Margin="0,2,0,0"/>
+                </StackPanel>
+                <Button x:Name="DownloadSeasonBtn" Grid.Column="1"
+                        Content="Download" Background="#F59E0B" Foreground="Black"
+                        FontWeight="Bold" Padding="18,8" BorderThickness="0"
+                        Cursor="Hand" Click="DownloadSeasonButton_Click"/>
+            </Grid>
+        </Border>
+
+        <!-- Cancel -->
+        <Button Grid.Row="4" Content="Cancel" HorizontalAlignment="Right"
+                Background="Transparent" Foreground="#64748B"
+                FontSize="13" BorderThickness="0" Padding="12,6"
+                Cursor="Hand" Click="CancelButton_Click"/>
     </Grid>
 </Window>

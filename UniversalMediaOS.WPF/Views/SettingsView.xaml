@@ -17,32 +17,39 @@
             <TextBlock Text="Services" FontSize="20" FontWeight="SemiBold"
                        Foreground="{StaticResource TextPrimary}" Margin="0,0,0,16"/>
 
-            <CheckBox Content="Auto-Manage Background Services (Consumet, Python Scraper, qBittorrent)"
+            <CheckBox Content="Auto-manage local dependencies (Python scraper, uBlock, FFmpeg check, qBittorrent launch)"
                       IsChecked="{Binding AutoManageServices}"
                       Foreground="{StaticResource TextPrimary}" Margin="0,0,0,8"/>
-            <TextBlock Text="When enabled, the app automatically downloads and starts all required local services on launch."
+            <TextBlock Text="When enabled, the app prepares local streaming/downloading dependencies on launch and reports non-fatal warnings here."
                        Foreground="{StaticResource TextMuted}" FontSize="12" Margin="24,0,0,24" TextWrapping="Wrap"/>
 
-            <!-- Consumet -->
-            <TextBlock Text="Consumet API" FontSize="16" FontWeight="SemiBold"
-                       Foreground="{StaticResource TextPrimary}" Margin="0,0,0,12"/>
-
-            <Grid Margin="0,0,0,12">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="200"/>
-                    <ColumnDefinition Width="*"/>
-                </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="API Base URL" Foreground="{StaticResource TextMuted}" VerticalAlignment="Center"/>
-                <TextBox   Grid.Column="1" Text="{Binding ConsumetApiBase, UpdateSourceTrigger=PropertyChanged}"/>
-            </Grid>
             <Grid Margin="0,0,0,24">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="200"/>
+                    <ColumnDefinition Width="120"/>
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="Provider" Foreground="{StaticResource TextMuted}" VerticalAlignment="Center"/>
-                <TextBox   Grid.Column="1" Text="{Binding ConsumetProvider, UpdateSourceTrigger=PropertyChanged}"/>
+                <TextBlock Grid.Column="0" Text="Scraper Site Attempts" Foreground="{StaticResource TextMuted}" VerticalAlignment="Center"/>
+                <TextBox Grid.Column="1" Text="{Binding ScraperSiteAttemptLimit, UpdateSourceTrigger=PropertyChanged}"/>
+                <TextBlock Grid.Column="2" Text="How many indexed streaming sites Auto mode should try before WebView fallback."
+                           Foreground="{StaticResource TextMuted}" FontSize="12" Margin="12,0,0,0" TextWrapping="Wrap"
+                           VerticalAlignment="Center"/>
             </Grid>
+
+            <Border Background="{StaticResource BgSurface}" BorderBrush="{StaticResource BorderSubtle}" BorderThickness="1"
+                    CornerRadius="8" Padding="12" Margin="0,0,0,24">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="{Binding ServiceHealthText}" Foreground="{StaticResource TextMuted}"
+                               FontFamily="Consolas" FontSize="12" TextWrapping="Wrap"/>
+                    <Button Grid.Column="1" Content="Refresh" Command="{Binding RefreshServiceHealthCommand}"
+                            Margin="12,0,0,0" Padding="12,6" VerticalAlignment="Top"
+                            Background="{StaticResource AccentPrimary}" Foreground="White" BorderThickness="0" Cursor="Hand"/>
+                </Grid>
+            </Border>
 
             <!-- qBittorrent -->
             <TextBlock Text="qBittorrent WebUI" FontSize="16" FontWeight="SemiBold"
@@ -78,7 +85,7 @@
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
                 <TextBlock Grid.Column="0" Text="Password" Foreground="{StaticResource TextMuted}" VerticalAlignment="Center"/>
-                <PasswordBox Grid.Column="1" x:Name="QbitPasswordBox"/>
+                <PasswordBox Grid.Column="1" x:Name="QbitPasswordBox" PasswordChanged="QbitPasswordBox_PasswordChanged"/>
             </Grid>
 
             <!-- MAL -->
@@ -145,7 +152,7 @@
             <!-- ── Custom Web Providers (Tier 3) ────────────────────── -->
             <Border BorderBrush="{StaticResource BorderSubtle}" BorderThickness="0,1,0,0" Margin="0,16,0,24"/>
             
-            <TextBlock Text="Custom Web Providers (Tier 3 WebView2 Embeds)" FontSize="20" FontWeight="SemiBold"
+            <TextBlock Text="Custom Web Providers (WebView2 Fallback)" FontSize="20" FontWeight="SemiBold"
                        Foreground="{StaticResource TextPrimary}" Margin="0,0,0,16"/>
             
             <TextBlock Text="Manage custom websites to load as embeds. The search URL must contain '{query}' where the anime name will be injected."

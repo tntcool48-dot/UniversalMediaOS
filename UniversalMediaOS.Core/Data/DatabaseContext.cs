@@ -87,10 +87,11 @@ namespace UniversalMediaOS.Core.Data
             if (string.IsNullOrEmpty(mediaId) || string.IsNullOrEmpty(episodeId)) return;
             if (double.IsNaN(positionSeconds) || double.IsInfinity(positionSeconds) || positionSeconds < 0)
             {
-                positionSeconds = 0.0; // Guard against NaN, infinity, or negative positions
+                positionSeconds = 0.0;
             }
 
-            using var transaction = Database.BeginTransaction();
+            // WAL mode + busy_timeout=5000 makes EF Core's per-SaveChanges implicit transactions safe.
+            // Manual BeginTransaction wrappers cause lock contention under rapid seek saves.
             try
             {
                 var existing = ResumeStates
@@ -111,11 +112,9 @@ namespace UniversalMediaOS.Core.Data
                 }
 
                 SaveChanges();
-                transaction.Commit();
             }
             catch (Exception ex)
             {
-                transaction.Rollback();
                 AppLogger.Log($"Error saving resume state synchronously: {ex.Message}", "ERROR");
                 throw;
             }
@@ -132,7 +131,6 @@ namespace UniversalMediaOS.Core.Data
                 positionSeconds = 0.0;
             }
 
-            using var transaction = await Database.BeginTransactionAsync(token);
             try
             {
                 var existing = await ResumeStates
@@ -153,11 +151,9 @@ namespace UniversalMediaOS.Core.Data
                 }
 
                 await SaveChangesAsync(token);
-                await transaction.CommitAsync(token);
             }
             catch (Exception ex)
             {
-                await transaction.RollbackAsync(token);
                 AppLogger.Log($"Error saving resume state asynchronously: {ex.Message}", "ERROR");
                 throw;
             }
