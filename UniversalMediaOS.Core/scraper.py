@@ -4,7 +4,7 @@ UniversalMediaOS Bulletproof Scraper v2.0
 Stateless CLI: python scraper.py search "Title" | extract "url"
 Outputs strict JSON to stdout. All logging to stderr.
 """
-import sys, os, re, json, base64, time, traceback, html as html_lib
+import sys, os, re, json, base64, time, traceback, html as html_lib, tempfile, shutil, socket
 from typing import Optional
 from urllib.parse import quote_plus, urljoin, urlparse
 
@@ -28,7 +28,21 @@ SEED_MIRRORS = [
     "https://miruro.tv",
 ]
 
-TIMEOUT_PER_MIRROR = 8
+TIMEOUT_PER_MIRROR = 12
+DYNAMIC_PLAYER_WAIT = 12
+NETWORK_SNIFF_SECONDS = 10
+PLAYER_MEDIA_WAIT = 20
+
+MEDIA_LISTEN_TARGETS = [
+    "m3u8", ".m3u8", "mpegurl", "playlist", "manifest", "master.m3u8", "index.m3u8"
+]
+
+MEDIA_URL_RE = re.compile(r'https?://[^\s"\'<>\\]+\.(?:m3u8|mp4)(?:[^\s"\'<>\\]*)?', re.I)
+ESCAPED_MEDIA_URL_RE = re.compile(r'https?:\\?/\\?/[^\s"\'<>\\]+\.(?:m3u8|mp4)(?:[^\s"\'<>\\]*)?', re.I)
+IFRAME_SKIP_RE = re.compile(
+    r"(doubleclick|googlesyndication|google-analytics|google\.com/recaptcha|captcha|"
+    r"adservice|adsystem|adtrafficquality|analytics|facebook|twitter|about:blank|javascript:)",
+    re.I)
 
 INDEX_SOURCES = [
     "https://everythingmoe.com/section/streaming",
@@ -273,14 +287,30 @@ def launch_browser():
     if not DRISSION_AVAILABLE:
         print("[scraper] DrissionPage not available.", file=sys.stderr)
         return None
+    profile_dir = tempfile.mkdtemp(prefix="umos_scraper_")
     try:
         opts = ChromiumOptions()
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.bind(("127.0.0.1", 0))
+                local_port = sock.getsockname()[1]
+            opts.set_local_port(local_port)
+            opts.new_env(True)
+            opts.set_user_data_path(profile_dir)
+            opts.set_tmp_path(profile_dir)
+        except Exception as e:
+            log(f"Browser isolation option failed, continuing: {e}")
         opts.set_argument("--no-sandbox")
         opts.set_argument("--disable-blink-features=AutomationControlled")
         opts.set_argument("--disable-dev-shm-usage")
         opts.set_argument("--mute-audio")
         opts.set_argument("--autoplay-policy=no-user-gesture-required")
+        opts.set_argument("--disable-background-networking")
         page = ChromiumPage(addr_or_opts=opts)
+        try:
+            page._ums_tmp_dir = profile_dir
+        except Exception:
+            pass
         try:
             page.driver.run_cdp("Page.addScriptToEvaluateOnNewDocument", source=STEALTH_SCRIPT)
         except Exception:
@@ -291,8 +321,19 @@ def launch_browser():
             pass
         return page
     except Exception as e:
+        shutil.rmtree(profile_dir, ignore_errors=True)
         print(f"[scraper] Browser launch failed: {e}", file=sys.stderr)
         return None
+
+
+def close_browser(page):
+    tmp_dir = getattr(page, "_ums_tmp_dir", None)
+    try:
+        page.quit()
+    except Exception:
+        pass
+    if tmp_dir:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def setup_worker_hooks(page):
@@ -335,6 +376,303 @@ def get_ua(page):
     except Exception:
         return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
+
+def make_stream_result(url, page, referer=None):
+    return {
+        "url": url,
+        "user_agent": get_ua(page),
+        "cookie": get_cookies_str(page),
+        "referer": referer or getattr(page, "url", "") or ""
+    }
+
+
+def is_proxy_fetchable_result(result):
+    if not result or not result.get("url"):
+        return False
+    url = result["url"]
+    if ".m3u8" not in url.lower():
+        return True
+    if not cffi_req:
+        log("  Proxy validation skipped: curl_cffi unavailable")
+        return True
+
+    headers = {
+        "User-Agent": result.get("user_agent") or "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Accept": "*/*",
+        "Accept-Encoding": "identity",
+    }
+    if result.get("referer"):
+        headers["Referer"] = result["referer"]
+    if result.get("cookie"):
+        headers["Cookie"] = result["cookie"]
+
+    try:
+        resp = cffi_req.get(url, impersonate="chrome120", timeout=8, headers=headers)
+        content_type = resp.headers.get("content-type", "")
+        text = resp.text[:64] if hasattr(resp, "text") else ""
+        ok = resp.status_code < 400 and (
+            text.lstrip().startswith("#EXTM3U") or "mpegurl" in content_type.lower()
+        )
+        if ok:
+            log(f"  Proxy validation OK status={resp.status_code} url={url[:160]}")
+            return True
+        log(f"  Proxy validation rejected status={resp.status_code} content_type={content_type} url={url[:160]}")
+    except Exception as e:
+        log(f"  Proxy validation failed: {e}")
+    return False
+
+
+def accept_stream_result(result, stage_name):
+    if not result:
+        return None
+    if is_proxy_fetchable_result(result):
+        return result
+    log(f"  {stage_name}: captured stream is browser-only; continuing waterfall")
+    return None
+
+
+def is_probable_media_url(url, content_type=""):
+    if not url:
+        return False
+    lower_url = url.lower()
+    lower_type = (content_type or "").lower()
+    if lower_url.startswith("blob:"):
+        return False
+    return (
+        ".m3u8" in lower_url
+        or lower_url.endswith(".mp4")
+        or "mpegurl" in lower_type
+        or "application/vnd.apple.mpegurl" in lower_type
+        or lower_type.startswith("video/")
+    )
+
+
+def normalize_absolute_url(url, base_url):
+    if not url:
+        return ""
+    url = html_lib.unescape(str(url).strip())
+    url = url.replace("\\/", "/")
+    if url.startswith("//"):
+        return "https:" + url
+    if url.startswith(("http://", "https://")):
+        return url
+    if url.startswith("blob:"):
+        return ""
+    if base_url:
+        return urljoin(base_url, url)
+    return ""
+
+
+def extract_media_urls_from_text(text, base_url=""):
+    if not text:
+        return []
+    candidates = []
+    normalized = text.replace("\\/", "/").replace("\\u0026", "&")
+    for match in MEDIA_URL_RE.finditer(normalized):
+        url = normalize_absolute_url(match.group(0), base_url)
+        if url and url not in candidates:
+            candidates.append(url)
+    for match in ESCAPED_MEDIA_URL_RE.finditer(text):
+        url = normalize_absolute_url(match.group(0), base_url)
+        if url and url not in candidates:
+            candidates.append(url)
+    return candidates
+
+
+def extract_dom_media_urls(page):
+    urls = []
+    try:
+        result = page.run_js("""
+            return (() => {
+                const out = new Set();
+                const add = value => {
+                    if (!value || typeof value !== 'string') return;
+                    if (/\\.m3u8(\\?|$)|\\.mp4(\\?|$)|mpegurl|playlist|manifest/i.test(value)) out.add(value);
+                };
+                document.querySelectorAll('video,audio,source,track').forEach(el => {
+                    add(el.currentSrc);
+                    add(el.src);
+                    add(el.getAttribute('src'));
+                    add(el.getAttribute('data-src'));
+                });
+                document.querySelectorAll('[data-url],[data-file],[data-src],[data-hls],[data-stream]').forEach(el => {
+                    ['data-url','data-file','data-src','data-hls','data-stream'].forEach(name => add(el.getAttribute(name)));
+                });
+                try {
+                    performance.getEntriesByType('resource').forEach(entry => add(entry.name));
+                } catch (e) {}
+                return Array.from(out);
+            })();
+        """)
+        if isinstance(result, list):
+            for item in result:
+                url = normalize_absolute_url(item, getattr(page, "url", ""))
+                if url and is_probable_media_url(url) and url not in urls:
+                    urls.append(url)
+    except Exception as e:
+        log(f"  DOM media scan failed: {e}")
+    return urls
+
+
+def start_media_listener(page):
+    try:
+        page.listen.stop()
+    except Exception:
+        pass
+    try:
+        page.listen.start(targets=MEDIA_LISTEN_TARGETS)
+        return True
+    except Exception as e:
+        log(f"  Network listener start failed: {e}")
+        return False
+
+
+def stop_media_listener(page):
+    try:
+        page.listen.stop()
+    except Exception:
+        pass
+
+
+def listen_for_media(page, timeout=NETWORK_SNIFF_SECONDS, referer=None):
+    deadline = time.time() + max(0.5, timeout)
+    while time.time() < deadline:
+        slice_timeout = max(0.2, min(1.0, deadline - time.time()))
+        try:
+            for packet in page.listen.steps(timeout=slice_timeout):
+                url = getattr(packet, "url", "") or ""
+                if not url:
+                    request = getattr(packet, "request", None)
+                    url = getattr(request, "url", "") if request else ""
+                resp_headers = {}
+                try:
+                    resp_headers = dict(packet.response.headers) if packet.response else {}
+                except Exception:
+                    pass
+                content_type = resp_headers.get("Content-Type", resp_headers.get("content-type", ""))
+                if is_probable_media_url(url, content_type):
+                    log(f"  Network: captured media url={url[:180]}")
+                    return make_stream_result(url, page, referer or getattr(page, "url", ""))
+                if content_type and "mpegurl" in content_type.lower():
+                    log(f"  Network: captured media by content-type url={url[:180]}")
+                    return make_stream_result(url, page, referer or getattr(page, "url", ""))
+        except Exception as e:
+            log(f"  Network listener read failed: {e}")
+            return None
+    return None
+
+
+def wait_for_dynamic_player(page, seconds=DYNAMIC_PLAYER_WAIT):
+    deadline = time.time() + seconds
+    last_state = None
+    while time.time() < deadline:
+        try:
+            iframes = page.eles("tag:iframe", timeout=.2) or []
+            server_controls = page.eles("css:[data-link-id]", timeout=.2) or []
+            player = page.ele("css:#player", timeout=.2)
+            state = (len(iframes), len(server_controls), bool(player))
+            if state != last_state:
+                log(f"  Dynamic wait: iframes={state[0]} server_controls={state[1]} player={state[2]}")
+                last_state = state
+            if iframes or server_controls:
+                time.sleep(1.0)
+                return
+        except Exception:
+            pass
+        time.sleep(.5)
+    log("  Dynamic wait: no player iframe/server controls appeared before timeout")
+
+
+def click_element(el):
+    try:
+        el.click()
+        return True
+    except Exception:
+        pass
+    try:
+        el.click(by_js=True)
+        return True
+    except Exception:
+        return False
+
+
+def activate_player_controls(page, max_clicks=10):
+    selectors = [
+        "css:#w-servers [data-link-id]",
+        "css:[data-link-id]",
+        "css:[data-server]",
+        "css:.server",
+        "css:.servers li",
+        "css:#player",
+        "css:video",
+        "css:.play-btn",
+        "css:.play-button",
+        "css:[class*='play']",
+        "css:[id*='play']",
+    ]
+    clicked = 0
+    seen = set()
+    for selector in selectors:
+        try:
+            elements = page.eles(selector, timeout=.7) or []
+        except Exception:
+            elements = []
+        for el in elements[:max_clicks]:
+            try:
+                signature = "|".join(filter(None, [
+                    el.attr("data-link-id") or "",
+                    el.attr("data-server") or "",
+                    el.attr("href") or "",
+                    (el.text or "")[:40],
+                ]))
+            except Exception:
+                signature = selector
+            if signature in seen:
+                continue
+            seen.add(signature)
+            if click_element(el):
+                clicked += 1
+                log(f"  Clicked player/server control selector={selector} marker={signature[:80]}")
+                time.sleep(1.0)
+                if clicked >= max_clicks:
+                    return clicked
+    return clicked
+
+
+def collect_iframe_sources(page, limit=10):
+    sources = []
+    try:
+        iframes = page.eles("tag:iframe", timeout=1) or []
+        for iframe in iframes:
+            try:
+                src = normalize_absolute_url(iframe.attr("src") or "", getattr(page, "url", ""))
+                if not src or IFRAME_SKIP_RE.search(src):
+                    continue
+                if src not in sources:
+                    sources.append(src)
+            except Exception:
+                pass
+    except Exception as e:
+        log(f"  iframe collection failed: {e}")
+    sources.sort(key=lambda src: 0 if re.search(r"(stream|embed|player|video|vstream|kwik|rapid|cloud|vid|mega)", src, re.I) else 1)
+    if sources:
+        log(f"  iframe sources={len(sources)} first={sources[0][:140]}")
+    return sources[:limit]
+
+
+def set_navigation_referer(page, referer):
+    if not referer:
+        return
+    try:
+        headers = {"Referer": referer}
+        parsed = urlparse(referer)
+        if parsed.scheme and parsed.netloc:
+            headers["Origin"] = f"{parsed.scheme}://{parsed.netloc}"
+        page.run_cdp("Network.enable")
+        page.run_cdp("Network.setExtraHTTPHeaders", headers=headers)
+    except Exception as e:
+        log(f"  Could not set navigation referer: {e}")
+
 # ---- Site search utilities ---------------------------------------------------
 
 def build_search_urls(site_url, query):
@@ -357,13 +695,35 @@ def build_search_urls(site_url, query):
         add(f"{root}{path}?keyword={q}")
         add(f"{root}{path}?query={q}")
         add(f"{root}{path}/search?keyword={q}")
+        add(f"{root}{path}")
+    add(site_url.rstrip("/"))
     return candidates
+
+
+def apply_variant_penalties(score, candidate_text, normalized_query):
+    season_match = re.search(r"\bseason\s*(\d+)\b|season-(\d+)", candidate_text)
+    if season_match:
+        season_num = season_match.group(1) or season_match.group(2)
+        query_mentions_season = (
+            f"season {season_num}" in normalized_query
+            or f"s{season_num}" in normalized_query
+            or f"{season_num} season" in normalized_query
+        )
+        if not query_mentions_season:
+            score -= 8
+    variant_terms = ("mini anime", "special", "specials", "movie", "ova", "ona")
+    for term in variant_terms:
+        if term in candidate_text and term not in normalized_query:
+            score -= 5
+    return score
 
 
 def extract_candidate_links(html, base_url, query, episode_id):
     keywords = query_keywords(query)
     if not keywords:
         return []
+    normalized_query = normalize_title(query)
+    required = min(2, len(keywords))
     matches = list(re.finditer(r'href\s*=\s*["\']([^"\']+)["\']', html, re.I))
     candidates = []
     for match in matches:
@@ -379,8 +739,17 @@ def extract_candidate_links(html, base_url, query, episode_id):
         start = max(0, match.start() - 350)
         end = min(len(html), match.end() + 350)
         context = re.sub(r"<[^>]+>", " ", html[start:end]).lower()
+        matched_words = {word for word in keywords if word in lower or word in context}
+        if len(matched_words) < required:
+            continue
         score = sum(2 for word in keywords if word in lower)
         score += sum(1 for word in keywords if word in context)
+        if all(word in lower for word in keywords):
+            score += 5
+        if all(word in context for word in keywords):
+            score += 3
+        candidate_text = normalize_title(f"{lower} {context}")
+        score = apply_variant_penalties(score, candidate_text, normalized_query)
         if episode_id:
             episode_patterns = (
                 f"-episode-{episode_id}", f"/episode-{episode_id}", f"/ep-{episode_id}",
@@ -390,8 +759,30 @@ def extract_candidate_links(html, base_url, query, episode_id):
                 score += 8
         if score > 0:
             candidates.append((full, score))
+
+    slug_pattern = re.compile(r"\b[a-z0-9]+(?:-[a-z0-9]+){2,}-[a-z0-9]{4,}\b", re.I)
+    for slug in sorted(set(slug_pattern.findall(html))):
+        slug_text = normalize_title(slug)
+        matched = sum(1 for word in keywords if word in slug_text)
+        if matched < required:
+            continue
+        score = matched * 4
+        if all(word in slug_text for word in keywords):
+            score += 6
+        score -= 4
+        score = apply_variant_penalties(score, slug_text, normalized_query)
+        if score <= 0:
+            continue
+        ep = episode_id or "1"
+        for path in (f"/watch/{slug}?ep={ep}", f"/watch/{slug}/ep-{ep}"):
+            candidates.append((urljoin(base_url, path), score))
+
     candidates.sort(key=lambda item: item[1], reverse=True)
-    return [url for url, score in candidates]
+    deduped = []
+    for url, score in candidates:
+        if url not in deduped:
+            deduped.append(url)
+    return deduped
 
 
 def search_site(site, query, episode_id):
@@ -468,65 +859,85 @@ def stage_a_player_fingerprint(page, html):
     return None
 
 
-def stage_b_network_sniff(page):
+def stage_b_network_sniff(page, timeout=NETWORK_SNIFF_SECONDS, click_controls=True, referer=None):
     try:
         log("  Stage B: network sniff")
-        page.listen.start(targets=[".m3u8", "m3u8", "playlist", "manifest"])
-        for selector in ["video", ".play-btn", ".play-button", "#player", ".jw-video",
-                         "[class*='play']", "[id*='play']"]:
-            try:
-                el = page.ele(f"css:{selector}", timeout=1)
-                if el:
-                    el.click()
-                    break
-            except Exception:
-                pass
-        deadline = time.time() + 5
-        for packet in page.listen.steps(timeout=5):
-            if time.time() > deadline:
-                break
-            url = getattr(packet, "url", "") or ""
-            resp_headers = {}
-            try:
-                resp_headers = dict(packet.response.headers) if packet.response else {}
-            except Exception:
-                pass
-            ct = resp_headers.get("Content-Type", resp_headers.get("content-type", ""))
-            if ".m3u8" in url or "mpegURL" in ct or "mpegurl" in ct.lower():
-                log(f"  Stage B: captured stream url={url[:160]}")
-                return {"url": url, "user_agent": get_ua(page),
-                        "cookie": get_cookies_str(page), "referer": page.url}
-        page.listen.stop()
+        if not start_media_listener(page):
+            return None
+        if click_controls:
+            clicked = activate_player_controls(page)
+            log(f"  Stage B: controls clicked={clicked}")
+        result = listen_for_media(page, timeout=timeout, referer=referer)
+        if result:
+            return result
     except Exception as e:
         log(f"  Stage B error: {e}")
+    finally:
+        stop_media_listener(page)
     return None
 
 
-def stage_c_iframe_crawl(page):
+def extract_player_page(page, src, parent_url, depth=0, visited=None):
+    visited = visited or set()
+    if depth > 2 or src in visited:
+        return None
+    visited.add(src)
+
+    if is_probable_media_url(src):
+        log(f"  Player crawl: iframe src is direct media={src[:160]}")
+        return make_stream_result(src, page, parent_url)
+
+    try:
+        log(f"  Player crawl depth={depth}: {src[:180]}")
+        if start_media_listener(page):
+            page.get(src, timeout=TIMEOUT_PER_MIRROR)
+            result = listen_for_media(page, timeout=PLAYER_MEDIA_WAIT, referer=src)
+            stop_media_listener(page)
+            if result:
+                return result
+        else:
+            page.get(src, timeout=TIMEOUT_PER_MIRROR)
+            time.sleep(2)
+
+        dom_urls = extract_dom_media_urls(page)
+        if dom_urls:
+            log(f"  Player crawl: DOM media url={dom_urls[0][:160]}")
+            return make_stream_result(dom_urls[0], page, src)
+
+        html = page.html or ""
+        result = stage_a_player_fingerprint(page, html)
+        if result:
+            return result
+
+        result = stage_b_network_sniff(page, timeout=NETWORK_SNIFF_SECONDS, click_controls=True, referer=src)
+        if result:
+            return result
+
+        result = stage_d_carpet_bomb(page)
+        if result:
+            return result
+
+        nested = collect_iframe_sources(page, limit=6)
+        for nested_src in nested:
+            result = extract_player_page(page, nested_src, src, depth + 1, visited)
+            if result:
+                return result
+    except Exception as e:
+        log(f"  Player crawl failed: {e}")
+    finally:
+        stop_media_listener(page)
+    return None
+
+
+def stage_c_iframe_crawl(page, parent_url=None):
     try:
         log("  Stage C: iframe crawl")
-        iframes = page.eles("tag:iframe") or []
-        log(f"  Stage C: iframe count={len(iframes)}")
-        for iframe in iframes[:5]:
-            try:
-                src = iframe.attr("src") or ""
-                if not re.search(r"(embed|player|video|m3u8|vstream|kwik|rapid|cloud)", src, re.I):
-                    continue
-                if src.startswith("//"):
-                    src = "https:" + src
-                elif not src.startswith("http"):
-                    continue
-                page.get(src)
-                time.sleep(1)
-                html = page.html or ""
-                result = stage_a_player_fingerprint(page, html)
-                if result:
-                    return result
-                result = stage_b_network_sniff(page)
-                if result:
-                    return result
-            except Exception:
-                pass
+        sources = collect_iframe_sources(page, limit=10)
+        log(f"  Stage C: iframe count={len(sources)}")
+        for src in sources:
+            result = extract_player_page(page, src, parent_url or getattr(page, "url", ""))
+            if result:
+                return result
     except Exception as e:
         log(f"  Stage C error: {e}")
     return None
@@ -559,7 +970,11 @@ def stage_d_carpet_bomb(page):
         ua = get_ua(page)
         cookie = get_cookies_str(page)
         referer = page.url
-        urls = re.findall(r'https?://[^\s"\'<>\\]+\.(?:m3u8|mp4)[^\s"\'<>\\]*', html)
+        dom_urls = extract_dom_media_urls(page)
+        if dom_urls:
+            log(f"  Stage D: found DOM/performance media url={dom_urls[0][:160]}")
+            return {"url": dom_urls[0], "user_agent": ua, "cookie": cookie, "referer": referer}
+        urls = extract_media_urls_from_text(html, referer)
         if urls:
             log(f"  Stage D: found direct media url={urls[0][:160]}")
             return {"url": urls[0], "user_agent": ua, "cookie": cookie, "referer": referer}
@@ -580,9 +995,10 @@ def stage_d_carpet_bomb(page):
         for b64 in re.findall(r'[A-Za-z0-9+/]{40,}={0,2}', html):
             try:
                 decoded = base64.b64decode(b64 + "==").decode("utf-8", errors="ignore")
-                if decoded.startswith("http") and ".m3u8" in decoded:
-                    log(f"  Stage D: found base64 stream={decoded[:160]}")
-                    return {"url": decoded, "user_agent": ua, "cookie": cookie, "referer": referer}
+                urls = extract_media_urls_from_text(decoded, referer)
+                if urls:
+                    log(f"  Stage D: found base64 stream={urls[0][:160]}")
+                    return {"url": urls[0], "user_agent": ua, "cookie": cookie, "referer": referer}
             except Exception:
                 pass
     except Exception as e:
@@ -594,37 +1010,59 @@ def extract_from_mirror(mirror, episode_url, page):
     try:
         target = episode_url if episode_url.startswith("http") else f"{mirror}/{episode_url.lstrip('/')}"
         log(f"Extract waterfall target: {target}")
-        page.get(target, timeout=TIMEOUT_PER_MIRROR)
-        time.sleep(2)
         setup_worker_hooks(page)
+        set_navigation_referer(page, mirror if mirror else "")
+        listening = start_media_listener(page)
+        page.get(target, timeout=TIMEOUT_PER_MIRROR)
+        wait_for_dynamic_player(page)
+        if listening:
+            result = accept_stream_result(
+                listen_for_media(page, timeout=2, referer=target),
+                "Initial network")
+            stop_media_listener(page)
+            if result:
+                return result
+        else:
+            stop_media_listener(page)
+
         html = page.html or ""
-        result = stage_a_player_fingerprint(page, html)
+        result = accept_stream_result(stage_d_carpet_bomb(page), "Stage D")
         if result:
             return result
-        result = stage_b_network_sniff(page)
+        result = accept_stream_result(stage_a_player_fingerprint(page, html), "Stage A")
         if result:
             return result
-        result = stage_c_iframe_crawl(page)
+        result = accept_stream_result(stage_c_iframe_crawl(page, parent_url=target), "Stage C")
         if result:
             return result
-        result = stage_d_carpet_bomb(page)
+        if not (getattr(page, "url", "") or "").startswith(target):
+            log("  Skipping outer-page click sniff after iframe navigation changed the page")
+            return None
+        result = accept_stream_result(stage_b_network_sniff(page, referer=target), "Stage B")
         if result:
             return result
     except Exception as e:
         log(f"Extract target failed ({mirror}): {e}")
+    finally:
+        stop_media_listener(page)
     return None
 
 # ---- Search mode -------------------------------------------------------------
 
 def do_search(query):
     results = []
+    seen = set()
     sites = fetch_indexed_sites()
-    for site in sites[:10]:
+    for site in sites[:8]:
         try:
             links = search_site(site, query, "")
             for link in links[:5]:
+                key = (site["name"], link)
+                if key in seen:
+                    continue
+                seen.add(key)
                 results.append({"title": query, "provider": site["name"], "url": link})
-            if results:
+            if len(results) >= 20:
                 break
         except Exception as e:
             log(f"Search on {site.get('name', site.get('url'))} failed: {e}")
@@ -635,7 +1073,6 @@ def do_search(query):
 def do_extract(episode_url):
     if not DRISSION_AVAILABLE:
         return {"error": "chromium_not_found"}
-    mirrors = fetch_mirror_pool()
     page = launch_browser()
     if page is None:
         return {"error": "chromium_not_found"}
@@ -643,6 +1080,7 @@ def do_extract(episode_url):
         result = extract_from_mirror("", episode_url, page)
         if result:
             return result
+        mirrors = fetch_mirror_pool()
         for mirror in mirrors[:5]:
             try:
                 from urllib.parse import urlparse
@@ -656,10 +1094,7 @@ def do_extract(episode_url):
             except Exception:
                 pass
     finally:
-        try:
-            page.quit()
-        except Exception:
-            pass
+        close_browser(page)
     return {"error": "all_mirrors_failed"}
 
 
@@ -705,10 +1140,7 @@ def do_resolve(query, episode_id, max_site_attempts):
                         return result
             log(f"Resolve site exhausted: {site['name']} candidate_links={len(links)} tried_urls={len(tried_urls)}")
     finally:
-        try:
-            page.quit()
-        except Exception:
-            pass
+        close_browser(page)
 
     log(f"Resolve failed after {attempted} indexed sites")
     return {"error": "all_indexed_sites_failed", "attempted_sites": attempted}

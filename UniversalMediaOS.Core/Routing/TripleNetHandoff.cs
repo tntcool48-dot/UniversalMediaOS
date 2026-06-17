@@ -100,71 +100,17 @@ namespace UniversalMediaOS.Core.Routing
                     var stream = await _scraper.ResolveAsync(query, episodeId, maxSiteAttempts, token);
                     if (stream?.Url != null)
                     {
-                        string sessionId = _proxy.RegisterSession(new ProxySession(
-                            stream.Url,
-                            stream.UserAgent,
-                            stream.Cookie,
-                            stream.KeyUrl,
-                            stream.Referer,
-                            DateTime.UtcNow));
-
-                        string localUrl = $"http://127.0.0.1:19475/stream?id={sessionId}";
-                        Log($"> [Tier 1] SUCCESS - proxied stream registered: {localUrl}");
-
-                        return new PlaybackSource
-                        {
-                            Tier = SourceTier.Tier1_PythonScraper,
-                            UrlOrPath = localUrl,
-                            UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-                        };
+                        return RegisterScraperStream(stream, Log);
                     }
 
-                    Log("> [Tier 1] Scraper exhausted indexed sites. Falling to Tier 2...");
-                    /*
-                    if (results.Length == 0)
+                    Log("> [Tier 1] Indexed-site resolve failed. Trying scraper search/extract fallback...");
+                    var fallback = await TryScraperSearchFallbackAsync(query, episodeId, Log, token);
+                    if (fallback != null)
                     {
-                        Log("> [Tier 1] No search results from scraper. Falling to Tier 2...");
+                        return fallback;
                     }
-                    else
-                    {
-                        var best = PickBestResult(results, query);
-                        if (best != null)
-                        {
-                            string epUrl = MapEpisodeUrl(best, episodeId);
-                            Log($"> [Tier 1] Extracting stream from: {epUrl}");
 
-                            var stream = await _scraper.ExtractAsync(epUrl, token);
-                            if (stream?.Url != null)
-                            {
-                                string sessionId = _proxy.RegisterSession(new ProxySession(
-                                    stream.Url,
-                                    stream.UserAgent,
-                                    stream.Cookie,
-                                    stream.KeyUrl,
-                                    stream.Referer,
-                                    DateTime.UtcNow));
-
-                                string localUrl = $"http://127.0.0.1:19475/stream?id={sessionId}";
-                                Log($"> [Tier 1] SUCCESS — proxied stream registered: {localUrl}");
-
-                                return new PlaybackSource
-                                {
-                                    Tier = SourceTier.Tier1_PythonScraper,
-                                    UrlOrPath = localUrl,
-                                    UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-                                };
-                            }
-                            else
-                            {
-                                Log("> [Tier 1] Scraper exhausted all mirrors. Falling to Tier 2...");
-                            }
-                        }
-                        else
-                        {
-                            Log("> [Tier 1] No suitable result matched the query. Falling to Tier 2...");
-                        }
-                    }
-                    */
+                    Log("> [Tier 1] Scraper exhausted indexed sites and search fallback. Falling to Tier 2...");
                 }
                 catch (OperationCanceledException)
                 {
@@ -192,6 +138,123 @@ namespace UniversalMediaOS.Core.Routing
         }
 
         // ── Helper: pick best search result ─────────────────────────────────
+
+        private PlaybackSource RegisterScraperStream(ScraperStreamResult stream, Action<string> log)
+        {
+            string sessionId = _proxy.RegisterSession(new ProxySession(
+                stream.Url!,
+                stream.UserAgent,
+                stream.Cookie,
+                stream.KeyUrl,
+                stream.Referer,
+                DateTime.UtcNow));
+
+            string localUrl = $"http://127.0.0.1:19475/stream?id={sessionId}";
+            log($"> [Tier 1] SUCCESS - proxied stream registered: {localUrl}");
+
+            return new PlaybackSource
+            {
+                Tier = SourceTier.Tier1_PythonScraper,
+                UrlOrPath = localUrl,
+                UserAgent = DesktopUserAgent
+            };
+        }
+
+        private async Task<PlaybackSource?> TryScraperSearchFallbackAsync(
+            string query,
+            string episodeId,
+            Action<string> log,
+            CancellationToken token)
+        {
+            var results = await _scraper.SearchAsync(query, token);
+            if (results.Length == 0)
+            {
+                log("> [Tier 1] Search fallback returned no scraper results.");
+                return null;
+            }
+
+            var orderedResults = results
+                .Select((result, index) => new
+                {
+                    Result = result,
+                    Index = index,
+                    Score = ScoreScraperResult(result, query)
+                })
+                .OrderByDescending(item => item.Score)
+                .ThenBy(item => item.Index)
+                .Take(12)
+                .ToList();
+
+            var triedUrls = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var item in orderedResults)
+            {
+                token.ThrowIfCancellationRequested();
+
+                foreach (string epUrl in BuildEpisodeUrlCandidates(item.Result, episodeId))
+                {
+                    if (!triedUrls.Add(epUrl))
+                        continue;
+
+                    log($"> [Tier 1] Search fallback extracting from {item.Result.Provider}: {epUrl}");
+                    var stream = await _scraper.ExtractAsync(epUrl, token);
+                    if (stream?.Url != null)
+                    {
+                        return RegisterScraperStream(stream, log);
+                    }
+                }
+            }
+
+            log($"> [Tier 1] Search fallback exhausted {triedUrls.Count} candidate URLs.");
+            return null;
+        }
+
+        private static int ScoreScraperResult(ScraperSearchResult result, string query)
+        {
+            string cleanQuery = NormalizeTitle(query);
+            string cleanTitle = NormalizeTitle(result.Title);
+            var queryWords = cleanQuery.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+            int score = queryWords.Count(word => cleanTitle.Contains(word, StringComparison.OrdinalIgnoreCase)) * 4;
+            string lowerUrl = result.Url.ToLowerInvariant();
+            score += queryWords.Count(word => lowerUrl.Contains(word, StringComparison.OrdinalIgnoreCase)) * 2;
+            if (lowerUrl.Contains("/watch", StringComparison.OrdinalIgnoreCase)) score += 4;
+            if (lowerUrl.Contains("/ep-", StringComparison.OrdinalIgnoreCase)) score += 3;
+            if (lowerUrl.Contains("episode", StringComparison.OrdinalIgnoreCase)) score += 2;
+            if (IsDubTitle(result.Title)) score -= 2;
+            return score;
+        }
+
+        private static System.Collections.Generic.IEnumerable<string> BuildEpisodeUrlCandidates(
+            ScraperSearchResult result,
+            string episodeId)
+        {
+            string baseUrl = result.Url.TrimEnd('/');
+            var candidates = new System.Collections.Generic.List<string>
+            {
+                result.Url,
+                baseUrl,
+                MapEpisodeUrl(result, episodeId)
+            };
+
+            if (!string.IsNullOrWhiteSpace(episodeId))
+            {
+                candidates.Add(Regex.Replace(baseUrl, @"/ep-\d+(?=/?(?:[?#]|$))", $"/ep-{episodeId}"));
+                candidates.Add(Regex.Replace(baseUrl, @"([?&]ep=)\d+", $"$1{episodeId}"));
+
+                if (!baseUrl.Contains("/ep-", StringComparison.OrdinalIgnoreCase) &&
+                    !baseUrl.Contains("ep=", StringComparison.OrdinalIgnoreCase))
+                {
+                    candidates.Add($"{baseUrl}/ep-{episodeId}");
+                    candidates.Add($"{baseUrl}?ep={episodeId}");
+                    candidates.Add($"{baseUrl}-episode-{episodeId}");
+                }
+            }
+
+            return candidates
+                .Where(url => !string.IsNullOrWhiteSpace(url))
+                .Distinct(StringComparer.OrdinalIgnoreCase);
+        }
 
         private ScraperSearchResult? PickBestResult(ScraperSearchResult[] results, string query)
         {
