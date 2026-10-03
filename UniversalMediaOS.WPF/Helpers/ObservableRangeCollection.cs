@@ -7,7 +7,7 @@ namespace UniversalMediaOS.WPF.Helpers
 {
     public class ObservableRangeCollection<T> : ObservableCollection<T>
     {
-        public ObservableRangeCollection() : base() { }
+        public ObservableRangeCollection() { }
 
         public ObservableRangeCollection(IEnumerable<T> collection) : base(collection) { }
 
@@ -35,7 +35,6 @@ namespace UniversalMediaOS.WPF.Helpers
             if (collection == null) throw new System.ArgumentNullException(nameof(collection));
             CheckReentrancy();
 
-            int startIndex = Count;
             var list = new List<T>(collection);
 
             foreach (var item in list)
@@ -45,7 +44,10 @@ namespace UniversalMediaOS.WPF.Helpers
 
             OnPropertyChanged(new PropertyChangedEventArgs("Count"));
             OnPropertyChanged(new PropertyChangedEventArgs("Item[]"));
-            OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Add, list, startIndex));
+            // WPF ItemsControl implementations do not support multi-item Add notifications.
+            // Reset is less granular, but it keeps range appends reliable across ListBox,
+            // ItemsControl, and virtualized panels.
+            OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
         }
 
         protected override void OnPropertyChanged(PropertyChangedEventArgs e)

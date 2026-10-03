@@ -15,11 +15,16 @@ namespace UniversalMediaOS.Core.Services
 
     public class EpubReaderService
     {
+        private const int MaximumArchiveEntries = 5_000;
+        private const long MaximumEntryBytes = 128L * 1024 * 1024;
+        private const long MaximumArchiveBytes = 1024L * 1024 * 1024;
+        private const int MaximumCompressionRatio = 500;
+
         public EpubBook? LoadEpub(string epubFilePath)
         {
             if (!File.Exists(epubFilePath)) return null;
 
-            string localAppData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UniversalMediaOS");
+            string localAppData = Path.Combine(UniversalMediaOS.Core.Helpers.AppDataPaths.LocalBaseDirectory, "UniversalMediaOS");
             string baseTemp = Path.Combine(localAppData, "epub_cache");
             Directory.CreateDirectory(baseTemp);
 
@@ -36,8 +41,7 @@ namespace UniversalMediaOS.Core.Services
             bool success = false;
             try
             {
-                // Extract Zip
-                ZipFile.ExtractToDirectory(epubFilePath, extractPath, true);
+                ExtractEpubSafely(epubFilePath, canonicalExtractPath);
 
                 // Find container.xml to resolve OPF path
                 string containerPath = Path.Combine(extractPath, "META-INF", "container.xml");
@@ -50,8 +54,8 @@ namespace UniversalMediaOS.Core.Services
                 string opfPath = rootfile?.Attribute("full-path")?.Value ?? "";
                 if (string.IsNullOrEmpty(opfPath)) return null;
 
-                string fullOpfPath = Path.GetFullPath(Path.Combine(extractPath, opfPath));
-                if (!fullOpfPath.StartsWith(canonicalExtractPath, StringComparison.OrdinalIgnoreCase) || !File.Exists(fullOpfPath))
+                if (!TryResolveArchiveContentPath(extractPath, canonicalExtractPath, opfPath, out string fullOpfPath) ||
+                    !File.Exists(fullOpfPath))
                 {
                     return null;
                 }
@@ -82,8 +86,6 @@ namespace UniversalMediaOS.Core.Services
                         string href = item.Attribute("href")?.Value ?? "";
                         if (!string.IsNullOrEmpty(id) && !string.IsNullOrEmpty(href))
                         {
-                            // Href might be url encoded, decode it
-                            href = Uri.UnescapeDataString(href);
                             manifestItems[id] = href;
                         }
                     }
@@ -99,8 +101,17 @@ namespace UniversalMediaOS.Core.Services
                         string idref = itemref.Attribute("idref")?.Value ?? "";
                         if (manifestItems.TryGetValue(idref, out string? relativePath))
                         {
-                            string fullPath = Path.GetFullPath(Path.Combine(opfDir, relativePath));
-                            if (fullPath.StartsWith(canonicalExtractPath, StringComparison.OrdinalIgnoreCase) && File.Exists(fullPath))
+                            if (!TryResolveArchiveContentPath(opfDir, canonicalExtractPath, relativePath, out string fullPath))
+                            {
+                                throw new InvalidDataException($"EPUB spine item '{idref}' points outside the book archive.");
+                            }
+
+                            if (!File.Exists(fullPath))
+                            {
+                                throw new InvalidDataException($"EPUB spine item '{idref}' points to a missing chapter.");
+                            }
+
+                            if (!chapters.Contains(fullPath, StringComparer.OrdinalIgnoreCase))
                             {
                                 chapters.Add(fullPath);
                             }
@@ -140,7 +151,7 @@ namespace UniversalMediaOS.Core.Services
         {
             try
             {
-                string localAppData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UniversalMediaOS");
+                string localAppData = Path.Combine(UniversalMediaOS.Core.Helpers.AppDataPaths.LocalBaseDirectory, "UniversalMediaOS");
                 string baseTemp = Path.Combine(localAppData, "epub_cache");
                 if (Directory.Exists(baseTemp))
                 {
@@ -161,6 +172,117 @@ namespace UniversalMediaOS.Core.Services
                 }
             }
             catch { }
+        }
+
+        internal static bool TryResolveArchiveContentPath(
+            string contentBasePath,
+            string canonicalExtractPath,
+            string archiveReference,
+            out string fullPath)
+        {
+            fullPath = string.Empty;
+            if (string.IsNullOrWhiteSpace(archiveReference))
+            {
+                return false;
+            }
+
+            string referenceWithoutFragment = archiveReference.Trim();
+            int suffixIndex = referenceWithoutFragment.IndexOfAny(['#', '?']);
+            if (suffixIndex >= 0)
+            {
+                referenceWithoutFragment = referenceWithoutFragment[..suffixIndex];
+            }
+
+            if (string.IsNullOrWhiteSpace(referenceWithoutFragment))
+            {
+                return false;
+            }
+
+            string decoded = Uri.UnescapeDataString(referenceWithoutFragment);
+            if (Path.IsPathRooted(decoded) ||
+                Uri.TryCreate(decoded, UriKind.Absolute, out _))
+            {
+                return false;
+            }
+
+            string canonicalRoot = Path.GetFullPath(canonicalExtractPath);
+            if (!canonicalRoot.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal))
+            {
+                canonicalRoot += Path.DirectorySeparatorChar;
+            }
+
+            string candidate = Path.GetFullPath(Path.Combine(contentBasePath, decoded));
+            if (!candidate.StartsWith(canonicalRoot, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            fullPath = candidate;
+            return true;
+        }
+
+        private static void ExtractEpubSafely(string epubFilePath, string canonicalExtractPath)
+        {
+            using var archive = ZipFile.OpenRead(epubFilePath);
+            if (archive.Entries.Count > MaximumArchiveEntries)
+            {
+                throw new InvalidDataException($"EPUB contains more than {MaximumArchiveEntries} archive entries.");
+            }
+
+            long totalBytes = 0;
+            foreach (var entry in archive.Entries)
+            {
+                if (entry.Length > MaximumEntryBytes)
+                {
+                    throw new InvalidDataException($"EPUB entry '{entry.FullName}' is too large.");
+                }
+
+                totalBytes = checked(totalBytes + entry.Length);
+                if (totalBytes > MaximumArchiveBytes)
+                {
+                    throw new InvalidDataException("EPUB expanded content exceeds the 1 GB safety limit.");
+                }
+
+                if (entry.CompressedLength > 0 &&
+                    entry.Length / Math.Max(1, entry.CompressedLength) > MaximumCompressionRatio)
+                {
+                    throw new InvalidDataException($"EPUB entry '{entry.FullName}' has an unsafe compression ratio.");
+                }
+
+                string destination = Path.GetFullPath(Path.Combine(canonicalExtractPath, entry.FullName));
+                if (!destination.StartsWith(canonicalExtractPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidDataException($"EPUB entry escapes the extraction directory: {entry.FullName}");
+                }
+
+                if (string.IsNullOrEmpty(entry.Name))
+                {
+                    Directory.CreateDirectory(destination);
+                    continue;
+                }
+
+                Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+                using Stream input = entry.Open();
+                using var output = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.None);
+                byte[] buffer = new byte[64 * 1024];
+                long written = 0;
+                while (true)
+                {
+                    int read = input.Read(buffer, 0, buffer.Length);
+                    if (read <= 0)
+                    {
+                        break;
+                    }
+
+                    written += read;
+                    if (written > entry.Length || written > MaximumEntryBytes)
+                    {
+                        throw new InvalidDataException($"EPUB entry '{entry.FullName}' exceeded its declared size.");
+                    }
+
+                    output.Write(buffer, 0, read);
+                }
+            }
         }
     }
 }

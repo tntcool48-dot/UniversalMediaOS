@@ -1,0 +1,696 @@
+{
+  "entities": {
+    "Q77855044": {
+      "type": "item",
+      "id": "Q77855044",
+      "labels": {
+        "en": {
+          "language": "en",
+          "value": "Women Make Film"
+        }
+      },
+      "claims": {
+        "P31": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P31",
+              "hash": "fa41184cb03f49f0edfbf2fc4f9d33e35afecaea",
+              "datavalue": {
+                "value": {
+                  "entity-type": "item",
+                  "numeric-id": 11424,
+                  "id": "Q11424"
+                },
+                "type": "wikibase-entityid"
+              },
+              "datatype": "wikibase-item"
+            }
+          }
+        ],
+        "P577": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "9893e893c5d74ce28cc2ce67c0c9b0d9195b9337",
+              "datavalue": {
+                "value": {
+                  "time": "+2018-09-01T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          }
+        ],
+        "P345": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P345",
+              "hash": "bde47df409567c8d05f9d8edc259c84ec2efc7ab",
+              "datavalue": {
+                "value": "tt8819192",
+                "type": "string"
+              },
+              "datatype": "external-id"
+            }
+          }
+        ]
+      }
+    },
+    "Q205028": {
+      "type": "item",
+      "id": "Q205028",
+      "labels": {
+        "en": {
+          "language": "en",
+          "value": "Iron Man 2"
+        }
+      },
+      "claims": {
+        "P31": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P31",
+              "hash": "fa41184cb03f49f0edfbf2fc4f9d33e35afecaea",
+              "datavalue": {
+                "value": {
+                  "entity-type": "item",
+                  "numeric-id": 11424,
+                  "id": "Q11424"
+                },
+                "type": "wikibase-entityid"
+              },
+              "datatype": "wikibase-item"
+            }
+          }
+        ],
+        "P345": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P345",
+              "hash": "98486c12d61fa30a767074a6590e96b631abbe9d",
+              "datavalue": {
+                "value": "tt1228705",
+                "type": "string"
+              },
+              "datatype": "external-id"
+            }
+          }
+        ],
+        "P577": [
+          {
+            "rank": "preferred",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "4ec7dd0396b4b7c58dc38f2254a785599e20eeb8",
+              "datavalue": {
+                "value": {
+                  "time": "+2010-05-07T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "82f1df8da761ec3b0b913d396b9994ae24829857",
+              "datavalue": {
+                "value": {
+                  "time": "+2010-04-30T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "ed83146896eea7afc6d38484ef923d1ec0e40adf",
+              "datavalue": {
+                "value": {
+                  "time": "+2010-05-06T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "548bea75cc99e235c3df77be39697b1e24da7383",
+              "datavalue": {
+                "value": {
+                  "time": "+2010-04-29T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          }
+        ],
+        "P3383": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "novalue",
+              "property": "P3383",
+              "hash": "a441dc1e29c0aaa62d9806250226f97b26357296",
+              "datatype": "commonsMedia"
+            }
+          }
+        ]
+      }
+    },
+    "Q102438": {
+      "type": "item",
+      "id": "Q102438",
+      "labels": {
+        "en": {
+          "language": "en",
+          "value": "Harry Potter and the Philosopher's Stone"
+        }
+      },
+      "claims": {
+        "P31": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P31",
+              "hash": "fa41184cb03f49f0edfbf2fc4f9d33e35afecaea",
+              "datavalue": {
+                "value": {
+                  "entity-type": "item",
+                  "numeric-id": 11424,
+                  "id": "Q11424"
+                },
+                "type": "wikibase-entityid"
+              },
+              "datatype": "wikibase-item"
+            }
+          }
+        ],
+        "P577": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "6f89cdc23f89a6ea36322d057ea8dffeeb058e0d",
+              "datavalue": {
+                "value": {
+                  "time": "+2001-11-16T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "671d0b25ce13ea7e2331a67dfa858099e8304fed",
+              "datavalue": {
+                "value": {
+                  "time": "+2001-12-05T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "preferred",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "95bc3263aaf4a615068956d6ed73fbb06133e6d8",
+              "datavalue": {
+                "value": {
+                  "time": "+2001-11-04T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "baee1473af059147a7c47609b8082667d2aa0f18",
+              "datavalue": {
+                "value": {
+                  "time": "+2001-11-22T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "8f15abefa4b01ecf5943e04b225e4d65b1a323bd",
+              "datavalue": {
+                "value": {
+                  "time": "+2001-11-30T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "226f0c876688972612d197f96c0abcf4b832b3fd",
+              "datavalue": {
+                "value": {
+                  "time": "+2018-09-12T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "c6f109dcf8a4d2b58ef301255d92128406251d06",
+              "datavalue": {
+                "value": {
+                  "time": "+2002-02-14T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          }
+        ],
+        "P345": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P345",
+              "hash": "1b49175aab6e8644ac2816869dd6b4682b4a86d2",
+              "datavalue": {
+                "value": "tt0241527",
+                "type": "string"
+              },
+              "datatype": "external-id"
+            }
+          }
+        ]
+      }
+    },
+    "Q192724": {
+      "type": "item",
+      "id": "Q192724",
+      "labels": {
+        "mul": {
+          "language": "mul",
+          "value": "Iron Man"
+        }
+      },
+      "claims": {
+        "P31": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P31",
+              "hash": "fa41184cb03f49f0edfbf2fc4f9d33e35afecaea",
+              "datavalue": {
+                "value": {
+                  "entity-type": "item",
+                  "numeric-id": 11424,
+                  "id": "Q11424"
+                },
+                "type": "wikibase-entityid"
+              },
+              "datatype": "wikibase-item"
+            }
+          }
+        ],
+        "P345": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P345",
+              "hash": "2916d56bd5d8efbd68a66f03e281feade028dda5",
+              "datavalue": {
+                "value": "tt0371746",
+                "type": "string"
+              },
+              "datatype": "external-id"
+            }
+          }
+        ],
+        "P577": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "0db365d00fac02cd01d7ea25fa46e8ac677480a0",
+              "datavalue": {
+                "value": {
+                  "time": "+2008-05-02T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "5bf29adab9cb5712b9baf02df9698269f7f8f41a",
+              "datavalue": {
+                "value": {
+                  "time": "+2008-04-30T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "5bf29adab9cb5712b9baf02df9698269f7f8f41a",
+              "datavalue": {
+                "value": {
+                  "time": "+2008-04-30T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "105f9df4381c5b369db7b10c3a4658bef9a7d4e3",
+              "datavalue": {
+                "value": {
+                  "time": "+2008-05-01T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          }
+        ]
+      }
+    },
+    "Q17738": {
+      "type": "item",
+      "id": "Q17738",
+      "labels": {
+        "en": {
+          "language": "en",
+          "value": "Star Wars: Episode IV \u2013 A New Hope"
+        }
+      },
+      "claims": {
+        "P31": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P31",
+              "hash": "fa41184cb03f49f0edfbf2fc4f9d33e35afecaea",
+              "datavalue": {
+                "value": {
+                  "entity-type": "item",
+                  "numeric-id": 11424,
+                  "id": "Q11424"
+                },
+                "type": "wikibase-entityid"
+              },
+              "datatype": "wikibase-item"
+            }
+          }
+        ],
+        "P345": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P345",
+              "hash": "e16c8f6522f16cae585ad4a4283ca9b7862c43d1",
+              "datavalue": {
+                "value": "tt0076759",
+                "type": "string"
+              },
+              "datatype": "external-id"
+            }
+          }
+        ],
+        "P577": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "cbea869de7728542a5c671306abc7fd37934053d",
+              "datavalue": {
+                "value": {
+                  "time": "+1977-05-25T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "a87eceff22c9fca2d0d3fcf0b499addabe4d94a9",
+              "datavalue": {
+                "value": {
+                  "time": "+1977-10-19T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "f381dcbb039340cf96ff5bae3283e31446f70e3f",
+              "datavalue": {
+                "value": {
+                  "time": "+1978-02-09T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "cbea869de7728542a5c671306abc7fd37934053d",
+              "datavalue": {
+                "value": {
+                  "time": "+1977-05-25T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "cbe7e848be62e9ca2af340eb4b7626ee258bc092",
+              "datavalue": {
+                "value": {
+                  "time": "+1977-00-00T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 9,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "49ca64b1a2f554e3183ee2d7d2e086307b804001",
+              "datavalue": {
+                "value": {
+                  "time": "+1977-12-25T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "success": 1
+}

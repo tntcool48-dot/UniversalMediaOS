@@ -1,99 +1,503 @@
 <Window x:Class="UniversalMediaOS.WPF.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:vm="clr-namespace:UniversalMediaOS.WPF.ViewModels"
-        xmlns:views="clr-namespace:UniversalMediaOS.WPF.Views"
-        Title="UniversalMediaOS" Height="720" Width="1280"
-        Background="Transparent"
-        Foreground="{StaticResource TextPrimary}"
-        WindowStyle="SingleBorderWindow" AllowsTransparency="False">
+        xmlns:helpers="clr-namespace:UniversalMediaOS.WPF.Helpers"
+        xmlns:controls="clr-namespace:UniversalMediaOS.WPF.Controls"
+        Title="Universal Media OS"
+        Height="800" Width="1280"
+        MinHeight="560" MinWidth="900"
+        Background="{DynamicResource BgApp}"
+        Foreground="{DynamicResource TextPrimary}"
+        WindowState="Maximized"
+        ResizeMode="CanResize"
+        WindowStyle="SingleBorderWindow" AllowsTransparency="False"
+        StateChanged="Window_StateChanged"
+        PreviewKeyDown="Window_PreviewKeyDown">
 
     <WindowChrome.WindowChrome>
-        <WindowChrome CaptionHeight="40" ResizeBorderThickness="8" CornerRadius="0" GlassFrameThickness="-1" UseAeroCaptionButtons="True"/>
+        <WindowChrome CaptionHeight="34" ResizeBorderThickness="8" CornerRadius="0" GlassFrameThickness="-1" UseAeroCaptionButtons="False"/>
     </WindowChrome.WindowChrome>
 
-    <Grid>
+    <Window.Resources>
+        <Style x:Key="TopMediaButton" TargetType="Button">
+            <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True"/>
+            <Setter Property="Background" Value="#1A111827"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderSubtle}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="Padding" Value="11,6"/>
+            <Setter Property="Margin" Value="0,0,6,6"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Chrome"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="12">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="#241C2D42"/>
+                                <Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource BorderStrong}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="ChromeIconButton" TargetType="Button" BasedOn="{StaticResource TopMediaButton}">
+            <Setter Property="Padding" Value="9,5"/>
+            <Setter Property="Margin" Value="0,0,6,6"/>
+        </Style>
+
+        <Style x:Key="WindowControlButton" TargetType="Button">
+            <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True"/>
+            <Setter Property="Width" Value="42"/>
+            <Setter Property="Height" Value="32"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextMuted}"/>
+            <Setter Property="FontFamily" Value="Segoe MDL2 Assets"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Chrome" Background="{TemplateBinding Background}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource ControlHoverBackground}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource ControlPressedBackground}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="StatusToggleButton" TargetType="ToggleButton">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Foreground" Value="{StaticResource Success}"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="Chrome" Background="{TemplateBinding Background}" CornerRadius="6" Padding="4,2">
+                            <ContentPresenter/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="#1A14B8A6"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="#2214B8A6"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Grid Background="{DynamicResource BgApp}"
+          Margin="0"
+          ClipToBounds="True"
+          UseLayoutRounding="True"
+          FlowDirection="{Binding SettingsViewModel.AppFlowDirection}">
         <Grid.RowDefinitions>
-            <RowDefinition Height="40"/> <!-- TitleBar -->
-            <RowDefinition Height="*"/>  <!-- Main Content -->
+            <RowDefinition Height="34"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="40"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <!-- Custom TitleBar Background -->
-        <Border Grid.Row="0" Background="Transparent" WindowChrome.IsHitTestVisibleInChrome="False">
-            <TextBlock Text="UniversalMediaOS" VerticalAlignment="Center" Margin="{StaticResource SpaceMd}"
-                       Style="{StaticResource TitleText}" FontSize="14" Foreground="{StaticResource TextMuted}"/>
-        </Border>
-
-        <!-- Main Application Surface -->
-        <Border Grid.Row="1" Background="{StaticResource BgSurface}" Margin="{StaticResource SpaceXs}" CornerRadius="8">
-            <Border.Effect>
-                <StaticResource ResourceKey="ContentPlane"/>
-            </Border.Effect>
-
-            <Grid>
+        <Border Grid.Row="0"
+                Background="{DynamicResource BgChrome}"
+                BorderBrush="{DynamicResource BorderSubtle}"
+                BorderThickness="0,0,0,1">
+            <Grid Margin="8,0,0,0">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="200"/>
+                    <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
-                <!-- Navigation Sidebar -->
-                <StackPanel Grid.Column="0" Background="Transparent" Margin="{StaticResource SpaceMd}">
-                    <TextBlock Text="Menu" Style="{StaticResource CaptionText}" Margin="12,0,0,8"/>
-                    <Button Content="Search"    Command="{Binding NavigateToSearchCommand}"    Style="{StaticResource PremiumNavButton}"/>
-                    <Button Content="Library"   Command="{Binding NavigateToMangaCommand}"     Style="{StaticResource PremiumNavButton}"/>
-                    <Button Content="Downloads" Command="{Binding NavigateToDownloadsCommand}" Style="{StaticResource PremiumNavButton}"/>
-
-                    <TextBlock Text="Active" Style="{StaticResource CaptionText}" Margin="12,24,0,8"/>
-                    <Button Content="Playback"  Command="{Binding NavigateToPlaybackCommand}"  Style="{StaticResource PremiumNavButton}"/>
-
-                    <TextBlock Text="System" Style="{StaticResource CaptionText}" Margin="12,24,0,8"/>
-                    <Button Content="Settings"  Command="{Binding NavigateToSettingsCommand}"  Style="{StaticResource PremiumNavButton}"/>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="&#xE7C5;" FontFamily="Segoe MDL2 Assets" Foreground="{DynamicResource AccentPrimary}" FontSize="15" VerticalAlignment="Center" Margin="0,0,7,0"/>
+                    <TextBlock Text="Universal Media OS" FontSize="15" FontWeight="Black" Foreground="{DynamicResource TextPrimary}" VerticalAlignment="Center"/>
                 </StackPanel>
 
-                <!-- Content Area: single ContentControl hooked into DataTemplates in App.xaml -->
-                <ContentControl Grid.Column="1" Margin="{StaticResource SpaceMd}"
-                                Content="{Binding CurrentViewModel}"/>
+                <StackPanel Grid.Column="2" Orientation="Horizontal">
+                    <Button Content="&#xE740;" AutomationProperties.Name="Fullscreen" Click="FullscreenButton_Click" Style="{StaticResource WindowControlButton}" ToolTip="Toggle whole-app fullscreen (F11)."/>
+                    <Button Content="&#xE921;" AutomationProperties.Name="Minimize" Click="MinimizeButton_Click" Style="{StaticResource WindowControlButton}" ToolTip="Minimize the app."/>
+                    <Button x:Name="MaximizeRestoreButton" Content="&#xE923;" AutomationProperties.Name="Maximize or Restore" Click="MaximizeRestoreButton_Click" Style="{StaticResource WindowControlButton}" ToolTip="Restore the app window."/>
+                    <Button Content="&#xE8BB;" AutomationProperties.Name="Close" Click="CloseButton_Click" Style="{StaticResource WindowControlButton}" ToolTip="Close Universal Media OS."/>
+                </StackPanel>
             </Grid>
         </Border>
 
-        <!-- Toast Notification Overlay -->
-        <!-- Fix: Visibility is NOT set as a local value so DataTrigger can override it correctly -->
-        <Grid Grid.Row="1" VerticalAlignment="Bottom" HorizontalAlignment="Center"
-              Margin="0,0,0,32" IsHitTestVisible="False">
-            <Border x:Name="ToastBorder" CornerRadius="8" Padding="24,12"
-                    Background="{StaticResource AccentPrimary}">
-                <Border.Effect>
-                    <StaticResource ResourceKey="ElevatedPlane"/>
-                </Border.Effect>
-                <TextBlock Text="{Binding ToastText}" Foreground="{StaticResource TextPrimary}"
+        <Border Grid.Row="1"
+                Background="{DynamicResource BgChrome}"
+                BorderBrush="{DynamicResource BorderSubtle}"
+                BorderThickness="0,0,0,1"
+                Padding="8,6,8,0">
+            <controls:GroupedNavigationPanel>
+            <WrapPanel>
+                <Button Content="{helpers:Loc Anime}" AutomationProperties.Name="Search" Command="{Binding NavigateToSearchCommand}" Style="{StaticResource TopMediaButton}" Foreground="#A855F7" ToolTip="Open anime search."/>
+                <Button Content="{helpers:Loc Manga}" AutomationProperties.Name="Library" Command="{Binding NavigateToMangaCommand}" Style="{StaticResource TopMediaButton}" Foreground="#EC4899" ToolTip="Open manga search."/>
+                <Button Content="{helpers:Loc Movies}" AutomationProperties.Name="Movies" Command="{Binding NavigateToMoviesCommand}" Style="{StaticResource TopMediaButton}" Foreground="#06B6D4" ToolTip="Open movies."/>
+                <Button Content="{helpers:Loc Books}" AutomationProperties.Name="Books" Command="{Binding NavigateToBooksCommand}" Style="{StaticResource TopMediaButton}" Foreground="#F59E0B" ToolTip="Open books."/>
+                <Button Content="{helpers:Loc Key=TV Shows}" AutomationProperties.Name="TV Shows" Command="{Binding NavigateToTvShowsCommand}" Style="{StaticResource TopMediaButton}" Foreground="#10B981" ToolTip="Open TV shows."/>
+                <Button Content="{helpers:Loc Cartoons}" AutomationProperties.Name="Cartoons" Command="{Binding NavigateToCartoonsCommand}" Style="{StaticResource TopMediaButton}" Foreground="#F97316" ToolTip="Open cartoons."/>
+            </WrapPanel>
+            <WrapPanel>
+                <Button Content="Player" AutomationProperties.Name="Player" Command="{Binding NavigateToPlaybackCommand}" Style="{StaticResource TopMediaButton}" Foreground="#38BDF8" ToolTip="Open the standalone player."/>
+                <Button Content="VA Detect" AutomationProperties.Name="VA Detect" Command="{Binding NavigateToVaDetectCommand}" Style="{StaticResource TopMediaButton}" Foreground="#F59E0B" ToolTip="Find familiar sub and dub voice actors."/>
+                <Button Content="{helpers:Loc Key=Watch Together}" AutomationProperties.Name="Watch Together" Command="{Binding NavigateToWatchTogetherCommand}" Style="{StaticResource TopMediaButton}" Foreground="#06B6D4" ToolTip="Open synced watch controls."/>
+                <Button Content="{helpers:Loc Key=My List}" AutomationProperties.Name="My List" Command="{Binding NavigateToMyListCommand}" Style="{StaticResource TopMediaButton}" Foreground="#10B981" ToolTip="Open your tracked media list."/>
+                <Button Content="{helpers:Loc Downloads}" AutomationProperties.Name="Downloads" Command="{Binding NavigateToDownloadsCommand}" Style="{StaticResource TopMediaButton}" Foreground="#8B5CF6" ToolTip="Open completed and local downloads."/>
+                <Button Content="&#xE713;" AutomationProperties.Name="Settings" AutomationProperties.AutomationId="OpenSettings" FontFamily="Segoe MDL2 Assets" Command="{Binding NavigateToSettingsCommand}" Style="{StaticResource ChromeIconButton}" ToolTip="{helpers:Loc Settings}"/>
+            </WrapPanel>
+            </controls:GroupedNavigationPanel>
+        </Border>
+
+        <Border Grid.Row="2"
+                Background="{DynamicResource BgChrome}"
+                BorderBrush="{DynamicResource BorderSubtle}"
+                BorderThickness="0,0,0,1"
+                WindowChrome.IsHitTestVisibleInChrome="True">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <Button Grid.Column="0"
+                        Content="&#x2039;"
+                        AutomationProperties.Name="Scroll tabs left"
+                        Style="{StaticResource ChromeIconButton}"
+                        Margin="2,0,2,0"
+                        Opacity="0.75"
+                        Click="ScrollTabsLeftButton_Click"
+                        ToolTip="Scroll tabs left."/>
+
+                <ScrollViewer x:Name="TabHeadersScrollViewer" Grid.Column="1" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled">
+                    <ItemsControl ItemsSource="{Binding Tabs}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Orientation="Horizontal"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Width="176"
+                                        Height="38"
+                                        BorderBrush="{DynamicResource BorderSubtle}"
+                                        BorderThickness="0,0,1,0"
+                                        AllowDrop="True"
+                                        PreviewMouseLeftButtonDown="TabHeader_PreviewMouseLeftButtonDown"
+                                        MouseMove="TabHeader_MouseMove"
+                                        DragOver="TabHeader_DragOver"
+                                        Drop="TabHeader_Drop">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Background" Value="Transparent"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                                    <Setter Property="Background" Value="#1B1426"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="22"/>
+                                            <ColumnDefinition Width="22"/>
+                                            <ColumnDefinition Width="24"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <Button Style="{StaticResource TabIconButton}" Grid.ColumnSpan="4"
+                                                AutomationProperties.AutomationId="SelectTab"
+                                                AutomationProperties.Name="{Binding Title}"
+                                                Command="{Binding DataContext.SelectTabCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                CommandParameter="{Binding}"
+                                                Background="Transparent"
+                                                 HorizontalContentAlignment="Left"
+                                                 Padding="10,0,72,0"
+                                                 Cursor="Hand">
+                                            <Button.ToolTip>
+                                                <ToolTip>
+                                                    <StackPanel>
+                                                        <TextBlock Text="{Binding Title}"/>
+                                                        <TextBlock Text="Focus this tab, then press P for picture in picture. Escape restores the app."
+                                                                   Margin="0,4,0,0">
+                                                            <TextBlock.Style>
+                                                                <Style TargetType="TextBlock">
+                                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding Kind}" Value="Playback">
+                                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </TextBlock.Style>
+                                                        </TextBlock>
+                                                    </StackPanel>
+                                                </ToolTip>
+                                            </Button.ToolTip>
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="{Binding Icon}" FontFamily="Segoe MDL2 Assets" FontSize="13" Margin="0,0,7,0"/>
+                                                <TextBlock Text="{Binding Title}" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                            </StackPanel>
+                                        </Button>
+
+                                        <Button Style="{StaticResource TabIconButton}" Grid.Column="1"
+                                                Content="&#x2039;"
+                                                AutomationProperties.Name="Move tab left" AutomationProperties.AutomationId="MoveTabLeft"
+                                                Command="{Binding DataContext.MoveTabLeftCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                CommandParameter="{Binding}"
+                                                Background="Transparent"
+                                                FontSize="14"
+                                                Cursor="Hand"
+                                                ToolTip="Move this tab left."/>
+
+                                        <Button Style="{StaticResource TabIconButton}" Grid.Column="2"
+                                                Content="&#x203A;"
+                                                AutomationProperties.Name="Move tab right" AutomationProperties.AutomationId="MoveTabRight"
+                                                Command="{Binding DataContext.MoveTabRightCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                CommandParameter="{Binding}"
+                                                Background="Transparent"
+                                                FontSize="14"
+                                                Cursor="Hand"
+                                                ToolTip="Move this tab right."/>
+
+                                        <Button Style="{StaticResource TabIconButton}" Grid.Column="3"
+                                                Content="&#xE711;" AutomationProperties.Name="Close tab" AutomationProperties.AutomationId="CloseTab"
+                                                Command="{Binding DataContext.CloseTabCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                CommandParameter="{Binding}"
+                                                Background="Transparent"
+                                                  FontFamily="Segoe MDL2 Assets"
+                                                 FontSize="12"
+                                                 Cursor="Hand"
+                                                 ToolTip="Close this tab."/>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+
+                <StackPanel Grid.Column="2" Orientation="Horizontal">
+                    <Button Content="+" Command="{Binding NavigateToSearchCommand}" Style="{StaticResource ChromeIconButton}" Margin="2,0" ToolTip="Open a new anime search tab."/>
+                    <Button Content="&#x203A;"
+                            AutomationProperties.Name="Scroll tabs right"
+                            Style="{StaticResource ChromeIconButton}"
+                            Margin="2,0"
+                            Opacity="0.75"
+                            Click="ScrollTabsRightButton_Click"
+                            ToolTip="Scroll tabs right."/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="3">
+            <controls:PlaybackTabContentHost Tabs="{Binding Tabs}" ActiveTab="{Binding ActiveTab}">
+                <controls:PlaybackTabContentHost.LayoutTransform>
+                    <ScaleTransform ScaleX="{Binding ActiveContentScale}" ScaleY="{Binding ActiveContentScale}"/>
+                </controls:PlaybackTabContentHost.LayoutTransform>
+                <controls:PlaybackTabContentHost.Style>
+                    <Style TargetType="controls:PlaybackTabContentHost">
+                        <Setter Property="Visibility" Value="Visible"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding HasOpenTabs}" Value="False">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </controls:PlaybackTabContentHost.Style>
+            </controls:PlaybackTabContentHost>
+
+            <Border Background="{DynamicResource BgApp}">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Collapsed"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding HasOpenTabs}" Value="False">
+                                <Setter Property="Visibility" Value="Visible"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Width="420">
+                    <TextBlock Text="{helpers:Loc Key=No tabs are open}"
+                               Style="{StaticResource DisplayText}"
+                               FontSize="28"
+                               FontWeight="Black"
+                               TextAlignment="Center"/>
+                    <TextBlock Text="Use the navigation bar to open Anime, Manga, Movies, Books, TV Shows, Cartoons, Player, VA Detect, Watch Together, My List, Downloads, or Settings."
+                               Style="{StaticResource BodyText}"
+                               Foreground="{DynamicResource TextMuted}"
+                               TextWrapping="Wrap"
+                               TextAlignment="Center"
+                               Margin="0,10,0,0"/>
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <Border Grid.Row="4"
+                MinHeight="30"
+                Background="{DynamicResource BgChrome}"
+                BorderBrush="{DynamicResource BorderSubtle}"
+                BorderThickness="0,1,0,0">
+            <Border.Style>
+                <Style TargetType="Border">
+                    <Setter Property="Visibility" Value="Visible"/>
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding SettingsViewModel.ShowServiceBar}" Value="False">
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
+            <Grid Margin="8,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="260"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <ToggleButton x:Name="ServiceStatusButton"
+                              Grid.Column="0"
+                              Style="{StaticResource StatusToggleButton}"
+                              VerticalAlignment="Center"
+                              AutomationProperties.Name="Service Health Details"
+                              ToolTip="Show detailed service health.">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE930;" FontFamily="Segoe MDL2 Assets" Foreground="{Binding SettingsViewModel.ServiceSummaryBrush}" FontSize="11" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                        <TextBlock Text="{Binding SettingsViewModel.ServiceSummaryText}" Foreground="{Binding SettingsViewModel.ServiceSummaryBrush}" FontSize="12" FontWeight="Bold" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </ToggleButton>
+
+                <Popup Grid.ColumnSpan="4"
+                       IsOpen="{Binding IsChecked, ElementName=ServiceStatusButton}"
+                       PlacementTarget="{Binding ElementName=ServiceStatusButton}"
+                       Placement="Top"
+                       StaysOpen="False"
+                       AllowsTransparency="True">
+                    <Border Background="{DynamicResource BgPanel}"
+                            BorderBrush="{DynamicResource BorderStrong}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="14"
+                            Width="420">
+                        <StackPanel>
+                            <TextBlock Text="{helpers:Loc Key=Service Health}" Style="{StaticResource SubtitleText}" FontSize="16" FontWeight="Bold" Margin="0,0,0,10"/>
+                            <Grid Margin="0,0,0,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="120"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="{helpers:Loc Key=Python Scraper}" Style="{StaticResource CaptionText}" VerticalAlignment="Center"/>
+                                <ProgressBar Grid.Column="1" Value="{Binding SettingsViewModel.PythonScraperHealth}" Height="5" Foreground="{Binding SettingsViewModel.PythonScraperBrush}" Background="#24202A37" VerticalAlignment="Center" Margin="10,0"/>
+                                <TextBlock Grid.Column="2" Text="{Binding SettingsViewModel.PythonScraperStatus}" Foreground="{Binding SettingsViewModel.PythonScraperBrush}" FontSize="12"/>
+                            </Grid>
+                            <Grid Margin="0,0,0,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="120"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="{helpers:Loc Key=HLS Proxy}" Style="{StaticResource CaptionText}" VerticalAlignment="Center"/>
+                                <ProgressBar Grid.Column="1" Value="{Binding SettingsViewModel.HlsProxyHealth}" Height="5" Foreground="{Binding SettingsViewModel.HlsProxyBrush}" Background="#24202A37" VerticalAlignment="Center" Margin="10,0"/>
+                                <TextBlock Grid.Column="2" Text="{Binding SettingsViewModel.HlsProxyStatus}" Foreground="{Binding SettingsViewModel.HlsProxyBrush}" FontSize="12"/>
+                            </Grid>
+                            <Grid Margin="0,0,0,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="120"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="{helpers:Loc Key=uBlock Origin}" Style="{StaticResource CaptionText}" VerticalAlignment="Center"/>
+                                <ProgressBar Grid.Column="1" Value="{Binding SettingsViewModel.UBlockHealth}" Height="5" Foreground="{Binding SettingsViewModel.UBlockBrush}" Background="#24202A37" VerticalAlignment="Center" Margin="10,0"/>
+                                <TextBlock Grid.Column="2" Text="{Binding SettingsViewModel.UBlockStatus}" Foreground="{Binding SettingsViewModel.UBlockBrush}" FontSize="12"/>
+                            </Grid>
+                            <Grid Margin="0,0,0,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="120"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="FFmpeg" Style="{StaticResource CaptionText}" VerticalAlignment="Center"/>
+                                <ProgressBar Grid.Column="1" Value="{Binding SettingsViewModel.FfmpegHealth}" Height="5" Foreground="{Binding SettingsViewModel.FfmpegBrush}" Background="#24202A37" VerticalAlignment="Center" Margin="10,0"/>
+                                <TextBlock Grid.Column="2" Text="{Binding SettingsViewModel.FfmpegStatusText}" Foreground="{Binding SettingsViewModel.FfmpegBrush}" FontSize="12"/>
+                            </Grid>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="120"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="{helpers:Loc qBittorrent}" Style="{StaticResource CaptionText}" VerticalAlignment="Center"/>
+                                <ProgressBar Grid.Column="1" Value="{Binding SettingsViewModel.QBittorrentHealth}" Height="5" Foreground="{Binding SettingsViewModel.QBittorrentBrush}" Background="#24202A37" VerticalAlignment="Center" Margin="10,0"/>
+                                <TextBlock Grid.Column="2" Text="{Binding SettingsViewModel.QBittorrentStatus}" Foreground="{Binding SettingsViewModel.QBittorrentBrush}" FontSize="12"/>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+                </Popup>
+
+                <UniformGrid Grid.Column="1" Columns="5" VerticalAlignment="Center" Margin="12,0,0,0">
+                    <ProgressBar Value="{Binding SettingsViewModel.PythonScraperHealth}" Height="4" Margin="2,0" Foreground="{Binding SettingsViewModel.PythonScraperBrush}" Background="#24202A37"/>
+                    <ProgressBar Value="{Binding SettingsViewModel.HlsProxyHealth}" Height="4" Margin="2,0" Foreground="{Binding SettingsViewModel.HlsProxyBrush}" Background="#24202A37"/>
+                    <ProgressBar Value="{Binding SettingsViewModel.UBlockHealth}" Height="4" Margin="2,0" Foreground="{Binding SettingsViewModel.UBlockBrush}" Background="#24202A37"/>
+                    <ProgressBar Value="{Binding SettingsViewModel.FfmpegHealth}" Height="4" Margin="2,0" Foreground="{Binding SettingsViewModel.FfmpegBrush}" Background="#24202A37"/>
+                    <ProgressBar Value="{Binding SettingsViewModel.QBittorrentHealth}" Height="4" Margin="2,0" Foreground="{Binding SettingsViewModel.QBittorrentBrush}" Background="#24202A37"/>
+                </UniformGrid>
+
+                <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="{helpers:Loc Key=Python Scraper}" Style="{StaticResource CaptionText}" Margin="0,0,16,0"/>
+                    <TextBlock Text="{helpers:Loc Key=HLS Proxy}" Style="{StaticResource CaptionText}" Margin="0,0,16,0"/>
+                    <TextBlock Text="uBlock" Style="{StaticResource CaptionText}" Margin="0,0,16,0"/>
+                    <Button Content="{helpers:Loc Refresh}"
+                            Command="{Binding SettingsViewModel.RefreshServiceHealthCommand}"
+                            Style="{StaticResource ChromeIconButton}"
+                            Padding="8,3"
+                            Margin="0"
+                            ToolTip="Refresh service status."/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="3" VerticalAlignment="Bottom" HorizontalAlignment="Center"
+              Margin="0,0,0,18" IsHitTestVisible="False">
+            <Border x:Name="ToastBorder" CornerRadius="8" Padding="22,10"
+                    Background="{DynamicResource AccentPrimary}">
+                <TextBlock Text="{Binding ToastText}" Foreground="#031412"
                            Style="{StaticResource BodyText}" FontWeight="SemiBold"/>
                 <Border.Style>
                     <Style TargetType="Border">
-                        <!-- Default collapsed via Style setter (not local value) so DataTrigger can override -->
                         <Setter Property="Visibility" Value="Collapsed"/>
                         <Setter Property="Opacity" Value="0"/>
                         <Style.Triggers>
                             <DataTrigger Binding="{Binding IsToastVisible}" Value="True">
                                 <Setter Property="Visibility" Value="Visible"/>
-                                <DataTrigger.EnterActions>
-                                    <BeginStoryboard>
-                                        <Storyboard>
-                                            <DoubleAnimation Storyboard.TargetProperty="Opacity"
-                                                             To="1" Duration="{StaticResource MotionFast}"/>
-                                            <ThicknessAnimation Storyboard.TargetProperty="Margin"
-                                                                From="0,20,0,-20" To="0,0,0,0"
-                                                                Duration="{StaticResource MotionFast}"/>
-                                        </Storyboard>
-                                    </BeginStoryboard>
-                                </DataTrigger.EnterActions>
-                                <DataTrigger.ExitActions>
-                                    <BeginStoryboard>
-                                        <Storyboard FillBehavior="Stop">
-                                            <DoubleAnimation Storyboard.TargetProperty="Opacity"
-                                                             To="0" Duration="{StaticResource MotionFast}"/>
-                                        </Storyboard>
-                                    </BeginStoryboard>
-                                </DataTrigger.ExitActions>
+                                <Setter Property="Opacity" Value="1"/>
                             </DataTrigger>
                         </Style.Triggers>
                     </Style>

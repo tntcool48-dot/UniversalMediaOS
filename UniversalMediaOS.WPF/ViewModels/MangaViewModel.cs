@@ -17,13 +17,23 @@ namespace UniversalMediaOS.WPF.ViewModels
     ///   2 = Vertical scroll page reader
     ///   3 = External WebView reader (for chapters with externalUrl only)
     /// </summary>
-    public partial class MangaViewModel : ObservableObject
+    public partial class MangaViewModel : ObservableObject, IDisposable
     {
         private readonly MangaService _mangaService;
+        private readonly CancellationTokenSource _lifecycleCts = new();
+        private CancellationTokenSource? _searchCts;
+        private CancellationTokenSource? _chapterCts;
+        private CancellationTokenSource? _pageCts;
+        private int _searchGeneration;
+        private int _chapterGeneration;
+        private int _pageGeneration;
+        private bool _isInitialized;
+        private bool _isDisposed;
 
         // ── Search ──────────────────────────────────────────
         [ObservableProperty] private string _searchQuery = string.Empty;
         [ObservableProperty] private bool _isSearching;
+        [ObservableProperty] private string _resultsDescription = "Loading MangaDex recommendations";
 
         public Helpers.ObservableRangeCollection<MangaSearchResult> MangaResults { get; } = new();
 
@@ -51,6 +61,75 @@ namespace UniversalMediaOS.WPF.ViewModels
             _mangaService = mangaService;
         }
 
+        public void Initialize()
+        {
+            if (_isInitialized || _isDisposed)
+            {
+                return;
+            }
+
+            _isInitialized = true;
+            _ = LoadRecommendationsAsync(_lifecycleCts.Token);
+        }
+
+        public void CancelActiveWork()
+        {
+            if (!_lifecycleCts.IsCancellationRequested)
+            {
+                _lifecycleCts.Cancel();
+            }
+
+            _searchCts?.Cancel();
+            _chapterCts?.Cancel();
+            _pageCts?.Cancel();
+        }
+
+        private async Task LoadRecommendationsAsync(CancellationToken token)
+        {
+            var linkedCts = BeginOperation(ref _searchCts, out int generation, token, OperationKind.Search);
+            token = linkedCts.Token;
+            IsSearching = true;
+            ResultsDescription = "Trending manga from MangaDex";
+
+            try
+            {
+                var results = await _mangaService.GetRecommendedMangaAsync(token);
+                token.ThrowIfCancellationRequested();
+                if (!IsCurrentSearchGeneration(generation))
+                {
+                    return;
+                }
+
+                MangaResults.ReplaceRange(results);
+                CurrentViewMode = 0;
+
+                if (results.Count == 0)
+                {
+                    ResultsDescription = "No MangaDex recommendations found";
+                }
+
+                AppLogger.Log($"Loaded {results.Count} MangaDex recommendations.");
+            }
+            catch (OperationCanceledException)
+            {
+                AppLogger.Log("Manga recommendations load was cancelled.");
+            }
+            catch (Exception ex)
+            {
+                ResultsDescription = "MangaDex recommendations failed to load";
+                AppLogger.Log($"Failed to load MangaDex recommendations: {ex.Message}", "ERROR");
+            }
+            finally
+            {
+                if (IsCurrentSearchGeneration(generation))
+                {
+                    IsSearching = false;
+                }
+
+                ClearOperation(ref _searchCts, linkedCts);
+            }
+        }
+
         // ── Search Command ───────────────────────────────────
         [RelayCommand(IncludeCancelCommand = true, AllowConcurrentExecutions = false)]
         private async Task SearchMangaAsync(CancellationToken token)
@@ -58,18 +137,32 @@ namespace UniversalMediaOS.WPF.ViewModels
             AppLogger.Log($"SearchMangaAsync invoked. Query='{SearchQuery}'");
             if (string.IsNullOrWhiteSpace(SearchQuery))
             {
-                AppLogger.Log("SearchMangaAsync: Query is empty, skipping.", "WARNING");
+                await LoadRecommendationsAsync(token);
                 return;
             }
 
+            var linkedCts = BeginOperation(ref _searchCts, out int generation, token, OperationKind.Search);
+            token = linkedCts.Token;
             IsSearching = true;
+            ResultsDescription = $"MangaDex results for \"{SearchQuery.Trim()}\"";
             try
             {
                 AppLogger.Log($"Querying manga service for: '{SearchQuery}'...");
                 var results = await _mangaService.SearchMangaAsync(SearchQuery, token);
+                token.ThrowIfCancellationRequested();
+                if (!IsCurrentSearchGeneration(generation))
+                {
+                    return;
+                }
+
                 MangaResults.ReplaceRange(results);
 
                 CurrentViewMode = 0;
+                if (results.Count == 0)
+                {
+                    ResultsDescription = $"No MangaDex results for \"{SearchQuery.Trim()}\"";
+                }
+
                 AppLogger.Log($"SearchMangaAsync complete. Found {results.Count} results.");
             }
             catch (OperationCanceledException)
@@ -78,11 +171,17 @@ namespace UniversalMediaOS.WPF.ViewModels
             }
             catch (Exception ex)
             {
+                ResultsDescription = "MangaDex search failed; showing previous results";
                 AppLogger.Log($"SearchMangaAsync failed. Error: {ex.Message}", "ERROR");
             }
             finally
             {
-                IsSearching = false;
+                if (IsCurrentSearchGeneration(generation))
+                {
+                    IsSearching = false;
+                }
+
+                ClearOperation(ref _searchCts, linkedCts);
             }
         }
 
@@ -92,6 +191,9 @@ namespace UniversalMediaOS.WPF.ViewModels
         {
             if (manga == null) return;
             AppLogger.Log($"ReadCommand invoked for manga: '{manga.Title}' (Id={manga.Id})");
+            var linkedCts = BeginOperation(ref _chapterCts, out int generation, CancellationToken.None, OperationKind.Chapter);
+            var token = linkedCts.Token;
+            _pageCts?.Cancel();
 
             SelectedManga = manga;
             Chapters.Clear();
@@ -102,7 +204,14 @@ namespace UniversalMediaOS.WPF.ViewModels
 
             try
             {
-                var chapters = await _mangaService.GetChaptersAsync(manga.Id);
+                var chapters = await _mangaService.GetChaptersAsync(manga.Id, token);
+                token.ThrowIfCancellationRequested();
+                if (!IsCurrentChapterGeneration(generation) ||
+                    !string.Equals(SelectedManga?.Id, manga.Id, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
                 AppLogger.Log($"Loaded {chapters.Count} chapters for '{manga.Title}'");
                 Chapters.ReplaceRange(chapters);
 
@@ -111,13 +220,22 @@ namespace UniversalMediaOS.WPF.ViewModels
                     AppLogger.Log("No chapters found for this manga.", "WARNING");
                 }
             }
+            catch (OperationCanceledException)
+            {
+                AppLogger.Log($"Chapter load cancelled for '{manga.Title}'.");
+            }
             catch (Exception ex)
             {
                 AppLogger.Log($"Failed to load chapters: {ex.Message}", "ERROR");
             }
             finally
             {
-                IsLoadingChapters = false;
+                if (IsCurrentChapterGeneration(generation))
+                {
+                    IsLoadingChapters = false;
+                }
+
+                ClearOperation(ref _chapterCts, linkedCts);
             }
         }
 
@@ -127,9 +245,11 @@ namespace UniversalMediaOS.WPF.ViewModels
         {
             if (chapter == null) return;
             AppLogger.Log($"SelectChapterCommand invoked: Ch {chapter.ChapterNumber} - '{chapter.Title}' (Id={chapter.Id})");
+            var linkedCts = BeginOperation(ref _pageCts, out int generation, CancellationToken.None, OperationKind.Page);
+            var token = linkedCts.Token;
 
             SelectedChapter = chapter;
-            Breadcrumb = $"{SelectedManga?.Title ?? "Manga"} › Ch. {chapter.ChapterNumber}";
+            Breadcrumb = $"{SelectedManga?.Title ?? "Manga"} \u203A Ch. {chapter.ChapterNumber}";
 
             // If chapter has an external URL, open in WebView
             if (!string.IsNullOrEmpty(chapter.ExternalUrl))
@@ -137,6 +257,7 @@ namespace UniversalMediaOS.WPF.ViewModels
                 AppLogger.Log($"Chapter has externalUrl='{chapter.ExternalUrl}' — opening WebView reader.");
                 ExternalUrl = chapter.ExternalUrl;
                 CurrentViewMode = 3;
+                ClearOperation(ref _pageCts, linkedCts);
                 return;
             }
 
@@ -147,7 +268,14 @@ namespace UniversalMediaOS.WPF.ViewModels
 
             try
             {
-                var pages = await _mangaService.GetPageUrlsAsync(chapter.Id);
+                var pages = await _mangaService.GetPageUrlsAsync(chapter.Id, token);
+                token.ThrowIfCancellationRequested();
+                if (!IsCurrentPageGeneration(generation) ||
+                    !string.Equals(SelectedChapter?.Id, chapter.Id, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
                 AppLogger.Log($"Loaded {pages.Count} pages for chapter '{chapter.ChapterNumber}'");
                 PageUrls.ReplaceRange(pages);
 
@@ -158,14 +286,26 @@ namespace UniversalMediaOS.WPF.ViewModels
                     CurrentViewMode = 1;
                 }
             }
+            catch (OperationCanceledException)
+            {
+                AppLogger.Log($"Page load cancelled for chapter '{chapter.ChapterNumber}'.");
+            }
             catch (Exception ex)
             {
                 AppLogger.Log($"Failed to load chapter pages: {ex.Message}", "ERROR");
-                CurrentViewMode = 1;
+                if (IsCurrentPageGeneration(generation))
+                {
+                    CurrentViewMode = 1;
+                }
             }
             finally
             {
-                IsLoadingPages = false;
+                if (IsCurrentPageGeneration(generation))
+                {
+                    IsLoadingPages = false;
+                }
+
+                ClearOperation(ref _pageCts, linkedCts);
             }
         }
 
@@ -179,6 +319,7 @@ namespace UniversalMediaOS.WPF.ViewModels
                 case 3:
                 case 2:
                     // Back to chapters
+                    _pageCts?.Cancel();
                     PageUrls.Clear();
                     ExternalUrl = string.Empty;
                     CurrentViewMode = 1;
@@ -186,6 +327,8 @@ namespace UniversalMediaOS.WPF.ViewModels
                     break;
                 case 1:
                     // Back to search results
+                    _chapterCts?.Cancel();
+                    _pageCts?.Cancel();
                     Chapters.Clear();
                     SelectedManga = null;
                     CurrentViewMode = 0;
@@ -194,6 +337,76 @@ namespace UniversalMediaOS.WPF.ViewModels
                 default:
                     break;
             }
+        }
+
+        private enum OperationKind
+        {
+            Search,
+            Chapter,
+            Page
+        }
+
+        private CancellationTokenSource BeginOperation(
+            ref CancellationTokenSource? operationCts,
+            out int generation,
+            CancellationToken commandToken,
+            OperationKind kind)
+        {
+            operationCts?.Cancel();
+            operationCts?.Dispose();
+            operationCts = CancellationTokenSource.CreateLinkedTokenSource(_lifecycleCts.Token, commandToken);
+
+            generation = kind switch
+            {
+                OperationKind.Search => Interlocked.Increment(ref _searchGeneration),
+                OperationKind.Chapter => Interlocked.Increment(ref _chapterGeneration),
+                _ => Interlocked.Increment(ref _pageGeneration)
+            };
+
+            return operationCts;
+        }
+
+        private static void ClearOperation(ref CancellationTokenSource? operationCts, CancellationTokenSource completedCts)
+        {
+            if (ReferenceEquals(operationCts, completedCts))
+            {
+                operationCts = null;
+            }
+
+            completedCts.Dispose();
+        }
+
+        private bool IsCurrentSearchGeneration(int generation)
+        {
+            return !_lifecycleCts.IsCancellationRequested &&
+                   generation == Volatile.Read(ref _searchGeneration);
+        }
+
+        private bool IsCurrentChapterGeneration(int generation)
+        {
+            return !_lifecycleCts.IsCancellationRequested &&
+                   generation == Volatile.Read(ref _chapterGeneration);
+        }
+
+        private bool IsCurrentPageGeneration(int generation)
+        {
+            return !_lifecycleCts.IsCancellationRequested &&
+                   generation == Volatile.Read(ref _pageGeneration);
+        }
+
+        public void Dispose()
+        {
+            if (_isDisposed)
+            {
+                return;
+            }
+
+            _isDisposed = true;
+            CancelActiveWork();
+            _searchCts?.Dispose();
+            _chapterCts?.Dispose();
+            _pageCts?.Dispose();
+            _lifecycleCts.Dispose();
         }
     }
 }

@@ -1,0 +1,131 @@
+<UserControl x:Class="UniversalMediaOS.WPF.Views.MyListView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:controls="clr-namespace:UniversalMediaOS.WPF.Controls"
+             mc:Ignorable="d"
+             d:DesignHeight="720" d:DesignWidth="1280"
+             Background="{StaticResource BgApp}">
+
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="104"/>
+            <RowDefinition Height="54"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <UniformGrid Grid.Row="0" Columns="4" Margin="0,10,0,0">
+            <Border Style="{StaticResource SurfaceCard}" Margin="0,0,8,0">
+                <StackPanel HorizontalAlignment="Center">
+                    <TextBlock Text="{Binding Total}" Foreground="{StaticResource AccentPrimary}" FontSize="26" FontWeight="Black" HorizontalAlignment="Center"/>
+                    <TextBlock Text="Total" Style="{StaticResource CaptionText}"/>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource SurfaceCard}" Margin="8,0">
+                <StackPanel HorizontalAlignment="Center">
+                    <TextBlock Text="{Binding Completed}" Foreground="{StaticResource Success}" FontSize="26" FontWeight="Black" HorizontalAlignment="Center"/>
+                    <TextBlock Text="Completed" Style="{StaticResource CaptionText}"/>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource SurfaceCard}" Margin="8,0">
+                <StackPanel HorizontalAlignment="Center">
+                    <TextBlock Text="{Binding Watching}" Foreground="{StaticResource FocusBorder}" FontSize="26" FontWeight="Black" HorizontalAlignment="Center"/>
+                    <TextBlock Text="Airing" Style="{StaticResource CaptionText}"/>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource SurfaceCard}" Margin="8,0,0,0">
+                <StackPanel HorizontalAlignment="Center">
+                    <TextBlock Text="{Binding AverageScore}" Foreground="{StaticResource Warning}" FontSize="26" FontWeight="Black" HorizontalAlignment="Center"/>
+                    <TextBlock Text="Avg Score" Style="{StaticResource CaptionText}"/>
+                </StackPanel>
+            </Border>
+        </UniformGrid>
+
+        <DockPanel Grid.Row="1" VerticalAlignment="Center" LastChildFill="True">
+            <Button Content="Refresh"
+                    Command="{Binding RefreshCommand}"
+                    Style="{StaticResource SecondaryButton}"
+                    DockPanel.Dock="Right"
+                    MinWidth="92"
+                    ToolTip="Refresh favorites and progress."/>
+            <WrapPanel>
+                <Button Content="{Binding AllFilterText}" Command="{Binding ShowAllCommand}" Style="{StaticResource SecondaryButton}" Margin="0,0,8,0" ToolTip="Show all favorite media."/>
+                <Button Content="{Binding WatchingFilterText}" Command="{Binding ShowWatchingCommand}" Style="{StaticResource SecondaryButton}" Margin="0,0,8,0" ToolTip="Show media currently in progress."/>
+                <Button Content="{Binding CompletedFilterText}" Command="{Binding ShowCompletedCommand}" Style="{StaticResource SecondaryButton}" Margin="0,0,8,0" ToolTip="Show completed media."/>
+            </WrapPanel>
+        </DockPanel>
+
+        <Grid Grid.Row="2">
+        <ListBox ItemsSource="{Binding Items}" Background="Transparent" BorderThickness="0">
+            <ListBox.ItemTemplate>
+                <DataTemplate>
+                    <Border Background="{StaticResource BgPanel}" BorderBrush="{StaticResource BorderSubtle}" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,0,0,10">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="44"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <Border Width="44" Height="54" CornerRadius="6" Background="#3322C55E" ClipToBounds="True">
+                                <Image controls:AsyncImageLoader.ImageUrl="{Binding CoverImageUrl}"
+                                       Stretch="{Binding DataContext.SettingsViewModel.PosterStretch, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                            </Border>
+                            <StackPanel Grid.Column="1" Margin="12,0,0,0">
+                                <TextBlock Text="{Binding Title}" Style="{StaticResource SubtitleText}" FontWeight="Bold"/>
+                                <TextBlock Style="{StaticResource CaptionText}">
+                                    <Run Text="{Binding Kind}"/><Run Text=" - "/><Run Text="{Binding Year}"/>
+                                </TextBlock>
+                                <TextBlock Text="{Binding Score, StringFormat=* {0}}" Foreground="{StaticResource Warning}" FontSize="12" Margin="0,8,0,0"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2" HorizontalAlignment="Right">
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,0,8">
+                                    <Button Content="Open"
+                                            Command="{Binding DataContext.OpenDetailsCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                            CommandParameter="{Binding}"
+                                            Style="{StaticResource SecondaryButton}"
+                                            MinWidth="72"
+                                            Height="32"
+                                            Margin="0,0,6,0"
+                                            ToolTip="Open this title's details."/>
+                                    <Button Content="Remove"
+                                            Command="{Binding DataContext.RemoveFavoriteCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                            CommandParameter="{Binding}"
+                                            Style="{StaticResource DangerButton}"
+                                            MinWidth="78"
+                                            Height="32"
+                                            ToolTip="Remove this title from My List."/>
+                                </StackPanel>
+                                <Border Background="#3306B6D4" CornerRadius="8" Padding="10,4" HorizontalAlignment="Right">
+                                    <TextBlock Text="{Binding Status}" Foreground="{StaticResource FocusBorder}" FontSize="11" FontWeight="Bold"/>
+                                </Border>
+                                <TextBlock Text="{Binding Progress}" Style="{StaticResource CaptionText}" HorizontalAlignment="Right" Margin="0,8,0,0"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+
+        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Width="440">
+            <StackPanel.Style>
+                <Style TargetType="StackPanel">
+                    <Setter Property="Visibility" Value="Collapsed"/>
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding HasItems}" Value="False">
+                            <Setter Property="Visibility" Value="Visible"/>
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </StackPanel.Style>
+            <TextBlock Text="No favorites yet" Style="{StaticResource DisplayText}" FontSize="24" FontWeight="Black" TextAlignment="Center"/>
+            <TextBlock Text="Use the star on an anime card to save it here."
+                       Style="{StaticResource BodyText}"
+                       Foreground="{StaticResource TextMuted}"
+                       TextAlignment="Center"
+                       TextWrapping="Wrap"
+                       Margin="0,8,0,0"/>
+        </StackPanel>
+        </Grid>
+    </Grid>
+</UserControl>

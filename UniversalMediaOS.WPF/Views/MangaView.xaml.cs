@@ -14,24 +14,78 @@ namespace UniversalMediaOS.WPF.Views
         private static readonly string AdBlockScript = PlaybackView.GetAdBlockScript();
 
         private bool _adBlockerConfigured;
+        private bool _isLoaded;
+        private ViewModels.MangaViewModel? _subscribedViewModel;
 
         public MangaView()
         {
             InitializeComponent();
             DataContextChanged += MangaView_DataContextChanged;
+            Loaded += MangaView_Loaded;
+            Unloaded += MangaView_Unloaded;
         }
 
         private void MangaView_DataContextChanged(object sender, System.Windows.DependencyPropertyChangedEventArgs e)
         {
-            if (e.OldValue is ViewModels.MangaViewModel oldVm)
-                oldVm.PropertyChanged -= Vm_PropertyChanged;
+            DetachViewModel();
 
-            if (e.NewValue is ViewModels.MangaViewModel vm)
-                vm.PropertyChanged += Vm_PropertyChanged;
+            if (_isLoaded && e.NewValue is ViewModels.MangaViewModel vm)
+                AttachViewModel(vm);
+        }
+
+        private void MangaView_Loaded(object sender, System.Windows.RoutedEventArgs e)
+        {
+            _isLoaded = true;
+            if (_subscribedViewModel == null && DataContext is ViewModels.MangaViewModel vm)
+            {
+                AttachViewModel(vm);
+            }
+        }
+
+        private void MangaView_Unloaded(object sender, System.Windows.RoutedEventArgs e)
+        {
+            _isLoaded = false;
+            DetachViewModel();
+            try
+            {
+                MangaWebReader.Dispose();
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Log($"[MangaView] WebView cleanup failed: {ex.Message}", "WARNING");
+            }
+        }
+
+        private void AttachViewModel(ViewModels.MangaViewModel vm)
+        {
+            if (ReferenceEquals(_subscribedViewModel, vm))
+            {
+                return;
+            }
+
+            DetachViewModel();
+            _subscribedViewModel = vm;
+            vm.PropertyChanged += Vm_PropertyChanged;
+        }
+
+        private void DetachViewModel()
+        {
+            if (_subscribedViewModel == null)
+            {
+                return;
+            }
+
+            _subscribedViewModel.PropertyChanged -= Vm_PropertyChanged;
+            _subscribedViewModel = null;
         }
 
         private async void Vm_PropertyChanged(object? sender, PropertyChangedEventArgs e)
         {
+            if (!_isLoaded)
+            {
+                return;
+            }
+
             if (sender is ViewModels.MangaViewModel vm)
             {
                 if (e.PropertyName == nameof(ViewModels.MangaViewModel.CurrentViewMode))
@@ -49,13 +103,25 @@ namespace UniversalMediaOS.WPF.Views
 
         private async Task NavigateExternalAsync(string url)
         {
-            if (string.IsNullOrEmpty(url)) return;
+            if (!_isLoaded ||
+                string.IsNullOrEmpty(url) ||
+                !Uri.TryCreate(url, UriKind.Absolute, out Uri? readerUri) ||
+                readerUri.Scheme is not ("http" or "https"))
+            {
+                AppLogger.Log($"[MangaView] Refused unsafe external reader URL: '{url}'", "WARNING");
+                return;
+            }
             try
             {
                 await PlaybackView.EnsureWebViewWithUBlockAsync(MangaWebReader);
+                if (!_isLoaded)
+                {
+                    return;
+                }
+
                 ConfigureAdBlocker(MangaWebReader.CoreWebView2);
-                AppLogger.Log($"[MangaView] Navigating WebView to external chapter: {url}");
-                MangaWebReader.CoreWebView2.Navigate(url);
+                AppLogger.Log($"[MangaView] Navigating WebView to external chapter: {readerUri.AbsoluteUri}");
+                MangaWebReader.CoreWebView2.Navigate(readerUri.AbsoluteUri);
             }
             catch (Exception ex)
             {

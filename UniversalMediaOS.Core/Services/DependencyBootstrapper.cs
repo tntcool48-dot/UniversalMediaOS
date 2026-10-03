@@ -1,10 +1,10 @@
-using System;
+﻿using System;
 using System.IO;
 using System.IO.Compression;
-using System.Formats.Tar;
 using System.Linq;
 using System.Net.Http;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -15,8 +15,25 @@ namespace UniversalMediaOS.Core.Services
     {
         private readonly string _servicesDir;
         private readonly ILogger<DependencyBootstrapper>? _logger;
-        private static readonly SemaphoreSlim _nodeLock = new SemaphoreSlim(1, 1);
-        private static readonly HttpClient _httpClient;
+        private static readonly TimeSpan DefaultUBlockDownloadTimeout = TimeSpan.FromSeconds(20);
+        internal const string PinnedUBlockVersion = "1.71.0";
+        internal const string PinnedUBlockSha256 = "5313a13fdbe748c23abdde6d24671635a3711a7ab0cf53f420bfa4aecdc36bf6";
+        private const long MaxUBlockArchiveBytes = 8 * 1024 * 1024;
+        private static readonly Uri PinnedUBlockDownloadUri = new(
+            "https://github.com/gorhill/uBlock/releases/download/1.71.0/uBlock0_1.71.0.chromium.zip");
+        private static readonly HttpClient SharedHttpClient;
+        private readonly HttpClient _httpClient;
+        private readonly TimeSpan _uBlockDownloadTimeout;
+        private readonly string _localAppData;
+        private readonly IPreparationProcessRunner _processRunner;
+        private readonly Func<string?> _searchPath;
+        private readonly SemaphoreSlim _dependencyLock = new(1, 1);
+        private readonly SemaphoreSlim _uBlockLock = new(1, 1);
+        public event EventHandler? HealthChanged;
+        public bool IsCheckingFfmpeg { get; private set; }
+        public bool IsPreparingUBlock { get; private set; }
+        public string DetectedFfmpegPath { get; private set; } = string.Empty;
+        public string DetectedFfprobePath { get; private set; } = string.Empty;
 
         static DependencyBootstrapper()
         {
@@ -24,7 +41,7 @@ namespace UniversalMediaOS.Core.Services
             {
                 PooledConnectionLifetime = TimeSpan.FromMinutes(15)
             };
-            _httpClient = new HttpClient(handler);
+            SharedHttpClient = new HttpClient(handler);
         }
 
         /// <summary>
@@ -35,6 +52,7 @@ namespace UniversalMediaOS.Core.Services
         public string FfmpegStatus { get; private set; } = "Not checked.";
         public bool IsUBlockOriginAvailable { get; private set; }
         public string UBlockOriginStatus { get; private set; } = "Not checked.";
+        public string UBlockOriginDirectory { get; private set; } = string.Empty;
         public string ServicesDirectory => _servicesDir;
 
         public DependencyBootstrapper(string baseDirectory) : this(baseDirectory, null)
@@ -42,30 +60,51 @@ namespace UniversalMediaOS.Core.Services
         }
 
         public DependencyBootstrapper(string baseDirectory, ILogger<DependencyBootstrapper>? logger = null)
+            : this(
+                baseDirectory,
+                logger,
+                SharedHttpClient,
+                DefaultUBlockDownloadTimeout,
+                UniversalMediaOS.Core.Helpers.AppDataPaths.LocalBaseDirectory)
+        {
+        }
+
+        internal DependencyBootstrapper(
+            string baseDirectory,
+            ILogger<DependencyBootstrapper>? logger,
+            HttpClient httpClient,
+            TimeSpan uBlockDownloadTimeout,
+            string localAppData,
+            IPreparationProcessRunner? processRunner = null,
+            Func<string?>? searchPath = null)
         {
             // Always use AppData — avoids write permission issues in Program Files / sandboxed dirs
-            string appData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            _servicesDir = Path.Combine(appData, "UniversalMediaOS", "Services");
+            _localAppData = localAppData;
+            _servicesDir = Path.Combine(_localAppData, "UniversalMediaOS", "Services");
             Directory.CreateDirectory(_servicesDir);
             _logger = logger;
+            _httpClient = httpClient;
+            _uBlockDownloadTimeout = uBlockDownloadTimeout;
+            _processRunner = processRunner ?? new PreparationProcessRunner();
+            _searchPath = searchPath ?? (() => Environment.GetEnvironmentVariable("PATH"));
         }
 
         public async Task EnsureDependenciesAsync()
         {
-            await Task.Yield();
+            await _dependencyLock.WaitAsync().ConfigureAwait(false);
+            try { await EnsureDependenciesCoreAsync().ConfigureAwait(false); }
+            finally { _dependencyLock.Release(); }
+        }
 
+        private async Task EnsureDependenciesCoreAsync()
+        {
             await RunDependencyStepAsync("qBittorrent detection", () =>
             {
                 DetectQBittorrent();
                 return Task.CompletedTask;
             });
 
-            await RunDependencyStepAsync("FFmpeg verification", () =>
-            {
-                IsFfmpegAvailable = VerifyFFmpeg();
-                return Task.CompletedTask;
-            });
-
+            await RunDependencyStepAsync("FFmpeg verification", VerifyFfmpegAsync);
             await RunDependencyStepAsync("uBlock Origin setup", EnsureUBlockOriginAsync);
         }
 
@@ -79,146 +118,7 @@ namespace UniversalMediaOS.Core.Services
             {
                 LogWarning("{0} failed: {1}", name, ex.Message);
             }
-        }
-
-        private async Task EnsureNodeAsync()
-        {
-            string nodeUrl;
-            string nodeBinaryName;
-
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            {
-                nodeUrl = "https://nodejs.org/dist/v20.11.1/win-x64/node.exe";
-                nodeBinaryName = "node.exe";
-            }
-            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-            {
-                nodeUrl = "https://nodejs.org/dist/v20.11.1/node-v20.11.1-darwin-x64.tar.gz";
-                nodeBinaryName = "node";
-            }
-            else
-            {
-                nodeUrl = "https://nodejs.org/dist/v20.11.1/node-v20.11.1-linux-x64.tar.gz";
-                nodeBinaryName = "node";
-            }
-
-            string nodePath = Path.Combine(_servicesDir, nodeBinaryName);
-
-            await _nodeLock.WaitAsync();
-            try
-            {
-                if (File.Exists(nodePath)) return;
-
-                LogInformation("Downloading portable Node.js from {0}...", nodeUrl);
-
-                string tempPath = nodePath + ".tmp";
-                bool downloadSuccessful = false;
-
-                try
-                {
-                    int maxRetry = 3;
-                    for (int attempt = 1; attempt <= maxRetry; attempt++)
-                    {
-                        try
-                        {
-                            using var response = await _httpClient.GetAsync(nodeUrl, HttpCompletionOption.ResponseHeadersRead);
-                            response.EnsureSuccessStatusCode();
-
-                            using var contentStream = await response.Content.ReadAsStreamAsync();
-                            using var fileStream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, 8192, useAsync: true);
-                            await contentStream.CopyToAsync(fileStream);
-                            downloadSuccessful = true;
-                            break; // Success
-                        }
-                        catch (Exception ex)
-                        {
-                            LogWarning("Attempt {0} of {1} failed to download Node.js: {2}", attempt, maxRetry, ex.Message);
-                            if (attempt == maxRetry)
-                            {
-                                throw;
-                            }
-                            await Task.Delay(1000);
-                        }
-                    }
-
-                    if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-                    {
-                        try
-                        {
-                            File.Move(tempPath, nodePath, overwrite: true);
-                        }
-                        catch (IOException)
-                        {
-                            if (File.Exists(nodePath))
-                            {
-                                return; // another thread won the race
-                            }
-                            throw;
-                        }
-                    }
-                    else
-                    {
-                        // Non-Windows tar.gz decompression and extraction
-                        string extractDir = Path.Combine(_servicesDir, "node_extract_temp");
-                        try
-                        {
-                            if (Directory.Exists(extractDir)) Directory.Delete(extractDir, true);
-                            Directory.CreateDirectory(extractDir);
-
-                            using (var fs = File.OpenRead(tempPath))
-                            using (var gzip = new GZipStream(fs, CompressionMode.Decompress))
-                            {
-                                TarFile.ExtractToDirectory(gzip, extractDir, overwriteFiles: true);
-                            }
-
-                            // Find the nested node binary in the extracted directory
-                            var files = Directory.GetFiles(extractDir, "node", SearchOption.AllDirectories);
-                            string? foundNode = null;
-                            foreach (var f in files)
-                            {
-                                var parts = f.Split(Path.DirectorySeparatorChar);
-                                if (Array.Exists(parts, p => p == "bin"))
-                                {
-                                    foundNode = f;
-                                    break;
-                                }
-                            }
-                            if (foundNode == null && files.Length > 0)
-                            {
-                                foundNode = files[0];
-                            }
-
-                            if (foundNode == null || !File.Exists(foundNode))
-                            {
-                                throw new FileNotFoundException("Portable Node.js binary not found inside extracted archive.");
-                            }
-
-                            File.Move(foundNode, nodePath, overwrite: true);
-
-                            // Set executable permissions (chmod +x)
-                            File.SetUnixFileMode(nodePath, 
-                                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
-                                UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
-                                UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
-                        }
-                        finally
-                        {
-                            try { if (Directory.Exists(extractDir)) Directory.Delete(extractDir, true); } catch { }
-                        }
-                    }
-                }
-                finally
-                {
-                    if (!downloadSuccessful || !File.Exists(nodePath))
-                    {
-                        try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
-                    }
-                }
-            }
-            finally
-            {
-                _nodeLock.Release();
-            }
+            finally { HealthChanged?.Invoke(this, EventArgs.Empty); }
         }
 
         private void DetectQBittorrent()
@@ -251,156 +151,342 @@ namespace UniversalMediaOS.Core.Services
             DetectedQBitPath = null;
         }
 
-        private bool VerifyFFmpeg()
+        internal async Task VerifyFfmpegAsync()
         {
-            string[] binaries = { "ffmpeg.exe", "ffprobe.exe" };
-            var missing = new System.Collections.Generic.List<string>();
-
-            foreach (var bin in binaries)
+            IsCheckingFfmpeg = true;
+            IsFfmpegAvailable = false;
+            DetectedFfmpegPath = DetectedFfprobePath = string.Empty;
+            FfmpegStatus = "Checking FFmpeg and ffprobe...";
+            var problems = new System.Collections.Generic.List<string>();
+            try
             {
-                if (!File.Exists(Path.Combine(_servicesDir, bin)))
+                HealthChanged?.Invoke(this, EventArgs.Empty);
+                foreach (string name in new[] { "ffmpeg", "ffprobe" })
                 {
-                    // Managed path not found — check PATH
-                    var pathEnv = Environment.GetEnvironmentVariable("PATH");
-                    bool found = false;
-                    if (pathEnv != null)
+                    string? executable = FindExecutable(name + ".exe");
+                    if (executable == null) { problems.Add(name + " missing"); continue; }
+                    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                    try
                     {
-                        var invalidChars = Path.GetInvalidPathChars();
-                        foreach (var path in pathEnv.Split(Path.PathSeparator))
-                        {
-                            string cleanedPath = path.Trim().Replace("\"", "");
-                            var sb = new System.Text.StringBuilder();
-                            foreach (char c in cleanedPath)
-                            {
-                                if (!Array.Exists(invalidChars, invalid => invalid == c))
-                                {
-                                    sb.Append(c);
-                                }
-                            }
-                            cleanedPath = sb.ToString();
-
-                            try
-                            {
-                                if (string.IsNullOrWhiteSpace(cleanedPath)) continue;
-                                string fullPath = Path.Combine(cleanedPath, bin);
-                                if (File.Exists(fullPath))
-                                {
-                                    found = true;
-                                    break;
-                                }
-                            }
-                            catch (ArgumentException)
-                            {
-                                // Ignore invalid path combination
-                            }
-                            catch (Exception)
-                            {
-                                // Ignore other exceptions
-                            }
-                        }
+                        var result = await _processRunner.RunAsync(executable, ["-version"], timeout.Token).ConfigureAwait(false);
+                        if (result.ExitCode != 0 || !result.Output.TrimStart().StartsWith(name + " version", StringComparison.OrdinalIgnoreCase))
+                        { problems.Add(name + " failed its version check"); continue; }
+                        if (name == "ffmpeg") DetectedFfmpegPath = executable; else DetectedFfprobePath = executable;
                     }
-
-                    if (!found)
-                    {
-                        missing.Add(bin);
-                    }
+                    catch (OperationCanceledException) { problems.Add(name + " version check timed out"); }
+                    catch (Exception ex) { problems.Add(name + " could not start (" + ex.GetType().Name + ")"); }
                 }
+                IsFfmpegAvailable = problems.Count == 0;
+                FfmpegStatus = IsFfmpegAvailable ? "FFmpeg and ffprobe version checks passed." : string.Join("; ", problems) + ".";
             }
-
-            if (missing.Count > 0)
+            finally
             {
-                FfmpegStatus = $"Missing {string.Join(", ", missing)} in managed services directory or PATH.";
-                LogWarning("FFmpeg verification warning: {0}", FfmpegStatus);
-                return false;
+                IsCheckingFfmpeg = false;
+                HealthChanged?.Invoke(this, EventArgs.Empty);
             }
+        }
 
-            FfmpegStatus = "FFmpeg and ffprobe verified.";
-            LogInformation("FFmpeg dependencies verified.");
-            return true;
+        private string? FindExecutable(string name)
+        {
+            foreach (string directory in new[] { _servicesDir }.Concat((_searchPath() ?? "").Split(Path.PathSeparator)))
+            {
+                string clean = directory.Trim().Trim('"');
+                // Ignore malformed/relative PATH entries rather than silently rewriting them.
+                if (!Path.IsPathFullyQualified(clean)) continue;
+                try
+                {
+                    string path = Path.Combine(clean, name);
+                    if (File.Exists(path)) return path;
+                }
+                catch (ArgumentException) { }
+            }
+            return null;
         }
 
         /// <summary>
-        /// Downloads the latest uBlock Origin Chromium extension from GitHub releases
+        /// Downloads a reviewed, version-pinned uBlock Origin Chromium extension
         /// and extracts it to %LocalAppData%\UniversalMediaOS\Extensions\ublock-origin\.
-        /// Skipped if manifest.json already exists (already installed).
+        /// The archive is accepted only when its version and SHA-256 match.
         /// </summary>
         public async Task EnsureUBlockOriginAsync()
         {
-            string appData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            string uboDir = Path.Combine(appData, "UniversalMediaOS", "Extensions", "ublock-origin");
-            string manifestPath = Path.Combine(uboDir, "manifest.json");
-
-            if (File.Exists(manifestPath))
-            {
-                IsUBlockOriginAvailable = true;
-                UBlockOriginStatus = $"Installed at {uboDir}";
-                LogInformation("uBlock Origin already installed at: {0}", uboDir);
-                return;
-            }
-
-            LogInformation("Downloading uBlock Origin from GitHub...");
-
+            await _uBlockLock.WaitAsync().ConfigureAwait(false);
+            IsPreparingUBlock = true;
             try
             {
-                // 1. Fetch latest release metadata
-                using var req = new HttpRequestMessage(HttpMethod.Get,
-                    "https://api.github.com/repos/gorhill/uBlock/releases/latest");
-                req.Headers.TryAddWithoutValidation("User-Agent", "UniversalMediaOS/1.0");
-                using var resp = await _httpClient.SendAsync(req);
-                resp.EnsureSuccessStatusCode();
-
-                using var doc = System.Text.Json.JsonDocument.Parse(
-                    await resp.Content.ReadAsStringAsync());
-
-                // 2. Find asset ending with .chromium.zip — name is versioned e.g. uBlock0_1.58.0.chromium.zip
-                string? downloadUrl = null;
-                if (doc.RootElement.TryGetProperty("assets", out var assets))
-                {
-                    foreach (var asset in assets.EnumerateArray())
-                    {
-                        string name = asset.GetProperty("name").GetString() ?? "";
-                        if (name.EndsWith(".chromium.zip", StringComparison.OrdinalIgnoreCase))
-                        {
-                            downloadUrl = asset.GetProperty("browser_download_url").GetString();
-                            break;
-                        }
-                    }
-                }
-
-                if (downloadUrl == null)
-                {
-                    IsUBlockOriginAvailable = false;
-                    UBlockOriginStatus = "Could not find a Chromium extension asset in the latest release.";
-                    LogWarning("Could not find .chromium.zip asset in uBlock Origin release. Skipping.");
-                    return;
-                }
-
-                // 3. Download zip
-                Directory.CreateDirectory(uboDir);
-                string zipPath = uboDir + ".zip";
-
-                using var zipResp = await _httpClient.GetAsync(downloadUrl);
-                zipResp.EnsureSuccessStatusCode();
-                await using var fs = File.Create(zipPath);
-                await zipResp.Content.CopyToAsync(fs);
-                fs.Close();
-
-                // 4. Extract — zip root contains manifest.json directly (unpacked extension)
-                ZipFile.ExtractToDirectory(zipPath, uboDir, overwriteFiles: true);
-                File.Delete(zipPath);
-
-                IsUBlockOriginAvailable = File.Exists(manifestPath);
-                UBlockOriginStatus = IsUBlockOriginAvailable
-                    ? $"Installed at {uboDir}"
-                    : "Download completed, but manifest.json was not found.";
-                LogInformation("uBlock Origin installed to: {0}", uboDir);
+                HealthChanged?.Invoke(this, EventArgs.Empty);
+                await EnsureUBlockOriginCoreAsync().ConfigureAwait(false);
             }
             catch (Exception ex)
             {
-                // Non-fatal — WebView2 will work without it, just without ad-blocking
                 IsUBlockOriginAvailable = false;
-                UBlockOriginStatus = ex.Message;
+                UBlockOriginDirectory = string.Empty;
+                UBlockOriginStatus = "setup: " + ex.Message;
+                LogWarning("uBlock Origin setup failed: {0}", ex.Message);
+            }
+            finally
+            {
+                IsPreparingUBlock = false;
+                _uBlockLock.Release();
+                HealthChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+
+        private async Task EnsureUBlockOriginCoreAsync()
+        {
+            string uboDir = Path.Combine(_localAppData, "UniversalMediaOS", "Extensions", "ublock-origin");
+            string? installedDir = FindUBlockManifestDirectory(uboDir);
+            if (!string.IsNullOrWhiteSpace(installedDir) &&
+                HasInstalledUBlockVersion(installedDir, PinnedUBlockVersion))
+            {
+                IsUBlockOriginAvailable = true;
+                UBlockOriginDirectory = installedDir;
+                UBlockOriginStatus = "Version " + PinnedUBlockVersion + " installed at " + installedDir;
+                LogInformation(
+                    "Pinned uBlock Origin {0} already installed at: {1}",
+                    PinnedUBlockVersion,
+                    installedDir);
+                return;
+            }
+
+            LogInformation("Downloading pinned uBlock Origin {0} from GitHub...", PinnedUBlockVersion);
+
+            string parentDir = Path.GetDirectoryName(uboDir)!;
+            Directory.CreateDirectory(parentDir);
+            string operationId = Guid.NewGuid().ToString("N");
+            string zipPath = Path.Combine(parentDir, "ublock-origin-" + operationId + ".zip");
+            string stagingDir = Path.Combine(parentDir, "ublock-origin-" + operationId + ".staging");
+            string backupDir = Path.Combine(parentDir, "ublock-origin-" + operationId + ".backup");
+            bool installed = false;
+            string stage = "download";
+
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Get, PinnedUBlockDownloadUri);
+                request.Headers.TryAddWithoutValidation("User-Agent", "UniversalMediaOS/1.0");
+                using var timeoutCts = new CancellationTokenSource(_uBlockDownloadTimeout);
+                using var response = await _httpClient.SendAsync(
+                    request,
+                    HttpCompletionOption.ResponseHeadersRead,
+                    timeoutCts.Token);
+                response.EnsureSuccessStatusCode();
+                if (response.Content.Headers.ContentLength is long contentLength &&
+                    contentLength > MaxUBlockArchiveBytes)
+                {
+                    throw new InvalidDataException(
+                        "uBlock Origin archive is larger than the " +
+                        (MaxUBlockArchiveBytes / (1024 * 1024)) +
+                        " MB safety limit.");
+                }
+
+                await using (Stream input = await response.Content.ReadAsStreamAsync(timeoutCts.Token))
+                await using (var output = new FileStream(
+                    zipPath,
+                    FileMode.CreateNew,
+                    FileAccess.Write,
+                    FileShare.None,
+                    81920,
+                    useAsync: true))
+                {
+                    byte[] buffer = new byte[81920];
+                    long totalBytes = 0;
+                    while (true)
+                    {
+                        int read = await input.ReadAsync(buffer, timeoutCts.Token);
+                        if (read == 0)
+                        {
+                            break;
+                        }
+
+                        totalBytes += read;
+                        if (totalBytes > MaxUBlockArchiveBytes)
+                        {
+                            throw new InvalidDataException(
+                                "uBlock Origin archive exceeded the " +
+                                (MaxUBlockArchiveBytes / (1024 * 1024)) +
+                                " MB safety limit.");
+                        }
+
+                        await output.WriteAsync(buffer.AsMemory(0, read), timeoutCts.Token);
+                    }
+                }
+
+                stage = "integrity verification";
+                await using (var archive = File.OpenRead(zipPath))
+                {
+                    string actualHash = Convert.ToHexString(
+                        await SHA256.HashDataAsync(archive, timeoutCts.Token)).ToLowerInvariant();
+                    if (!HasExpectedUBlockDigest(actualHash))
+                    {
+                        throw new InvalidDataException(
+                            "uBlock Origin archive integrity check failed (SHA-256 " + actualHash + ").");
+                    }
+                }
+
+                stage = "extraction";
+                timeoutCts.Token.ThrowIfCancellationRequested();
+                Directory.CreateDirectory(stagingDir);
+                ZipFile.ExtractToDirectory(zipPath, stagingDir, overwriteFiles: false);
+                string? stagedManifestDir = FindUBlockManifestDirectory(stagingDir);
+                if (string.IsNullOrWhiteSpace(stagedManifestDir) ||
+                    !HasInstalledUBlockVersion(stagedManifestDir, PinnedUBlockVersion))
+                {
+                    throw new InvalidDataException(
+                        "Verified uBlock Origin archive did not contain version " +
+                        PinnedUBlockVersion + ".");
+                }
+
+                stage = "activation";
+                timeoutCts.Token.ThrowIfCancellationRequested();
+                if (Directory.Exists(uboDir))
+                {
+                    await MoveDirectoryWithRetryAsync(uboDir, backupDir, timeoutCts.Token);
+                }
+
+                try
+                {
+                    await MoveDirectoryWithRetryAsync(stagingDir, uboDir, timeoutCts.Token);
+                    installed = true;
+                    TryDeleteDirectory(backupDir);
+                }
+                catch
+                {
+                    if (!Directory.Exists(uboDir) && Directory.Exists(backupDir))
+                    {
+                        await MoveDirectoryWithRetryAsync(backupDir, uboDir, CancellationToken.None);
+                    }
+                    throw;
+                }
+
+                installedDir = FindUBlockManifestDirectory(uboDir);
+                IsUBlockOriginAvailable = !string.IsNullOrWhiteSpace(installedDir);
+                UBlockOriginDirectory = installedDir ?? string.Empty;
+                UBlockOriginStatus = IsUBlockOriginAvailable
+                    ? "Version " + PinnedUBlockVersion + " installed at " + installedDir
+                    : "Verified download completed, but manifest.json was not found.";
+                LogInformation(
+                    "Verified uBlock Origin {0} installed to: {1}",
+                    PinnedUBlockVersion,
+                    uboDir);
+            }
+            catch (OperationCanceledException)
+            {
+                IsUBlockOriginAvailable = false;
+                UBlockOriginStatus =
+                    "Timed out after " +
+                    _uBlockDownloadTimeout.TotalSeconds.ToString("0.##") +
+                    " seconds during uBlock Origin " + stage + ".";
+                LogWarning(
+                    "uBlock Origin download timed out after {0:0.##} seconds. Continuing without the extension.",
+                    _uBlockDownloadTimeout.TotalSeconds);
+            }
+            catch (Exception ex)
+            {
+                IsUBlockOriginAvailable = false;
+                UBlockOriginStatus = stage + ": " + ex.Message;
                 LogWarning("Failed to download uBlock Origin: {0}", ex.Message);
+            }
+            finally
+            {
+                TryDeleteFile(zipPath);
+                TryDeleteDirectory(stagingDir);
+                if (!installed && !Directory.Exists(uboDir) && Directory.Exists(backupDir))
+                {
+                    try { Directory.Move(backupDir, uboDir); } catch { }
+                }
+                if (installed)
+                {
+                    TryDeleteDirectory(backupDir);
+                }
+            }
+        }
+
+        internal static async Task MoveDirectoryWithRetryAsync(string source, string destination,
+            CancellationToken token, Action<string, string>? move = null)
+        {
+            source = Path.GetFullPath(source);
+            destination = Path.GetFullPath(destination);
+            if (!string.Equals(Path.GetDirectoryName(source), Path.GetDirectoryName(destination), StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(source, destination, StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException("Extension activation must rename sibling directories.");
+            move ??= Directory.Move;
+            for (int attempt = 0; ; attempt++)
+            {
+                token.ThrowIfCancellationRequested();
+                try { move(source, destination); return; }
+                catch (Exception ex) when (attempt < 2 && (ex is IOException or UnauthorizedAccessException))
+                { await Task.Delay(TimeSpan.FromMilliseconds(100 * (attempt + 1)), token).ConfigureAwait(false); }
+            }
+        }
+
+        internal static bool HasExpectedUBlockDigest(string actualSha256) =>
+            !string.IsNullOrWhiteSpace(actualSha256) &&
+            CryptographicOperations.FixedTimeEquals(
+                System.Text.Encoding.ASCII.GetBytes(actualSha256.Trim().ToLowerInvariant()),
+                System.Text.Encoding.ASCII.GetBytes(PinnedUBlockSha256));
+
+        private static bool HasInstalledUBlockVersion(string directory, string expectedVersion)
+        {
+            try
+            {
+                using var manifest = System.Text.Json.JsonDocument.Parse(
+                    File.ReadAllText(Path.Combine(directory, "manifest.json")));
+                return manifest.RootElement.TryGetProperty("version", out var version) &&
+                       string.Equals(version.GetString(), expectedVersion, StringComparison.Ordinal);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static void TryDeleteFile(string path)
+        {
+            try { if (File.Exists(path)) File.Delete(path); } catch { }
+        }
+
+        private static void TryDeleteDirectory(string path)
+        {
+            try { if (Directory.Exists(path)) Directory.Delete(path, recursive: true); } catch { }
+        }
+
+        public string GetUBlockOriginPath()
+        {
+            string uboDir = Path.Combine(_localAppData, "UniversalMediaOS", "Extensions", "ublock-origin");
+            return FindUBlockManifestDirectory(uboDir) ?? uboDir;
+        }
+
+        private static string? FindUBlockManifestDirectory(string root)
+        {
+            if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+            {
+                return null;
+            }
+
+            string directManifest = Path.Combine(root, "manifest.json");
+            if (File.Exists(directManifest))
+            {
+                return root;
+            }
+
+            string chromiumPath = Path.Combine(root, "uBlock0.chromium");
+            if (File.Exists(Path.Combine(chromiumPath, "manifest.json")))
+            {
+                return chromiumPath;
+            }
+
+            try
+            {
+                return Directory
+                    .EnumerateFiles(root, "manifest.json", SearchOption.AllDirectories)
+                    .Select(Path.GetDirectoryName)
+                    .Where(path => !string.IsNullOrWhiteSpace(path))
+                    .OrderBy(path => path!.Split(Path.DirectorySeparatorChar).Length)
+                    .FirstOrDefault();
+            }
+            catch (Exception)
+            {
+                return null;
             }
         }
 
@@ -430,28 +516,5 @@ namespace UniversalMediaOS.Core.Services
             }
         }
 
-        private void LogError(string message, Exception? ex = null, params object?[] args)
-        {
-            if (_logger != null)
-            {
-                if (ex != null)
-                {
-                    _logger.LogError(ex, message, args);
-                }
-                else
-                {
-                    _logger.LogError(message, args);
-                }
-            }
-            else
-            {
-                string formatted = args.Length > 0 ? string.Format(message, args) : message;
-                if (ex != null)
-                {
-                    formatted += $" Exception: {ex.Message}";
-                }
-                UniversalMediaOS.Core.Helpers.AppLogger.Log(formatted, "ERROR");
-            }
-        }
     }
 }

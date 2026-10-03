@@ -1,0 +1,701 @@
+{
+  "entities": {
+    "Q171048": {
+      "type": "item",
+      "id": "Q171048",
+      "labels": {
+        "mul": {
+          "language": "mul",
+          "value": "Toy Story"
+        }
+      },
+      "claims": {
+        "P345": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P345",
+              "hash": "306e7a119754617b3ced6ca7cae25fc558840501",
+              "datavalue": {
+                "value": "tt0114709",
+                "type": "string"
+              },
+              "datatype": "external-id"
+            }
+          }
+        ],
+        "P31": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P31",
+              "hash": "82f2d5defe5c41eb418c9a71a8f273f9c3d141b4",
+              "datavalue": {
+                "value": {
+                  "entity-type": "item",
+                  "numeric-id": 202866,
+                  "id": "Q202866"
+                },
+                "type": "wikibase-entityid"
+              },
+              "datatype": "wikibase-item"
+            }
+          }
+        ],
+        "P577": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "386d9142e4e1c87d5b1e64444999533d05303083",
+              "datavalue": {
+                "value": {
+                  "time": "+1995-11-22T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "00f1a4b5a7ec0866df91bb5beac9037eb7dbd78b",
+              "datavalue": {
+                "value": {
+                  "time": "+1996-03-08T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "3d82b30a71bcda158d5189f82f4a14985abbc5cd",
+              "datavalue": {
+                "value": {
+                  "time": "+1996-03-21T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          }
+        ]
+      }
+    },
+    "Q187278": {
+      "type": "item",
+      "id": "Q187278",
+      "labels": {
+        "en": {
+          "language": "en",
+          "value": "Toy Story 3"
+        },
+        "mul": {
+          "language": "mul",
+          "value": "Toy Story 3"
+        }
+      },
+      "claims": {
+        "P345": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P345",
+              "hash": "ddd27a79f008b5a095dd877d1bffff0c1bb19ee5",
+              "datavalue": {
+                "value": "tt0435761",
+                "type": "string"
+              },
+              "datatype": "external-id"
+            }
+          }
+        ],
+        "P31": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P31",
+              "hash": "82f2d5defe5c41eb418c9a71a8f273f9c3d141b4",
+              "datavalue": {
+                "value": {
+                  "entity-type": "item",
+                  "numeric-id": 202866,
+                  "id": "Q202866"
+                },
+                "type": "wikibase-entityid"
+              },
+              "datatype": "wikibase-item"
+            }
+          }
+        ],
+        "P577": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "1666054ddfbf17fc0d0d64884c0f120a8461e586",
+              "datavalue": {
+                "value": {
+                  "time": "+2010-06-18T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "0d948f5ffc92fa46defbe27e8f59a9b084a84c1f",
+              "datavalue": {
+                "value": {
+                  "time": "+2010-07-29T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "7b69a6f04c4e27579439dc7b10afe032a67073ae",
+              "datavalue": {
+                "value": {
+                  "time": "+2010-08-27T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "8629ccb72fa769fd86d5a0870bf10b508a0f79f4",
+              "datavalue": {
+                "value": {
+                  "time": "+2010-06-12T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "4bb89dd0e0d7a35ebc8c418731b019aaf1006c3c",
+              "datavalue": {
+                "value": {
+                  "time": "+2010-06-17T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "27ed69b8b1480f365ad95e74897aaee16a8db582",
+              "datavalue": {
+                "value": {
+                  "time": "+2010-07-14T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          }
+        ]
+      }
+    },
+    "Q18517638": {
+      "type": "item",
+      "id": "Q18517638",
+      "labels": {
+        "en": {
+          "language": "en",
+          "value": "Toy Story 4"
+        },
+        "mul": {
+          "language": "mul",
+          "value": "Toy Story 4"
+        }
+      },
+      "claims": {
+        "P577": [
+          {
+            "rank": "preferred",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "a4c2ce05cd38ae392e0c523ab8f9e38d8a7bc4dd",
+              "datavalue": {
+                "value": {
+                  "time": "+2019-06-21T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "c233c8f9df49501995c67845513f92a5c7a35ec9",
+              "datavalue": {
+                "value": {
+                  "time": "+2019-06-26T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "0f02392b70207f17b64508e7c260210c6b053430",
+              "datavalue": {
+                "value": {
+                  "time": "+2019-06-20T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "7b5d6a1856940717efaeba565e20790adb624c8b",
+              "datavalue": {
+                "value": {
+                  "time": "+2019-08-15T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          }
+        ],
+        "P31": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P31",
+              "hash": "82f2d5defe5c41eb418c9a71a8f273f9c3d141b4",
+              "datavalue": {
+                "value": {
+                  "entity-type": "item",
+                  "numeric-id": 202866,
+                  "id": "Q202866"
+                },
+                "type": "wikibase-entityid"
+              },
+              "datatype": "wikibase-item"
+            }
+          }
+        ],
+        "P345": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P345",
+              "hash": "0ad9a3d886fdb9ef4802d1be6f299ddf53a78493",
+              "datavalue": {
+                "value": "tt1979376",
+                "type": "string"
+              },
+              "datatype": "external-id"
+            }
+          }
+        ]
+      }
+    },
+    "Q187266": {
+      "type": "item",
+      "id": "Q187266",
+      "labels": {
+        "en": {
+          "language": "en",
+          "value": "Toy Story 2"
+        },
+        "mul": {
+          "language": "mul",
+          "value": "Toy Story 2"
+        }
+      },
+      "claims": {
+        "P345": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P345",
+              "hash": "de361f55ab21b4337df60130e486c76e1ce99a85",
+              "datavalue": {
+                "value": "tt0120363",
+                "type": "string"
+              },
+              "datatype": "external-id"
+            }
+          }
+        ],
+        "P31": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P31",
+              "hash": "82f2d5defe5c41eb418c9a71a8f273f9c3d141b4",
+              "datavalue": {
+                "value": {
+                  "entity-type": "item",
+                  "numeric-id": 202866,
+                  "id": "Q202866"
+                },
+                "type": "wikibase-entityid"
+              },
+              "datatype": "wikibase-item"
+            }
+          }
+        ],
+        "P577": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "18642af8012758ce0fad64920c2e59ea0ca2aff3",
+              "datavalue": {
+                "value": {
+                  "time": "+1999-11-24T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "b5e055cbc959aaf83171be1b4570ba3fb2ed15b1",
+              "datavalue": {
+                "value": {
+                  "time": "+2000-02-04T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "9e5d72f0a2cd4ae7c983e4844774fe748081a757",
+              "datavalue": {
+                "value": {
+                  "time": "+2000-02-03T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          }
+        ]
+      }
+    },
+    "Q113641997": {
+      "type": "item",
+      "id": "Q113641997",
+      "labels": {
+        "en": {
+          "language": "en",
+          "value": "Toy Story 5"
+        },
+        "mul": {
+          "language": "mul",
+          "value": "Toy Story 5"
+        }
+      },
+      "claims": {
+        "P345": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P345",
+              "hash": "cbe63fdec54ccf4250a556a4fdfc053a080f3634",
+              "datavalue": {
+                "value": "tt29355505",
+                "type": "string"
+              },
+              "datatype": "external-id"
+            }
+          }
+        ],
+        "P31": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P31",
+              "hash": "82f2d5defe5c41eb418c9a71a8f273f9c3d141b4",
+              "datavalue": {
+                "value": {
+                  "entity-type": "item",
+                  "numeric-id": 202866,
+                  "id": "Q202866"
+                },
+                "type": "wikibase-entityid"
+              },
+              "datatype": "wikibase-item"
+            }
+          }
+        ],
+        "P577": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "61ce374c7660f298e3870dc332e34b9220724d99",
+              "datavalue": {
+                "value": {
+                  "time": "+2026-06-09T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "4631587ee5563c8a5fb8e8fd40465fb1599ea7ed",
+              "datavalue": {
+                "value": {
+                  "time": "+2026-06-19T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "c30ac6bad349f4549500702d30ef1e715a8398b7",
+              "datavalue": {
+                "value": {
+                  "time": "+2026-06-18T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "4ffd97a7dd0c19819b069a3ce6ee8a79ebcdfc8f",
+              "datavalue": {
+                "value": {
+                  "time": "+2026-06-17T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "3a873927874858dc1a73f0efb1a02fed417a8a9a",
+              "datavalue": {
+                "value": {
+                  "time": "+2026-07-03T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "efad263e8131c07a280106c3e90697a34c6fbee6",
+              "datavalue": {
+                "value": {
+                  "time": "+2026-07-23T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "success": 1
+}

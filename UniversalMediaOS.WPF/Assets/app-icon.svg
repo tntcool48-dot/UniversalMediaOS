@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="Universal Media OS app icon">
+  <defs>
+    <linearGradient id="bg" x1="128" y1="76" x2="896" y2="948" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#101827"/>
+      <stop offset="0.52" stop-color="#070A12"/>
+      <stop offset="1" stop-color="#0B1020"/>
+    </linearGradient>
+    <linearGradient id="portal" x1="272" y1="230" x2="768" y2="792" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#38BDF8"/>
+      <stop offset="0.48" stop-color="#14B8A6"/>
+      <stop offset="1" stop-color="#10B981"/>
+    </linearGradient>
+    <linearGradient id="hot" x1="670" y1="242" x2="782" y2="394" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FB7185"/>
+      <stop offset="1" stop-color="#F43F5E"/>
+    </linearGradient>
+    <filter id="softGlow" x="-25%" y="-25%" width="150%" height="150%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="22"/>
+      <feColorMatrix values="0 0 0 0 0.078 0 0 0 0 0.722 0 0 0 0 0.651 0 0 0 0.5 0"/>
+      <feBlend in="SourceGraphic"/>
+    </filter>
+    <filter id="drop" x="-16%" y="-16%" width="132%" height="132%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="26" stdDeviation="28" flood-color="#000000" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+
+  <rect width="1024" height="1024" rx="224" fill="url(#bg)"/>
+  <path d="M154 778C264 618 394 505 540 439c123-56 232-65 329-31" fill="none" stroke="#2238BDF8" stroke-width="42" stroke-linecap="round" opacity="0.18"/>
+  <path d="M180 245c156-70 318-80 486-28" fill="none" stroke="#14B8A6" stroke-width="24" stroke-linecap="round" opacity="0.2"/>
+
+  <g filter="url(#drop)">
+    <path d="M279 347c0-52 42-94 94-94h277c52 0 94 42 94 94v330c0 52-42 94-94 94H373c-52 0-94-42-94-94V347Z" fill="#0F1626" stroke="#334155" stroke-width="14"/>
+    <path d="M344 331c0-18 15-33 33-33h245c18 0 33 15 33 33v360c0 18-15 33-33 33H377c-18 0-33-15-33-33V331Z" fill="#141A2A"/>
+    <path d="M614 302c77 74 116 147 116 219 0 81-46 146-139 196 88-10 153-38 194-84 36-40 54-91 54-153 0-79-31-146-94-202-39-35-83-57-131-67v91Z" fill="#0B1020" opacity="0.84"/>
+    <path d="M410 365c0-36 39-59 70-40l223 135c30 18 30 62 0 80L480 675c-31 19-70-4-70-40V365Z" fill="url(#portal)" filter="url(#softGlow)"/>
+    <path d="M461 433v134c0 17 18 27 33 19l110-67c14-8 14-29 0-38l-110-67c-15-8-33 2-33 19Z" fill="#ECFEFF" opacity="0.94"/>
+  </g>
+
+  <path d="M719 189l21 54 54 21-54 21-21 54-21-54-54-21 54-21 21-54Z" fill="url(#hot)"/>
+  <path d="M803 319l12 30 30 12-30 12-12 30-12-30-30-12 30-12 12-30Z" fill="#38BDF8"/>
+  <path d="M254 684l14 36 36 14-36 14-14 36-14-36-36-14 36-14 14-36Z" fill="#14B8A6"/>
+  <path d="M337 203h252" stroke="#38BDF8" stroke-width="10" stroke-linecap="round" opacity="0.16"/>
+  <path d="M365 815h294" stroke="#38BDF8" stroke-width="12" stroke-linecap="round" opacity="0.3"/>
+</svg>

@@ -1,0 +1,39 @@
+{
+  "batchcomplete": "",
+  "continue": {
+    "sroffset": 5,
+    "continue": "-||"
+  },
+  "query": {
+    "searchinfo": {
+      "totalhits": 60
+    },
+    "search": [
+      {
+        "ns": 0,
+        "title": "Q60834962",
+        "pageid": 60690155
+      },
+      {
+        "ns": 0,
+        "title": "Q114819",
+        "pageid": 117396
+      },
+      {
+        "ns": 0,
+        "title": "Q109228991",
+        "pageid": 104419941
+      },
+      {
+        "ns": 0,
+        "title": "Q20972530",
+        "pageid": 23024497
+      },
+      {
+        "ns": 0,
+        "title": "Q15052318",
+        "pageid": 16719137
+      }
+    ]
+  }
+}

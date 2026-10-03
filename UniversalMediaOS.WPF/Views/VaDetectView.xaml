@@ -1,0 +1,279 @@
+<UserControl x:Class="UniversalMediaOS.WPF.Views.VaDetectView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             mc:Ignorable="d"
+             d:DesignHeight="720" d:DesignWidth="1280"
+             Background="{DynamicResource BgApp}">
+    <UserControl.Resources>
+        <Style x:Key="VaModeButton" TargetType="ToggleButton">
+            <Setter Property="Height" Value="36"/>
+            <Setter Property="MinWidth" Value="92"/>
+            <Setter Property="Padding" Value="14,0"/>
+            <Setter Property="Margin" Value="0,0,8,0"/>
+            <Setter Property="Background" Value="#171B29"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderSubtle}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="Chrome"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="8">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="#332DD4BF"/>
+                                <Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource AccentPrimary}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" Margin="0,0,0,14">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <StackPanel>
+                <TextBlock Text="VA Detect" Style="{StaticResource DisplayText}" FontSize="30" FontWeight="Black"/>
+                <TextBlock Text="{Binding LibrarySummary}" Style="{StaticResource CaptionText}" Foreground="{DynamicResource TextMuted}" Margin="0,4,0,0"/>
+            </StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <ToggleButton Content="Sub"
+                              IsChecked="{Binding IsSubSelected, Mode=TwoWay}"
+                              Style="{StaticResource VaModeButton}"
+                              ToolTip="Compare Japanese/original voice actors."/>
+                <ToggleButton Content="Dub"
+                              IsChecked="{Binding IsDubSelected, Mode=TwoWay}"
+                              Style="{StaticResource VaModeButton}"
+                              ToolTip="Compare English dub voice actors."/>
+            </StackPanel>
+        </Grid>
+
+        <Border Grid.Row="1" Style="{StaticResource SurfaceCard}" Margin="0,0,0,16">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="14"/>
+                    <ColumnDefinition Width="340"/>
+                </Grid.ColumnDefinitions>
+
+                <Grid Grid.Row="0" Grid.Column="0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBox Text="{Binding SearchQuery, UpdateSourceTrigger=PropertyChanged}"
+                             Style="{StaticResource AppTextBox}"
+                             Height="40"
+                             FontSize="15"
+                             ToolTip="Search an anime title for VA matching.">
+                        <TextBox.InputBindings>
+                            <KeyBinding Key="Enter" Command="{Binding SearchCommand}"/>
+                        </TextBox.InputBindings>
+                    </TextBox>
+                    <Button Grid.Column="1"
+                            Content="Find VAs"
+                            Command="{Binding SearchCommand}"
+                            Style="{StaticResource PrimaryButton}"
+                            Height="40"
+                            MinWidth="116"
+                            Margin="8,0,0,0"/>
+                </Grid>
+
+                <StackPanel Grid.Row="0" Grid.Column="2" Orientation="Horizontal">
+                    <Button Content="Sync OAuth"
+                            Command="{Binding SyncLibraryCommand}"
+                            Style="{StaticResource PrimaryButton}"
+                            Height="40"
+                            MinWidth="132"
+                            ToolTip="Sync MAL library using the OAuth token in Settings."/>
+                </StackPanel>
+
+                <Grid Grid.Row="1" Grid.Column="0" Margin="0,12,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBox Text="{Binding ManualUrl, UpdateSourceTrigger=PropertyChanged}"
+                             Style="{StaticResource AppTextBox}"
+                             Height="36"
+                             ToolTip="Optional mode-specific manual cast page URL."/>
+                    <TextBlock Text="Manual cast URL"
+                               IsHitTestVisible="False"
+                               VerticalAlignment="Center"
+                               Margin="12,0,0,0"
+                               Foreground="{DynamicResource TextMuted}">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ManualUrl}" Value="">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </Grid>
+
+                <Grid Grid.Row="1" Grid.Column="2" Margin="0,12,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBox Text="{Binding PublicFallbackUsername, UpdateSourceTrigger=PropertyChanged}"
+                             Style="{StaticResource AppTextBox}"
+                             Height="36"
+                             ToolTip="MAL username for public fallback sync."/>
+                    <Button Grid.Column="1"
+                            Content="Public Fallback"
+                            Command="{Binding SyncPublicFallbackCommand}"
+                            Style="{StaticResource SecondaryButton}"
+                            Height="36"
+                            MinWidth="132"
+                            Margin="8,0,0,0"/>
+                </Grid>
+
+                <DockPanel Grid.Row="2" Grid.ColumnSpan="3" Margin="0,12,0,0">
+                    <ProgressBar DockPanel.Dock="Right"
+                                 Width="130"
+                                 Height="4"
+                                 IsIndeterminate="True"
+                                 Foreground="{DynamicResource AccentPrimary}"
+                                 Background="Transparent"
+                                 BorderThickness="0"
+                                 Visibility="{Binding IsBusy, Converter={StaticResource BoolToVisibility}}"/>
+                    <StackPanel Orientation="Horizontal">
+                        <Button Content="Prefetch Missing"
+                                Command="{Binding StartPrefetchCommand}"
+                                Style="{StaticResource SecondaryButton}"
+                                Padding="12,5"
+                                Margin="0,0,8,0"/>
+                        <Button Content="Stop Prefetch"
+                                Command="{Binding StopPrefetchCommand}"
+                                Style="{StaticResource SecondaryButton}"
+                                Padding="12,5"
+                                Margin="0,0,12,0"/>
+                        <TextBlock Text="{Binding StatusText}" Style="{StaticResource CaptionText}" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </DockPanel>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="360"/>
+                <ColumnDefinition Width="18"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0" Style="{StaticResource SurfaceCard}">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Text="{Binding TargetTitle}" Style="{StaticResource SubtitleText}" FontSize="18" FontWeight="Bold"/>
+                    <StackPanel Grid.Row="1" Margin="0,6,0,12">
+                        <TextBlock Text="{Binding SourceText}" Style="{StaticResource CaptionText}" Foreground="{DynamicResource AccentPrimary}"/>
+                        <TextBlock Text="{Binding WarningText}" Style="{StaticResource CaptionText}" Foreground="{DynamicResource Warning}" TextWrapping="Wrap" Margin="0,5,0,0"/>
+                    </StackPanel>
+                    <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+                        <ItemsControl ItemsSource="{Binding TargetCast}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border BorderBrush="{DynamicResource BorderSubtle}" BorderThickness="0,1,0,0" Padding="0,9" Margin="0,0,0,2">
+                                        <StackPanel>
+                                            <DockPanel>
+                                                <TextBlock Text="{Binding RoleType}" Foreground="{DynamicResource AccentPrimary}" FontSize="11" FontWeight="Bold"/>
+                                                <TextBlock DockPanel.Dock="Right" Text="{Binding Source}" Style="{StaticResource CaptionText}"/>
+                                            </DockPanel>
+                                            <TextBlock Text="{Binding CharacterName}" Style="{StaticResource BodyText}" FontWeight="Bold" TextWrapping="Wrap"/>
+                                            <TextBlock Text="{Binding VoiceActorName}" Style="{StaticResource CaptionText}" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap"/>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </Grid>
+            </Border>
+
+            <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto">
+                <ItemsControl ItemsSource="{Binding Matches}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border Style="{StaticResource SurfaceCard}" Margin="0,0,0,12">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <DockPanel Margin="0,0,0,8">
+                                            <Border DockPanel.Dock="Right" Background="#2214B8A6" CornerRadius="4" Padding="8,3">
+                                                <TextBlock Text="{Binding Group}" Foreground="{DynamicResource AccentPrimary}" FontSize="11" FontWeight="Bold"/>
+                                            </Border>
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding VoiceActorName}" Style="{StaticResource SubtitleText}" FontSize="18" FontWeight="Bold"/>
+                                                <TextBlock Text="{Binding TargetCharacterName, StringFormat=Target role: {0}}" Style="{StaticResource CaptionText}" Foreground="{DynamicResource TextMuted}"/>
+                                            </StackPanel>
+                                        </DockPanel>
+                                        <ItemsControl ItemsSource="{Binding KnownFrom}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border Background="#171B29" BorderBrush="{DynamicResource BorderSubtle}" BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,0,0,6">
+                                                        <Grid>
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="*"/>
+                                                                <ColumnDefinition Width="Auto"/>
+                                                            </Grid.ColumnDefinitions>
+                                                            <StackPanel>
+                                                                <TextBlock Text="{Binding AnimeTitle}" Foreground="{DynamicResource TextPrimary}" FontWeight="Bold"/>
+                                                                <TextBlock Text="{Binding CharacterName, StringFormat=as {0}}" Style="{StaticResource CaptionText}" Foreground="{DynamicResource TextSecondary}"/>
+                                                            </StackPanel>
+                                                            <StackPanel Grid.Column="1" HorizontalAlignment="Right">
+                                                                <TextBlock Text="{Binding ScoreText}" Foreground="{DynamicResource Warning}" FontSize="11" FontWeight="Bold" TextAlignment="Right"/>
+                                                                <TextBlock Text="{Binding AccentText}" Style="{StaticResource CaptionText}" TextAlignment="Right"/>
+                                                            </StackPanel>
+                                                        </Grid>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </Grid>
+    </Grid>
+</UserControl>

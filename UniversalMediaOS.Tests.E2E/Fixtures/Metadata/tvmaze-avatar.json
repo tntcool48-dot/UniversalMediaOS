@@ -1,0 +1,219 @@
+[
+  {
+    "show": {
+      "id": 83073,
+      "name": "Avatar: Seven Havens",
+      "type": "Animation",
+      "premiered": "2026-10-09",
+      "externals": {
+        "tvrage": null,
+        "thetvdb": 460458,
+        "imdb": "tt35854736"
+      },
+      "image": null,
+      "genres": [],
+      "language": "English"
+    }
+  },
+  {
+    "show": {
+      "id": 38724,
+      "name": "The King's Avatar",
+      "type": "Scripted",
+      "premiered": "2019-07-24",
+      "externals": {
+        "tvrage": null,
+        "thetvdb": 364866,
+        "imdb": "tt10732794"
+      },
+      "image": {
+        "medium": "https://static.tvmaze.com/uploads/images/medium_portrait/168/420181.jpg",
+        "original": "https://static.tvmaze.com/uploads/images/original_untouched/168/420181.jpg"
+      },
+      "genres": [
+        "Action",
+        "Adventure",
+        "Fantasy"
+      ],
+      "language": "Chinese"
+    }
+  },
+  {
+    "show": {
+      "id": 24837,
+      "name": "The King's Avatar",
+      "type": "Animation",
+      "premiered": "2017-04-06",
+      "externals": {
+        "tvrage": null,
+        "thetvdb": 326270,
+        "imdb": "tt6859260"
+      },
+      "image": {
+        "medium": "https://static.tvmaze.com/uploads/images/medium_portrait/276/691932.jpg",
+        "original": "https://static.tvmaze.com/uploads/images/original_untouched/276/691932.jpg"
+      },
+      "genres": [
+        "Comedy",
+        "Action",
+        "Adventure",
+        "Anime"
+      ],
+      "language": "Chinese"
+    }
+  },
+  {
+    "show": {
+      "id": 48415,
+      "name": "Happily Ever Avatar",
+      "type": "Reality",
+      "premiered": "2020-05-27",
+      "externals": {
+        "tvrage": null,
+        "thetvdb": null,
+        "imdb": null
+      },
+      "image": {
+        "medium": "https://static.tvmaze.com/uploads/images/medium_portrait/301/754819.jpg",
+        "original": "https://static.tvmaze.com/uploads/images/original_untouched/301/754819.jpg"
+      },
+      "genres": [
+        "Romance"
+      ],
+      "language": "English"
+    }
+  },
+  {
+    "show": {
+      "id": 38753,
+      "name": "Avatar: The Last Airbender",
+      "type": "Scripted",
+      "premiered": "2024-02-22",
+      "externals": {
+        "tvrage": null,
+        "thetvdb": 385925,
+        "imdb": "tt9018736"
+      },
+      "image": {
+        "medium": "https://static.tvmaze.com/uploads/images/medium_portrait/633/1582667.jpg",
+        "original": "https://static.tvmaze.com/uploads/images/original_untouched/633/1582667.jpg"
+      },
+      "genres": [
+        "Action",
+        "Adventure",
+        "Fantasy"
+      ],
+      "language": "English"
+    }
+  },
+  {
+    "show": {
+      "id": 555,
+      "name": "Avatar: The Last Airbender",
+      "type": "Animation",
+      "premiered": "2005-02-21",
+      "externals": {
+        "tvrage": 2680,
+        "thetvdb": 74852,
+        "imdb": "tt0417299"
+      },
+      "image": {
+        "medium": "https://static.tvmaze.com/uploads/images/medium_portrait/79/199224.jpg",
+        "original": "https://static.tvmaze.com/uploads/images/original_untouched/79/199224.jpg"
+      },
+      "genres": [
+        "Action",
+        "Adventure",
+        "Fantasy"
+      ],
+      "language": "English"
+    }
+  },
+  {
+    "show": {
+      "id": 87959,
+      "name": "Fire and Water: Making the Avatar Films",
+      "type": "Documentary",
+      "premiered": "2025-11-07",
+      "externals": {
+        "tvrage": null,
+        "thetvdb": 469304,
+        "imdb": "tt38691521"
+      },
+      "image": {
+        "medium": "https://static.tvmaze.com/uploads/images/medium_portrait/595/1489366.jpg",
+        "original": "https://static.tvmaze.com/uploads/images/original_untouched/595/1489366.jpg"
+      },
+      "genres": [],
+      "language": "English"
+    }
+  },
+  {
+    "show": {
+      "id": 12777,
+      "name": "Arata: The Legend",
+      "type": "Animation",
+      "premiered": "2013-04-09",
+      "externals": {
+        "tvrage": 35142,
+        "thetvdb": 268059,
+        "imdb": "tt2703706"
+      },
+      "image": {
+        "medium": "https://static.tvmaze.com/uploads/images/medium_portrait/632/1581542.jpg",
+        "original": "https://static.tvmaze.com/uploads/images/original_untouched/632/1581542.jpg"
+      },
+      "genres": [
+        "Action",
+        "Adventure",
+        "Anime",
+        "Fantasy"
+      ],
+      "language": "Japanese"
+    }
+  },
+  {
+    "show": {
+      "id": 53171,
+      "name": "Avatards",
+      "type": "Scripted",
+      "premiered": "2016-07-26",
+      "externals": {
+        "tvrage": null,
+        "thetvdb": 425327,
+        "imdb": "tt5921086"
+      },
+      "image": {
+        "medium": "https://static.tvmaze.com/uploads/images/medium_portrait/541/1354323.jpg",
+        "original": "https://static.tvmaze.com/uploads/images/original_untouched/541/1354323.jpg"
+      },
+      "genres": [
+        "Comedy"
+      ],
+      "language": "English"
+    }
+  },
+  {
+    "show": {
+      "id": 6769,
+      "name": "Elena of Avalor",
+      "type": "Animation",
+      "premiered": "2016-07-22",
+      "externals": {
+        "tvrage": null,
+        "thetvdb": 312964,
+        "imdb": "tt4549142"
+      },
+      "image": {
+        "medium": "https://static.tvmaze.com/uploads/images/medium_portrait/61/154136.jpg",
+        "original": "https://static.tvmaze.com/uploads/images/original_untouched/61/154136.jpg"
+      },
+      "genres": [
+        "Adventure",
+        "Family",
+        "Fantasy"
+      ],
+      "language": "English"
+    }
+  }
+]

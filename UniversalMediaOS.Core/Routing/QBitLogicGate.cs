@@ -55,6 +55,10 @@ namespace UniversalMediaOS.Core.Routing
                     Log($"> [QBit] WebUI Login rejected. Please check {_qbitUrl}. Status: {response.StatusCode}");
                 }
             }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 Log($"> [QBit] WebUI unreachable at {_qbitUrl}. Enable 'Web User Interface' in qBittorrent settings. ({ex.Message})");
@@ -87,6 +91,10 @@ namespace UniversalMediaOS.Core.Routing
                     return body.Trim().Equals("Ok.", StringComparison.OrdinalIgnoreCase);
                 }
                 return false;
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -303,6 +311,61 @@ namespace UniversalMediaOS.Core.Routing
             {
                 System.Diagnostics.Debug.WriteLine($"Failed to delete torrent {infoHash}: {ex.Message}");
             }
+            return false;
+        }
+
+        public async Task<bool> HasTorrentAsync(string infoHash, CancellationToken token = default)
+        {
+            if (string.IsNullOrWhiteSpace(Cookie) || string.IsNullOrWhiteSpace(infoHash)) return false;
+
+            using var request = new HttpRequestMessage(
+                HttpMethod.Get,
+                $"{_qbitUrl}/api/v2/torrents/info?hashes={Uri.EscapeDataString(infoHash)}");
+            request.Headers.Add("Cookie", Cookie);
+            using var response = await _httpClient.SendAsync(request, token);
+            if (!response.IsSuccessStatusCode) return false;
+
+            string json = await response.Content.ReadAsStringAsync(token);
+            using var document = JsonDocument.Parse(json);
+            return document.RootElement.ValueKind == JsonValueKind.Array &&
+                   document.RootElement.GetArrayLength() > 0;
+        }
+
+        public Task<bool> PauseTorrentAsync(string infoHash, CancellationToken token = default)
+        {
+            return SetTorrentRunStateAsync(infoHash, shouldRun: false, token);
+        }
+
+        public Task<bool> ResumeTorrentAsync(string infoHash, CancellationToken token = default)
+        {
+            return SetTorrentRunStateAsync(infoHash, shouldRun: true, token);
+        }
+
+        private async Task<bool> SetTorrentRunStateAsync(
+            string infoHash,
+            bool shouldRun,
+            CancellationToken token)
+        {
+            if (string.IsNullOrWhiteSpace(Cookie) || string.IsNullOrWhiteSpace(infoHash)) return false;
+
+            // qBittorrent 5 renamed pause/resume to stop/start. Try the current API
+            // first, then the legacy route so existing portable installations keep
+            // working during upgrades.
+            string[] actions = shouldRun ? ["start", "resume"] : ["stop", "pause"];
+            foreach (string action in actions)
+            {
+                using var request = new HttpRequestMessage(
+                    HttpMethod.Post,
+                    $"{_qbitUrl}/api/v2/torrents/{action}");
+                request.Headers.Add("Cookie", Cookie);
+                request.Content = new FormUrlEncodedContent(new[]
+                {
+                    new KeyValuePair<string, string>("hashes", infoHash)
+                });
+                using var response = await _httpClient.SendAsync(request, token);
+                if (response.IsSuccessStatusCode) return true;
+            }
+
             return false;
         }
     }

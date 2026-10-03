@@ -1,224 +1,176 @@
-using System;
-using System.Diagnostics;
-using System.IO;
-using System.Runtime.InteropServices;
-using System.Threading;
-using System.Threading.Tasks;
+using System.Security.Cryptography;
+using System.Text.Json;
 using UniversalMediaOS.Core.Helpers;
 
-namespace UniversalMediaOS.Core.Services
+namespace UniversalMediaOS.Core.Services;
+
+public enum PythonPreparationState { NotStarted, Preparing, Ready, Failed, Canceled }
+public sealed record PythonPreparationSnapshot(PythonPreparationState State, string DiagnosticCode,
+    IReadOnlyList<string> MissingImports);
+
+public sealed class PythonPreparationException(PythonPreparationSnapshot snapshot)
+    : InvalidOperationException("Python preparation is not ready: " + snapshot.DiagnosticCode)
 {
-    /// <summary>
-    /// Manages the Python environment and the stateless scraper.py CLI tool.
-    /// No server is started — the scraper is invoked as a fresh subprocess per request.
-    ///
-    /// scraper.py is shipped as a build Content item (CopyToOutputDirectory=Always)
-    /// and copied to %LocalAppData%\UniversalMediaOS\Services\scraper.py on each boot.
-    /// Always overwriting ensures scraper logic updates ship automatically with the app.
-    /// </summary>
-    public sealed class PythonBootstrapper : IDisposable
+    public PythonPreparationSnapshot Snapshot { get; } = snapshot;
+}
+
+public sealed class PythonBootstrapper : IDisposable
+{
+    private readonly object _gate = new();
+    private readonly string _scraperDir;
+    private readonly string _sourceDir;
+    private readonly IPreparationProcessRunner _runner;
+    private readonly IReadOnlyList<string> _candidates;
+    private readonly TimeSpan _budget;
+    private readonly CancellationTokenSource _lifetime = new();
+    private CancellationTokenSource? _preparationCts;
+    private Task? _preparationTask;
+    private string? _resolvedPython;
+    private string? _readyRevision;
+    private bool _disposed;
+    private bool _cancelRequested;
+    private PythonPreparationSnapshot _snapshot = new(PythonPreparationState.NotStarted, "not_started", []);
+    private static readonly string[] Scripts = ["scraper.py", "book_scraper.py", "audiovisual_scraper.py"];
+    private static readonly (string Package, string Import)[] Packages =
+    [ ("drissionpage", "DrissionPage"), ("curl_cffi", "curl_cffi"), ("httpx", "httpx"), ("beautifulsoup4", "bs4"), ("lxml", "lxml") ];
+
+    public PythonBootstrapper() : this(new PreparationProcessRunner(), AppContext.BaseDirectory,
+        Path.Combine(AppDataPaths.LocalBaseDirectory, "UniversalMediaOS", "Services"),
+        OperatingSystem.IsWindows() ? ["python.exe", "python3.exe", "py.exe"] : ["python3", "python"], TimeSpan.FromMinutes(2)) { }
+
+    internal PythonBootstrapper(IPreparationProcessRunner runner, string sourceDir, string scraperDir,
+        IReadOnlyList<string> candidates, TimeSpan budget)
     {
-        private readonly string _scraperDir;
-        private static readonly SemaphoreSlim _pipLock = new SemaphoreSlim(1, 1);
+        _runner = runner; _sourceDir = sourceDir; _scraperDir = scraperDir; _candidates = candidates; _budget = budget;
+        Directory.CreateDirectory(scraperDir);
+    }
 
-        private static readonly (string Package, string ImportName)[] RequiredPackages =
-        {
-            ("drissionpage", "DrissionPage"),
-            ("curl_cffi", "curl_cffi"),
-            ("httpx", "httpx"),
-            ("beautifulsoup4", "bs4"),
-            ("lxml", "lxml")
-        };
+    public event EventHandler? StateChanged;
+    public PythonPreparationSnapshot Snapshot { get { lock (_gate) return _snapshot; } }
+    public bool IsAvailable => Snapshot.State == PythonPreparationState.Ready && File.Exists(GetScraperPath());
+    public bool IsBookScraperAvailable => Snapshot.State == PythonPreparationState.Ready && File.Exists(GetBookScraperPath());
+    public bool IsAudiovisualScraperAvailable => Snapshot.State == PythonPreparationState.Ready && File.Exists(GetAudiovisualScraperPath());
+    public string GetScraperPath() => Path.Combine(_scraperDir, Scripts[0]);
+    public string GetBookScraperPath() => Path.Combine(_scraperDir, Scripts[1]);
+    public string GetAudiovisualScraperPath() => Path.Combine(_scraperDir, Scripts[2]);
+    // Compatibility accessor: health checks no longer launch synchronous Python probes.
+    public string? ResolvePythonExecutable() => Snapshot.State == PythonPreparationState.Ready ? _resolvedPython : null;
 
-        public PythonBootstrapper()
+    public Task EnsureScraperReadyAsync(CancellationToken token = default)
+    {
+        token.ThrowIfCancellationRequested();
+        lock (_gate)
         {
-            string appData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            _scraperDir = Path.Combine(appData, "UniversalMediaOS", "Services");
-            Directory.CreateDirectory(_scraperDir);
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_preparationTask is { IsCompleted: false }) return _preparationTask.WaitAsync(token);
+            string revision = Revision();
+            if (_snapshot.State == PythonPreparationState.Ready && _readyRevision == revision &&
+                Scripts.All(s => File.Exists(Path.Combine(_scraperDir, s)))) return Task.CompletedTask;
+            _preparationCts?.Dispose();
+            _preparationCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+            _preparationCts.CancelAfter(_budget);
+            _cancelRequested = false;
+            var owner = _preparationCts;
+            _preparationTask = Task.Run(() => PrepareAsync(revision, owner.Token));
+            // A canceled waiter does not cancel work needed by another caller.
+            return _preparationTask.WaitAsync(token);
         }
+    }
 
-        // ── Public API ───────────────────────────────────────────────────────
+    public void CancelPreparation() { lock (_gate) { _cancelRequested = true; _preparationCts?.Cancel(); } }
 
-        public bool IsAvailable =>
-            ResolvePythonExecutable() != null && File.Exists(GetScraperPath());
-
-        public string GetScraperPath() =>
-            Path.Combine(_scraperDir, "scraper.py");
-
-        /// <summary>
-        /// Copies scraper.py from the application's output directory to AppData
-        /// (always overwrites to pick up updates), then installs pip packages.
-        /// </summary>
-        public async Task EnsureScraperReadyAsync(CancellationToken token = default)
+    private async Task PrepareAsync(string revision, CancellationToken token)
+    {
+        SetState(PythonPreparationState.Preparing, "preparing", []);
+        try
         {
-            string destPath = GetScraperPath();
-
-            // Source: shipped alongside the app binary as a Content item
-            string appDir = AppContext.BaseDirectory;
-            string srcPath = Path.Combine(appDir, "scraper.py");
-
-            if (!File.Exists(srcPath))
+            _resolvedPython = null;
+            if (Scripts.Any(s => !File.Exists(Path.Combine(_sourceDir, s))))
+            { SetState(PythonPreparationState.Failed, "scripts_missing", []); return; }
+            foreach (string candidate in _candidates)
             {
-                AppLogger.Log($"[PythonBootstrapper] WARNING: scraper.py not found at {srcPath}. " +
-                              "Scraper (Tier 1) will be unavailable.", "WARNING");
-            }
-            else
-            {
-                File.Copy(srcPath, destPath, overwrite: true);
-                AppLogger.Log($"[PythonBootstrapper] scraper.py deployed to: {destPath}");
-            }
-
-            await RunPipInstallAsync(token);
-        }
-
-        /// <summary>
-        /// Resolves the Python executable path. Returns null if Python is not installed.
-        /// </summary>
-        public string? ResolvePythonExecutable()
-        {
-            // On Windows, try python.exe, then py.exe (Python Launcher), then python3.exe
-            string[] candidates = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-                ? new[] { "python.exe", "python3.exe", "py.exe" }
-                : new[] { "python3", "python" };
-
-            foreach (var candidate in candidates)
-            {
+                token.ThrowIfCancellationRequested();
+                using var probe = CancellationTokenSource.CreateLinkedTokenSource(token);
+                probe.CancelAfter(TimeSpan.FromSeconds(3));
                 try
                 {
-                    var psi = new ProcessStartInfo
-                    {
-                        FileName = candidate,
-                        Arguments = "--version",
-                        UseShellExecute = false,
-                        CreateNoWindow = true,
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true
-                    };
-                    using var proc = Process.Start(psi);
-                    proc?.WaitForExit(2000);
-                    if (proc?.ExitCode == 0)
-                    {
-                        AppLogger.Log($"[PythonBootstrapper] Python resolved: {candidate}");
-                        return candidate;
-                    }
+                    var result = await _runner.RunAsync(candidate, ["--version"], probe.Token).ConfigureAwait(false);
+                    if (result.ExitCode == 0 && result.Output.TrimStart().StartsWith("Python 3.", StringComparison.Ordinal))
+                    { _resolvedPython = candidate; break; }
                 }
-                catch { }
+                catch (OperationCanceledException) when (!token.IsCancellationRequested) { }
+                catch (System.ComponentModel.Win32Exception) { }
+                catch (IOException) { }
             }
-
-            AppLogger.Log("[PythonBootstrapper] Python not found on PATH.", "WARNING");
-            return null;
+            if (_resolvedPython == null) { SetState(PythonPreparationState.Failed, "python_missing", []); return; }
+            foreach (string script in Scripts)
+            {
+                token.ThrowIfCancellationRequested();
+                File.Copy(Path.Combine(_sourceDir, script), Path.Combine(_scraperDir, script), overwrite: true);
+            }
+            string[] missing = await ProbeImportsAsync(_resolvedPython, token).ConfigureAwait(false);
+            SetState(PythonPreparationState.Preparing, "checking_imports", missing);
+            if (missing.Length > 0)
+            {
+                string[] install = ["-m", "pip", "install", "--quiet", .. Packages.Where(p => missing.Contains(p.Import)).Select(p => p.Package)];
+                var result = await _runner.RunAsync(_resolvedPython, install, token).ConfigureAwait(false);
+                if (result.ExitCode != 0) { SetState(PythonPreparationState.Failed, "pip_failed", missing); return; }
+                missing = await ProbeImportsAsync(_resolvedPython, token).ConfigureAwait(false);
+            }
+            if (missing.Length > 0) { SetState(PythonPreparationState.Failed, "imports_missing", missing); return; }
+            // Parse all deployed scripts without executing network/browser work or writing pyc files.
+            var syntax = await _runner.RunAsync(_resolvedPython,
+                ["-c", "import ast,sys; [ast.parse(open(p,encoding='utf-8-sig').read(),filename=p) for p in sys.argv[1:]]",
+                 .. Scripts.Select(s => Path.Combine(_scraperDir, s))], token).ConfigureAwait(false);
+            if (syntax.ExitCode != 0) { SetState(PythonPreparationState.Failed, "script_validation_failed", []); return; }
+            token.ThrowIfCancellationRequested();
+            _readyRevision = revision;
+            SetState(PythonPreparationState.Ready, "ready", []);
         }
-
-        // ── Pip Install ──────────────────────────────────────────────────────
-
-        private async Task RunPipInstallAsync(CancellationToken token)
+        catch (OperationCanceledException)
         {
-            string? python = ResolvePythonExecutable();
-            if (python == null)
-            {
-                AppLogger.Log("[PythonBootstrapper] Skipping pip install — Python not found.", "WARNING");
-                return;
-            }
-
-            await _pipLock.WaitAsync(token);
-            try
-            {
-                foreach (var requirement in RequiredPackages)
-                {
-                    token.ThrowIfCancellationRequested();
-                    AppLogger.Log($"[PythonBootstrapper] Checking Python package: {requirement.Package}");
-
-                    if (await IsPackageImportableAsync(python, requirement.ImportName, token))
-                    {
-                        AppLogger.Log($"[PythonBootstrapper] Package already available: {requirement.Package}");
-                        continue;
-                    }
-
-                    AppLogger.Log($"[PythonBootstrapper] Installing missing pip package: {requirement.Package}");
-
-                    var psi = new ProcessStartInfo
-                    {
-                        FileName = python,
-                        UseShellExecute = false,
-                        CreateNoWindow = true,
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true
-                    };
-                    psi.ArgumentList.Add("-m");
-                    psi.ArgumentList.Add("pip");
-                    psi.ArgumentList.Add("install");
-                    psi.ArgumentList.Add("--quiet");
-                    psi.ArgumentList.Add(requirement.Package);
-
-                    using var proc = Process.Start(psi);
-                    if (proc != null)
-                    {
-                        using var installCts = CancellationTokenSource.CreateLinkedTokenSource(token);
-                        installCts.CancelAfter(TimeSpan.FromSeconds(60));
-
-                        try
-                        {
-                            await proc.WaitForExitAsync(installCts.Token);
-                            if (proc.ExitCode != 0)
-                            {
-                                string err = await proc.StandardError.ReadToEndAsync(token);
-                                AppLogger.Log($"[PythonBootstrapper] pip install {requirement.Package} failed: {err}", "WARNING");
-                            }
-                        }
-                        catch (OperationCanceledException)
-                        {
-                            try { proc.Kill(entireProcessTree: true); } catch { }
-                            AppLogger.Log($"[PythonBootstrapper] pip install {requirement.Package} timed out or was cancelled.", "WARNING");
-                        }
-                    }
-                }
-                AppLogger.Log("[PythonBootstrapper] All pip packages verified.");
-            }
-            finally
-            {
-                _pipLock.Release();
-            }
+            bool canceled = _lifetime.IsCancellationRequested || _cancelRequested;
+            SetState(canceled ? PythonPreparationState.Canceled : PythonPreparationState.Failed,
+                canceled ? "preparation_canceled" : "preparation_timed_out", Snapshot.MissingImports);
         }
-
-        private static async Task<bool> IsPackageImportableAsync(
-            string python,
-            string importName,
-            CancellationToken token)
+        catch (Exception ex)
         {
-            var psi = new ProcessStartInfo
-            {
-                FileName = python,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true
-            };
-            psi.ArgumentList.Add("-c");
-            psi.ArgumentList.Add($"import {importName}");
-
-            using var proc = Process.Start(psi);
-            if (proc == null)
-                return false;
-
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(token);
-            cts.CancelAfter(TimeSpan.FromSeconds(10));
-
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-                return proc.ExitCode == 0;
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(entireProcessTree: true); } catch { }
-                return false;
-            }
+            AppLogger.Log($"Python preparation failed: {ex.GetType().Name}", "WARNING");
+            SetState(PythonPreparationState.Failed, "preparation_failed", Snapshot.MissingImports);
         }
+    }
 
-        // ── IDisposable ──────────────────────────────────────────────────────
+    private async Task<string[]> ProbeImportsAsync(string python, CancellationToken token)
+    {
+        const string probe = "import importlib,json,sys\nmissing=[]\nfor name in sys.argv[1:]:\n try: importlib.import_module(name)\n except Exception: missing.append(name)\nprint(json.dumps(missing))";
+        var result = await _runner.RunAsync(python, ["-c", probe, .. Packages.Select(p => p.Import)], token).ConfigureAwait(false);
+        if (result.ExitCode != 0) throw new InvalidDataException("Import probe failed.");
+        string[] missing = JsonSerializer.Deserialize<string[]>(result.Output.Trim()) ?? throw new InvalidDataException("Import probe returned no result.");
+        if (missing.Any(name => !Packages.Any(p => p.Import == name))) throw new InvalidDataException("Unknown import result.");
+        return missing.Distinct().ToArray();
+    }
 
-        public void Dispose()
+    private string Revision() => string.Join("|", Scripts.Select(s =>
+    {
+        string path = Path.Combine(_sourceDir, s);
+        return File.Exists(path) ? Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))) : "missing";
+    }));
+
+    private void SetState(PythonPreparationState state, string code, IReadOnlyList<string> missing)
+    {
+        lock (_gate) _snapshot = new(state, code, Array.AsReadOnly(missing.ToArray()));
+        StateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    public void Dispose()
+    {
+        lock (_gate)
         {
+            if (_disposed) return;
+            _disposed = true;
+            _lifetime.Cancel();
+            var running = _preparationTask ?? Task.CompletedTask;
+            _ = running.ContinueWith(_ => { _preparationCts?.Dispose(); _lifetime.Dispose(); }, TaskScheduler.Default);
         }
     }
 }

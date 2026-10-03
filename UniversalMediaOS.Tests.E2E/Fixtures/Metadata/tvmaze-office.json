@@ -1,0 +1,205 @@
+[
+  {
+    "show": {
+      "id": 526,
+      "name": "The Office",
+      "type": "Scripted",
+      "premiered": "2005-03-24",
+      "externals": {
+        "tvrage": 6061,
+        "thetvdb": 73244,
+        "imdb": "tt0386676"
+      },
+      "image": {
+        "medium": "https://static.tvmaze.com/uploads/images/medium_portrait/481/1204342.jpg",
+        "original": "https://static.tvmaze.com/uploads/images/original_untouched/481/1204342.jpg"
+      },
+      "genres": [
+        "Comedy"
+      ],
+      "language": "English"
+    }
+  },
+  {
+    "show": {
+      "id": 1292,
+      "name": "The Office",
+      "type": "Scripted",
+      "premiered": "2001-07-09",
+      "externals": {
+        "tvrage": 6060,
+        "thetvdb": 78107,
+        "imdb": "tt0290978"
+      },
+      "image": {
+        "medium": "https://static.tvmaze.com/uploads/images/medium_portrait/93/234802.jpg",
+        "original": "https://static.tvmaze.com/uploads/images/original_untouched/93/234802.jpg"
+      },
+      "genres": [
+        "Comedy"
+      ],
+      "language": "English"
+    }
+  },
+  {
+    "show": {
+      "id": 69044,
+      "name": "The Office",
+      "type": "Scripted",
+      "premiered": "2024-10-18",
+      "externals": {
+        "tvrage": null,
+        "thetvdb": 453455,
+        "imdb": "tt10193026"
+      },
+      "image": {
+        "medium": "https://static.tvmaze.com/uploads/images/medium_portrait/539/1349440.jpg",
+        "original": "https://static.tvmaze.com/uploads/images/original_untouched/539/1349440.jpg"
+      },
+      "genres": [
+        "Comedy"
+      ],
+      "language": "English"
+    }
+  },
+  {
+    "show": {
+      "id": 57704,
+      "name": "The Office",
+      "type": "Scripted",
+      "premiered": "2019-06-28",
+      "externals": {
+        "tvrage": null,
+        "thetvdb": 366061,
+        "imdb": "tt8305218"
+      },
+      "image": {
+        "medium": "https://static.tvmaze.com/uploads/images/medium_portrait/358/895848.jpg",
+        "original": "https://static.tvmaze.com/uploads/images/original_untouched/358/895848.jpg"
+      },
+      "genres": [
+        "Comedy"
+      ],
+      "language": "Hindi"
+    }
+  },
+  {
+    "show": {
+      "id": 57168,
+      "name": "The Office",
+      "type": "Scripted",
+      "premiered": "1995-03-11",
+      "externals": {
+        "tvrage": null,
+        "thetvdb": 77470,
+        "imdb": "tt0112108"
+      },
+      "image": {
+        "medium": "https://static.tvmaze.com/uploads/images/medium_portrait/352/881150.jpg",
+        "original": "https://static.tvmaze.com/uploads/images/original_untouched/352/881150.jpg"
+      },
+      "genres": [
+        "Comedy"
+      ],
+      "language": "English"
+    }
+  },
+  {
+    "show": {
+      "id": 80108,
+      "name": "The Office Movers",
+      "type": "Scripted",
+      "premiered": "2024-10-11",
+      "externals": {
+        "tvrage": null,
+        "thetvdb": 454908,
+        "imdb": "tt31187479"
+      },
+      "image": {
+        "medium": "https://static.tvmaze.com/uploads/images/medium_portrait/539/1347513.jpg",
+        "original": "https://static.tvmaze.com/uploads/images/original_untouched/539/1347513.jpg"
+      },
+      "genres": [
+        "Comedy"
+      ],
+      "language": "English"
+    }
+  },
+  {
+    "show": {
+      "id": 36116,
+      "name": "The Naked Office",
+      "type": "Reality",
+      "premiered": "2010-05-18",
+      "externals": {
+        "tvrage": null,
+        "thetvdb": 103541,
+        "imdb": "tt1695361"
+      },
+      "image": {
+        "medium": "https://static.tvmaze.com/uploads/images/medium_portrait/152/382299.jpg",
+        "original": "https://static.tvmaze.com/uploads/images/original_untouched/152/382299.jpg"
+      },
+      "genres": [],
+      "language": "English"
+    }
+  },
+  {
+    "show": {
+      "id": 58531,
+      "name": "The Office PL",
+      "type": "Scripted",
+      "premiered": "2021-10-22",
+      "externals": {
+        "tvrage": null,
+        "thetvdb": 410750,
+        "imdb": "tt15019916"
+      },
+      "image": {
+        "medium": "https://static.tvmaze.com/uploads/images/medium_portrait/537/1343762.jpg",
+        "original": "https://static.tvmaze.com/uploads/images/original_untouched/537/1343762.jpg"
+      },
+      "genres": [
+        "Comedy"
+      ],
+      "language": "Polish"
+    }
+  },
+  {
+    "show": {
+      "id": 39299,
+      "name": "The Singing Office",
+      "type": "Reality",
+      "premiered": "2008-06-29",
+      "externals": {
+        "tvrage": null,
+        "thetvdb": null,
+        "imdb": "tt0835055"
+      },
+      "image": {
+        "medium": "https://static.tvmaze.com/uploads/images/medium_portrait/312/782114.jpg",
+        "original": "https://static.tvmaze.com/uploads/images/original_untouched/312/782114.jpg"
+      },
+      "genres": [
+        "Music"
+      ],
+      "language": "English"
+    }
+  },
+  {
+    "show": {
+      "id": 49531,
+      "name": "The Office: Blackmail",
+      "type": "Scripted",
+      "premiered": "2009-05-07",
+      "externals": {
+        "tvrage": null,
+        "thetvdb": null,
+        "imdb": "tt1494540"
+      },
+      "image": null,
+      "genres": [],
+      "language": "English"
+    }
+  }
+]

@@ -1,0 +1,39 @@
+{
+  "batchcomplete": "",
+  "continue": {
+    "sroffset": 10,
+    "continue": "-||"
+  },
+  "query": {
+    "searchinfo": {
+      "totalhits": 354005
+    },
+    "search": [
+      {
+        "ns": 0,
+        "title": "Q24000000",
+        "pageid": 25993488
+      },
+      {
+        "ns": 0,
+        "title": "Q22000000",
+        "pageid": 24031791
+      },
+      {
+        "ns": 0,
+        "title": "Q181795",
+        "pageid": 180929
+      },
+      {
+        "ns": 0,
+        "title": "Q466611",
+        "pageid": 440098
+      },
+      {
+        "ns": 0,
+        "title": "Q2345",
+        "pageid": 3289
+      }
+    ]
+  }
+}

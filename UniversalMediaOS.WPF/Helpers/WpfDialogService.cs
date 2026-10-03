@@ -30,7 +30,9 @@ namespace UniversalMediaOS.WPF.Helpers
             bool result = false;
             Application.Current.Dispatcher.Invoke(() =>
             {
-                result = MessageBox.Show(message, title, MessageBoxButton.YesNo, MessageBoxImage.Warning)
+                var owner = Application.Current.MainWindow;
+                if (owner?.IsVisible != true) return;
+                result = MessageBox.Show(owner, message, title, MessageBoxButton.YesNo, MessageBoxImage.Warning)
                          == MessageBoxResult.Yes;
             });
             return result;
@@ -40,7 +42,9 @@ namespace UniversalMediaOS.WPF.Helpers
         {
             Application.Current.Dispatcher.Invoke(() =>
             {
-                MessageBox.Show(message, title, MessageBoxButton.OK, MessageBoxImage.Error);
+                var owner = Application.Current.MainWindow;
+                if (owner?.IsVisible != true) return;
+                MessageBox.Show(owner, message, title, MessageBoxButton.OK, MessageBoxImage.Error);
             });
         }
 
@@ -48,7 +52,9 @@ namespace UniversalMediaOS.WPF.Helpers
         {
             Application.Current.Dispatcher.Invoke(() =>
             {
-                MessageBox.Show(message, title, MessageBoxButton.OK, MessageBoxImage.Information);
+                var owner = Application.Current.MainWindow;
+                if (owner?.IsVisible != true) return;
+                MessageBox.Show(owner, message, title, MessageBoxButton.OK, MessageBoxImage.Information);
             });
         }
     }

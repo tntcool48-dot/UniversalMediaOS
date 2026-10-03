@@ -8,6 +8,9 @@ using System.Xml.Linq;
 using System.Linq;
 using System.Threading;
 using System.Globalization;
+using System.IO;
+using System.Net;
+using System.Text.RegularExpressions;
 using UniversalMediaOS.Core.Configuration;
 
 namespace UniversalMediaOS.Core.Routing
@@ -52,6 +55,10 @@ namespace UniversalMediaOS.Core.Routing
                 }
                 Log("> [Tier 1] Nyaa returned 0 results.");
             }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                throw;
+            }
             catch (TaskCanceledException ex)
             {
                 Log($"> [Tier 1] Nyaa search timed out: {ex.Message}");
@@ -72,6 +79,10 @@ namespace UniversalMediaOS.Core.Routing
                 }
                 Log("> [Tier 1] AnimeTosho returned 0 results.");
             }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                throw;
+            }
             catch (TaskCanceledException ex)
             {
                 Log($"> [Tier 1] AnimeTosho search timed out: {ex.Message}");
@@ -86,8 +97,6 @@ namespace UniversalMediaOS.Core.Routing
 
         private async Task<List<TorrentResult>> FetchAndParseFeed(string url, string source, Action<string> log, CancellationToken token = default)
         {
-            var results = new List<TorrentResult>();
-            
             using var internalCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(internalCts.Token, token);
             var mergedToken = linkedCts.Token;
@@ -99,7 +108,13 @@ namespace UniversalMediaOS.Core.Routing
             
             log($"> [Tier 1] Reading {source} stream...");
             using var stream = await response.Content.ReadAsStreamAsync(mergedToken);
-            
+
+            return ParseFeed(stream, source);
+        }
+
+        internal static List<TorrentResult> ParseFeed(Stream stream, string source)
+        {
+            var results = new List<TorrentResult>();
             var settings = new XmlReaderSettings
             {
                 DtdProcessing = DtdProcessing.Prohibit,
@@ -146,6 +161,22 @@ namespace UniversalMediaOS.Core.Routing
                     if (magnetLink != null)
                     {
                         magnet = magnetLink.Uri?.ToString() ?? string.Empty;
+                    }
+
+                    // AnimeTosho publishes its magnet inside the HTML description,
+                    // while the item link points to the release's web page.
+                    if (string.IsNullOrEmpty(magnet) && item.Summary != null)
+                    {
+                        var match = Regex.Match(item.Summary.Text ?? string.Empty,
+                            "\\bhref\\s*=\\s*[\"'](?<magnet>magnet:[^\"']+)[\"']",
+                            RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
+                        if (match.Success)
+                        {
+                            string candidate = WebUtility.HtmlDecode(match.Groups["magnet"].Value);
+                            if (Uri.TryCreate(candidate, UriKind.Absolute, out var uri) &&
+                                uri.Scheme.Equals("magnet", StringComparison.OrdinalIgnoreCase))
+                                magnet = candidate;
+                        }
                     }
 
                     // Parse seeders from summary text (e.g. "Seeders: 15")

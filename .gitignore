@@ -149,6 +149,8 @@ ipch/
 
 # Visual Studio Trace Files
 *.e2e
+# Keep the source test project visible; its directory name also matches *.e2e on Windows.
+!UniversalMediaOS.Tests.E2E/
 
 # TFS 2012 Local Workspace
 $tf/
@@ -435,4 +437,10 @@ cache/
 validation_debug.txt
 services/node.exe
 services/qbittorrent.exe
+
+# Local agent/build scratch space and generated audit captures
+.agents/
+test_sandbox/
+annas_*.html
+repomix-output.xml
 

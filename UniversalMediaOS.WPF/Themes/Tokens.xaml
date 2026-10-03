@@ -5,35 +5,46 @@
     
     <!-- Semantic Colors -->
     <!-- Semi-transparent to let DWM Mica shine through -->
-    <SolidColorBrush x:Key="BgBase" Color="#800B0B0D" po:Freeze="True" />
-    <SolidColorBrush x:Key="BgSurface" Color="#B316161A" po:Freeze="True" />
-    <SolidColorBrush x:Key="AccentPrimary" Color="#6200EE" po:Freeze="True" />
+    <SolidColorBrush x:Key="BgApp" Color="#FF070A12" po:Freeze="True" />
+    <SolidColorBrush x:Key="BgChrome" Color="#F20A0F1D" po:Freeze="True" />
+    <SolidColorBrush x:Key="BgPanel" Color="#F2141A2A" po:Freeze="True" />
+    <SolidColorBrush x:Key="BgPanelAlt" Color="#FF101827" po:Freeze="True" />
+    <SolidColorBrush x:Key="BgElevated" Color="#FF182033" po:Freeze="True" />
+    <SolidColorBrush x:Key="BgInput" Color="#FF0F1626" po:Freeze="True" />
+    <SolidColorBrush x:Key="AccentPrimary" Color="#14B8A6" po:Freeze="True" />
+    <SolidColorBrush x:Key="AccentSoft" Color="#2238BDF8" po:Freeze="True" />
     <SolidColorBrush x:Key="TextPrimary" Color="#FFFFFF" po:Freeze="True" />
+    <SolidColorBrush x:Key="TextSecondary" Color="#CBD5E1" po:Freeze="True" />
     <SolidColorBrush x:Key="TextMuted" Color="#94A3B8" po:Freeze="True" />
     <SolidColorBrush x:Key="Success" Color="#10B981" po:Freeze="True" />
     <SolidColorBrush x:Key="Warning" Color="#F59E0B" po:Freeze="True" />
     <SolidColorBrush x:Key="Error" Color="#EF4444" po:Freeze="True" />
-    <SolidColorBrush x:Key="HoverOverlay" Color="#1AFFFFFF" po:Freeze="True" />
     <SolidColorBrush x:Key="BorderSubtle" Color="#2A2A35" po:Freeze="True" />
-    <SolidColorBrush x:Key="FocusBorder" Color="#8E4BFF" po:Freeze="True" />
-    <SolidColorBrush x:Key="SurfaceOverlay" Color="#0CFFFFFF" po:Freeze="True" />
-    
-    <!-- 8-Point Grid System Thicknesses -->
-    <Thickness x:Key="SpaceXs">4</Thickness>
-    <Thickness x:Key="SpaceSm">8</Thickness>
-    <Thickness x:Key="SpaceMd">16</Thickness>
-    <Thickness x:Key="SpaceLg">24</Thickness>
-    <Thickness x:Key="SpaceXl">32</Thickness>
+    <SolidColorBrush x:Key="BorderStrong" Color="#334155" po:Freeze="True" />
+    <SolidColorBrush x:Key="FocusBorder" Color="#38BDF8" po:Freeze="True" />
+
+    <SolidColorBrush x:Key="ControlHoverBackground" Color="#263449" po:Freeze="True" />
+    <SolidColorBrush x:Key="ControlPressedBackground" Color="#334155" po:Freeze="True" />
+    <SolidColorBrush x:Key="AccentText" Color="#000000" po:Freeze="True" />
+    <SolidColorBrush x:Key="DangerText" Color="#000000" po:Freeze="True" />
+
+    <!-- Layout Thicknesses -->
+    <Thickness x:Key="SurfaceCardPadding">16</Thickness>
+    <Thickness x:Key="AppButtonPadding">14,8</Thickness>
+    <Thickness x:Key="NavButtonPadding">12,10</Thickness>
+    <Thickness x:Key="AppTextBoxPadding">12,9</Thickness>
+    <Thickness x:Key="AppComboBoxPadding">10,7</Thickness>
  
+    <Thickness x:Key="CompactInputPadding">8,4</Thickness>
+    <sys:Double x:Key="CompactInputHeight">34</sys:Double>
+
     <!-- Corner Radius Tokens -->
     <CornerRadius x:Key="RadiusSm">4</CornerRadius>
     <CornerRadius x:Key="RadiusMd">8</CornerRadius>
     <CornerRadius x:Key="RadiusLg">12</CornerRadius>
+    <sys:Double x:Key="AppButtonMinHeight">34</sys:Double>
+    <sys:Double x:Key="AppInputMinHeight">38</sys:Double>
+    <sys:Double x:Key="AppControlFontSize">14</sys:Double>
+    <sys:Double x:Key="NavButtonFontSize">14</sys:Double>
     
-    <!-- Opacity Constants (Doubles) -->
-    <sys:Double x:Key="OpacityDisabled">0.38</sys:Double>
-    <sys:Double x:Key="OpacityOverlay">0.50</sys:Double>
-    <sys:Double x:Key="OpacityHover">0.08</sys:Double>
-    <sys:Double x:Key="OpacityAtmosphere">0.03</sys:Double>
- 
 </ResourceDictionary>

@@ -1,40 +1,46 @@
 <UserControl x:Class="UniversalMediaOS.WPF.Views.MangaView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
-             xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:controls="clr-namespace:UniversalMediaOS.WPF.Controls"
              xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
-             mc:Ignorable="d" 
+             mc:Ignorable="d"
              d:DesignHeight="720" d:DesignWidth="1080"
              Background="Transparent">
 
     <UserControl.Resources>
-        <BooleanToVisibilityConverter x:Key="BoolToVis"/>
-
-        <!-- TextBox with visible caret and active focus border -->
-        <Style x:Key="SearchBoxStyle" TargetType="TextBox">
+        <Style x:Key="MangaActionButton" TargetType="Button">
             <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="BorderThickness" Value="0,0,0,2"/>
             <Setter Property="BorderBrush" Value="Transparent"/>
-            <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
-            <Setter Property="CaretBrush" Value="{StaticResource TextPrimary}"/>
-            <Setter Property="FontSize" Value="16"/>
-            <Setter Property="Padding" Value="{StaticResource SpaceSm}"/>
-            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="BorderThickness" Value="2"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="VerticalContentAlignment" Value="Stretch"/>
             <Setter Property="Template">
                 <Setter.Value>
-                    <ControlTemplate TargetType="TextBox">
-                        <Border x:Name="border" Background="{TemplateBinding Background}"
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="FocusChrome"
+                                Background="{TemplateBinding Background}"
                                 BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="4">
-                            <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}" 
-                                          VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
+                                CornerRadius="10">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
                         </Border>
                         <ControlTemplate.Triggers>
-                            <Trigger Property="IsFocused" Value="True">
-                                <Setter TargetName="border" Property="BorderBrush" Value="{StaticResource FocusBorder}"/>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="FocusChrome" Property="Opacity" Value="0.94"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="FocusChrome" Property="Opacity" Value="0.82"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="FocusChrome" Property="BorderBrush" Value="{StaticResource AccentPrimary}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="FocusChrome" Property="Opacity" Value="0.45"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -43,14 +49,13 @@
         </Style>
     </UserControl.Resources>
 
-    <Grid>
+    <Grid Margin="18">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
-        <!-- ── Header: Search + Breadcrumb + Back button ──────── -->
-        <Border Grid.Row="0" Background="{StaticResource BgBase}" CornerRadius="8" Margin="0,0,0,16" Padding="{StaticResource SpaceXs}">
+        <Border Grid.Row="0" Style="{StaticResource SurfaceCard}" Margin="0,0,0,18">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
@@ -58,13 +63,13 @@
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
-                <!-- Back button — visible only when NOT on results page -->
-                <Button Grid.Column="0" Content="←" Command="{Binding GoBackCommand}"
-                        Width="44" Height="44" Margin="0,0,8,0"
-                        Background="{StaticResource BgSurface}" Foreground="{StaticResource TextPrimary}"
-                        BorderThickness="0" FontSize="20" Cursor="Hand">
+                <Button Grid.Column="0"
+                        Content="Back"
+                        Command="{Binding GoBackCommand}"
+                        Margin="0,0,10,0"
+                        ToolTip="Return to the previous manga view.">
                     <Button.Style>
-                        <Style TargetType="Button" BasedOn="{StaticResource PremiumNavButton}">
+                        <Style TargetType="Button" BasedOn="{StaticResource SecondaryButton}">
                             <Setter Property="Visibility" Value="Visible"/>
                             <Style.Triggers>
                                 <DataTrigger Binding="{Binding CurrentViewMode}" Value="0">
@@ -75,9 +80,7 @@
                     </Button.Style>
                 </Button>
 
-                <!-- Breadcrumb (mode > 0) or Search Bar (mode = 0) -->
                 <Grid Grid.Column="1">
-                    <!-- Search bar — mode 0 -->
                     <Grid>
                         <Grid.Style>
                             <Style TargetType="Grid">
@@ -89,44 +92,70 @@
                                 </Style.Triggers>
                             </Style>
                         </Grid.Style>
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBox Grid.Column="0" Text="{Binding SearchQuery, UpdateSourceTrigger=PropertyChanged}" 
-                                     Style="{StaticResource SearchBoxStyle}">
+
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <Grid Grid.Row="0" Grid.Column="0">
+                            <TextBox Text="{Binding SearchQuery, UpdateSourceTrigger=PropertyChanged}"
+                                     Style="{StaticResource AppTextBox}"
+                                     FontSize="15"
+                                     Height="44">
                                 <TextBox.InputBindings>
                                     <KeyBinding Key="Enter" Command="{Binding SearchMangaCommand}" />
                                 </TextBox.InputBindings>
                             </TextBox>
-                            <TextBlock Grid.Column="0" Text="Search MangaDex..." IsHitTestVisible="False" 
-                                       VerticalAlignment="Center" Margin="{StaticResource SpaceMd}" 
-                                       Foreground="{StaticResource TextMuted}" FontSize="16">
-                                <TextBlock.Style>
-                                    <Style TargetType="TextBlock">
-                                        <Setter Property="Visibility" Value="Collapsed"/>
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding SearchQuery}" Value="">
-                                                <Setter Property="Visibility" Value="Visible"/>
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </TextBlock.Style>
-                            </TextBlock>
-                            <Button Grid.Column="1" Content="ExecuteSearch" Command="{Binding SearchMangaCommand}"
-                                    Padding="16,8" Margin="4,0,0,0"
-                                    Background="{StaticResource AccentPrimary}" Foreground="{StaticResource TextPrimary}"
-                                    BorderThickness="0" Cursor="Hand"/>
+                            <TextBlock Text="Search MangaDex titles..."
+                                       Style="{StaticResource SearchPlaceholderText}"
+                                       IsHitTestVisible="False"
+                                       VerticalAlignment="Center"
+                                       Margin="14,0,0,0"
+                                       Foreground="{StaticResource TextMuted}"
+                                       FontSize="14"/>
                         </Grid>
+
+                        <Button Grid.Row="0"
+                                Grid.Column="1"
+                                Content="Search"
+                                AutomationProperties.Name="ExecuteSearch"
+                                Command="{Binding SearchMangaCommand}"
+                                Style="{StaticResource PrimaryButton}"
+                                Height="44"
+                                MinWidth="112"
+                                Margin="10,0,0,0"
+                                ToolTip="Search MangaDex for matching manga titles."/>
+
+                        <Button Grid.Row="0"
+                                Grid.Column="2"
+                                Content="Cancel"
+                                AutomationProperties.Name="Cancel manga search"
+                                Command="{Binding SearchMangaCancelCommand}"
+                                Style="{StaticResource DangerButton}"
+                                Height="44"
+                                MinWidth="84"
+                                Margin="8,0,0,0"
+                                Visibility="{Binding SearchMangaCommand.IsRunning, Converter={StaticResource BoolToVisibility}}"
+                                ToolTip="Cancel the current manga search."/>
+
+                        <TextBlock Grid.Row="1"
+                                   Grid.ColumnSpan="3"
+                                   Text="{Binding ResultsDescription}"
+                                   Foreground="{StaticResource AccentPrimary}"
+                                   FontSize="12"
+                                   FontWeight="SemiBold"
+                                   Margin="2,8,0,0"/>
                     </Grid>
 
-                    <!-- Breadcrumb — mode 1/2/3 -->
-                    <TextBlock Text="{Binding Breadcrumb}" VerticalAlignment="Center" 
-                               Margin="{StaticResource SpaceMd}"
-                               Foreground="{StaticResource TextPrimary}" FontSize="16" FontWeight="SemiBold">
-                        <TextBlock.Style>
-                            <Style TargetType="TextBlock">
+                    <StackPanel>
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
                                 <Setter Property="Visibility" Value="Collapsed"/>
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding CurrentViewMode}" Value="1">
@@ -140,13 +169,20 @@
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>
-                        </TextBlock.Style>
-                    </TextBlock>
+                        </StackPanel.Style>
+                        <TextBlock Text="Manga reader" Style="{StaticResource CaptionText}" FontWeight="Bold"/>
+                        <TextBlock Text="{Binding Breadcrumb}" Style="{StaticResource SubtitleText}" TextTrimming="CharacterEllipsis"/>
+                    </StackPanel>
                 </Grid>
 
-                <!-- Loading spinner -->
-                <ProgressBar Grid.Column="2" IsIndeterminate="True" Width="80" Height="4"
-                             Foreground="{StaticResource AccentPrimary}" Background="Transparent" BorderThickness="0">
+                <ProgressBar Grid.Column="2"
+                             IsIndeterminate="True"
+                             Width="88"
+                             Height="4"
+                             VerticalAlignment="Center"
+                             Foreground="{StaticResource AccentPrimary}"
+                             Background="Transparent"
+                             BorderThickness="0">
                     <ProgressBar.Style>
                         <Style TargetType="ProgressBar">
                             <Setter Property="Visibility" Value="Collapsed"/>
@@ -167,8 +203,10 @@
             </Grid>
         </Border>
 
-        <!-- ── MODE 0: Search Results Grid ───────────────────── -->
-        <ListBox Grid.Row="1" ItemsSource="{Binding MangaResults}" Background="Transparent" BorderThickness="0"
+        <ListBox Grid.Row="1"
+                 ItemsSource="{Binding MangaResults}"
+                 Background="Transparent"
+                 BorderThickness="0"
                  ScrollViewer.HorizontalScrollBarVisibility="Disabled">
             <ListBox.Style>
                 <Style TargetType="ListBox">
@@ -187,50 +225,74 @@
             </ListBox.ItemsPanel>
             <ListBox.ItemTemplate>
                 <DataTemplate>
-                    <Border Width="160" Height="240" Margin="8" Background="Transparent">
-                        <Border.Effect>
+                    <Button Width="190"
+                            Height="338"
+                            Margin="0,0,16,16"
+                            Style="{StaticResource MangaActionButton}"
+                            Command="{Binding DataContext.ReadCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                            CommandParameter="{Binding}"
+                            AutomationProperties.Name="{Binding Title, StringFormat=Open {0} chapters}"
+                            ToolTip="{Binding Title, StringFormat=Open {0} chapters}">
+                        <Button.Effect>
                             <StaticResource ResourceKey="ElevatedPlane"/>
-                        </Border.Effect>
-                        <Border CornerRadius="8" Background="{StaticResource BgSurface}" ClipToBounds="True">
+                        </Button.Effect>
+                        <Border CornerRadius="8" Background="{StaticResource BgPanelAlt}" ClipToBounds="True" BorderBrush="{StaticResource BorderSubtle}" BorderThickness="1">
                             <Grid>
-                                <Image controls:AsyncImageLoader.ImageUrl="{Binding CoverUrl}" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality"/>
-                                <Border VerticalAlignment="Bottom" Height="100">
-                                    <Border.Background>
-                                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                                            <GradientStop Color="Transparent" Offset="0"/>
-                                            <GradientStop Color="#E6000000" Offset="1"/>
-                                        </LinearGradientBrush>
-                                    </Border.Background>
-                                    <Grid Margin="12,0,12,12" VerticalAlignment="Bottom">
-                                        <TextBlock Text="{Binding Title}" Style="{StaticResource BodyText}" FontWeight="SemiBold" TextWrapping="Wrap" MaxHeight="40" TextTrimming="CharacterEllipsis"/>
-                                    </Grid>
-                                </Border>
-                                <!-- Hover Overlay -->
-                                <Border x:Name="HoverOverlay" Background="{StaticResource HoverOverlay}" Opacity="0">
-                                    <Button Content="Read" Command="{Binding DataContext.ReadCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" 
-                                            CommandParameter="{Binding}" VerticalAlignment="Center" HorizontalAlignment="Center" Padding="16,8"
-                                            Background="{StaticResource AccentPrimary}" Foreground="{StaticResource TextPrimary}" BorderThickness="0"/>
-                                </Border>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="228"/>
+                                    <RowDefinition Height="*"/>
+                                </Grid.RowDefinitions>
+
+                                <Grid>
+                                    <Image controls:AsyncImageLoader.ImageUrl="{Binding CoverUrl}"
+                                           Stretch="{Binding DataContext.SettingsViewModel.PosterStretch, RelativeSource={RelativeSource AncestorType=Window}}"
+                                           RenderOptions.BitmapScalingMode="HighQuality"/>
+
+                                    <Border Background="#CC120F1B"
+                                            BorderBrush="{StaticResource BorderSubtle}"
+                                            BorderThickness="1"
+                                            CornerRadius="6"
+                                            Padding="7,3"
+                                            Margin="8"
+                                            HorizontalAlignment="Left"
+                                            VerticalAlignment="Top">
+                                        <TextBlock Text="{Binding Status}"
+                                                   Foreground="{StaticResource AccentPrimary}"
+                                                   FontSize="11"
+                                                   FontWeight="Bold"/>
+                                    </Border>
+                                </Grid>
+
+                                <StackPanel Grid.Row="1" Margin="12,10,12,12">
+                                    <TextBlock Text="{Binding Title}"
+                                               Style="{StaticResource BodyText}"
+                                               FontWeight="SemiBold"
+                                               TextWrapping="Wrap"
+                                               MaxHeight="38"
+                                               TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock Text="{Binding MetadataLine}"
+                                               Foreground="{StaticResource TextMuted}"
+                                               FontSize="12"
+                                               FontWeight="SemiBold"
+                                               Margin="0,6,0,0"/>
+                                    <TextBlock Text="{Binding GenreLine}"
+                                               Foreground="{StaticResource TextMuted}"
+                                               FontSize="11"
+                                               TextTrimming="CharacterEllipsis"
+                                               Margin="0,4,0,0"/>
+                                    <TextBlock Text="Open chapters"
+                                               Foreground="{StaticResource AccentPrimary}"
+                                               FontSize="12"
+                                               FontWeight="Bold"
+                                               Margin="0,8,0,0"/>
+                                </StackPanel>
                             </Grid>
-                            <Border.Triggers>
-                                <EventTrigger RoutedEvent="MouseEnter">
-                                    <BeginStoryboard><Storyboard>
-                                        <DoubleAnimation Storyboard.TargetName="HoverOverlay" Storyboard.TargetProperty="Opacity" To="1" Duration="{StaticResource MotionFast}"/>
-                                    </Storyboard></BeginStoryboard>
-                                </EventTrigger>
-                                <EventTrigger RoutedEvent="MouseLeave">
-                                    <BeginStoryboard><Storyboard>
-                                        <DoubleAnimation Storyboard.TargetName="HoverOverlay" Storyboard.TargetProperty="Opacity" To="0" Duration="{StaticResource MotionFast}"/>
-                                    </Storyboard></BeginStoryboard>
-                                </EventTrigger>
-                            </Border.Triggers>
                         </Border>
-                    </Border>
+                    </Button>
                 </DataTemplate>
             </ListBox.ItemTemplate>
         </ListBox>
 
-        <!-- ── MODE 1: Chapter List ───────────────────────────── -->
         <Grid Grid.Row="1">
             <Grid.Style>
                 <Style TargetType="Grid">
@@ -242,12 +304,12 @@
                     </Style.Triggers>
                 </Style>
             </Grid.Style>
-            <TextBlock Text="No chapters found for this manga." 
-                       Style="{StaticResource BodyText}" Foreground="{StaticResource TextMuted}"
-                       HorizontalAlignment="Center" VerticalAlignment="Center"
-                       Visibility="{Binding IsLoadingChapters, Converter={StaticResource BoolToVis}}"/>
-            <ListBox ItemsSource="{Binding Chapters}" Background="Transparent" BorderThickness="0"
-                     VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+
+            <ListBox ItemsSource="{Binding Chapters}"
+                     Background="Transparent"
+                     BorderThickness="0"
+                     VirtualizingPanel.IsVirtualizing="True"
+                     VirtualizingPanel.VirtualizationMode="Recycling">
                 <ListBox.ItemsPanel>
                     <ItemsPanelTemplate>
                         <VirtualizingStackPanel/>
@@ -255,47 +317,64 @@
                 </ListBox.ItemsPanel>
                 <ListBox.ItemTemplate>
                     <DataTemplate>
-                        <Border Background="Transparent" Margin="0,0,0,6" Cursor="Hand">
-                            <Border.InputBindings>
-                                <MouseBinding MouseAction="LeftClick"
-                                              Command="{Binding DataContext.SelectChapterCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                                              CommandParameter="{Binding}"/>
-                            </Border.InputBindings>
-                            <Border.Effect>
+                        <Button Margin="0,0,0,10"
+                                Style="{StaticResource MangaActionButton}"
+                                Command="{Binding DataContext.SelectChapterCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                CommandParameter="{Binding}"
+                                AutomationProperties.Name="{Binding ChapterNumber, StringFormat=Open chapter {0}}"
+                                ToolTip="{Binding ChapterNumber, StringFormat=Open chapter {0}}">
+                            <Button.Effect>
                                 <StaticResource ResourceKey="ElevatedPlane"/>
-                            </Border.Effect>
-                            <Border Background="{StaticResource BgSurface}" CornerRadius="8" Padding="16,12" ClipToBounds="True">
+                            </Button.Effect>
+                            <Border Background="{StaticResource BgPanel}"
+                                    BorderBrush="{StaticResource BorderSubtle}"
+                                    BorderThickness="1"
+                                    CornerRadius="8"
+                                    Padding="14">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-                                    <!-- Chapter number badge -->
-                                    <Border Grid.Column="0" Background="{StaticResource AccentPrimary}" CornerRadius="4" Padding="8,4" Margin="0,0,12,0">
-                                        <TextBlock Foreground="White" FontWeight="Bold" FontSize="13">
+                                    <Border Grid.Column="0" Background="#2414B8A6" CornerRadius="8" Padding="10,6" Margin="0,0,12,0">
+                                        <TextBlock Foreground="{StaticResource AccentPrimary}" FontWeight="Bold" FontSize="13">
                                             <Run Text="Ch. "/><Run Text="{Binding ChapterNumber}"/>
                                         </TextBlock>
                                     </Border>
-                                    <!-- Title -->
-                                    <TextBlock Grid.Column="1" Text="{Binding Title}" Style="{StaticResource BodyText}"
-                                               VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-                                    <!-- Pages count -->
-                                    <TextBlock Grid.Column="2" Foreground="{StaticResource TextMuted}" FontSize="12" VerticalAlignment="Center" Margin="8,0,0,0">
+                                    <TextBlock Grid.Column="1"
+                                               Text="{Binding Title}"
+                                               Style="{StaticResource BodyText}"
+                                               VerticalAlignment="Center"
+                                               TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock Grid.Column="2"
+                                               Foreground="{StaticResource TextMuted}"
+                                               FontSize="12"
+                                               VerticalAlignment="Center"
+                                               Margin="12,0,0,0">
                                         <Run Text="{Binding Pages}"/><Run Text=" pages"/>
                                     </TextBlock>
                                 </Grid>
                             </Border>
-                        </Border>
+                        </Button>
                     </DataTemplate>
                 </ListBox.ItemTemplate>
             </ListBox>
         </Grid>
 
-        <!-- ── MODE 2: Vertical Scroll Page Reader ───────────── -->
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-            <ScrollViewer.Style>
-                <Style TargetType="ScrollViewer">
+        <ListBox Grid.Row="1"
+                 ItemsSource="{Binding PageUrls}"
+                 Background="Transparent"
+                 BorderThickness="0"
+                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                 ScrollViewer.CanContentScroll="True"
+                 VirtualizingPanel.IsVirtualizing="True"
+                 VirtualizingPanel.VirtualizationMode="Recycling"
+                 VirtualizingPanel.CacheLength="1"
+                 VirtualizingPanel.CacheLengthUnit="Page">
+            <ListBox.Style>
+                <Style TargetType="ListBox">
                     <Setter Property="Visibility" Value="Collapsed"/>
                     <Style.Triggers>
                         <DataTrigger Binding="{Binding CurrentViewMode}" Value="2">
@@ -303,22 +382,40 @@
                         </DataTrigger>
                     </Style.Triggers>
                 </Style>
-            </ScrollViewer.Style>
-            <ItemsControl ItemsSource="{Binding PageUrls}">
-                <ItemsControl.ItemTemplate>
-                    <DataTemplate>
-                        <!-- Use DecodeWidth=0 to load full resolution images for reading -->
-                        <Image controls:AsyncImageLoader.ImageUrl="{Binding}" 
-                               controls:AsyncImageLoader.DecodeWidth="0"
+            </ListBox.Style>
+            <ListBox.ItemsPanel>
+                <ItemsPanelTemplate>
+                    <VirtualizingStackPanel/>
+                </ItemsPanelTemplate>
+            </ListBox.ItemsPanel>
+            <ListBox.ItemContainerStyle>
+                <Style TargetType="ListBoxItem">
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                    <Setter Property="Padding" Value="0"/>
+                    <Setter Property="Margin" Value="0"/>
+                    <Setter Property="Focusable" Value="False"/>
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="ListBoxItem">
+                                <ContentPresenter/>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+            </ListBox.ItemContainerStyle>
+            <ListBox.ItemTemplate>
+                <DataTemplate>
+                    <Border Background="{StaticResource BgPanel}" CornerRadius="8" Padding="8" Margin="0,0,0,8">
+                        <Image controls:AsyncImageLoader.ImageUrl="{Binding}"
+                               controls:AsyncImageLoader.DecodeWidth="1000"
                                HorizontalAlignment="Center"
-                               Stretch="Uniform" Margin="0,0,0,4"
+                               Stretch="Uniform"
                                MaxWidth="900"/>
-                    </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
-        </ScrollViewer>
+                    </Border>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
 
-        <!-- ── MODE 3: External WebView Reader ───────────────── -->
         <wv2:WebView2 x:Name="MangaWebReader" Grid.Row="1">
             <wv2:WebView2.Style>
                 <Style TargetType="wv2:WebView2">

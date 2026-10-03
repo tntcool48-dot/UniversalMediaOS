@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
@@ -19,6 +20,8 @@ namespace UniversalMediaOS.Core.Routing
         public string EmbedOrigin { get; set; } = string.Empty;
         public string? UserAgent { get; set; }
         public string? Cookie { get; set; }
+        public IReadOnlyList<MediaSubtitleTrack> Subtitles { get; init; } = [];
+        public string AudioNotice { get; init; } = string.Empty;
     }
 
     public enum SourceTier
@@ -30,7 +33,7 @@ namespace UniversalMediaOS.Core.Routing
     /// <summary>
     /// 2-tier streaming router:
     ///   Tier 1: Python scraper → HLS loopback proxy → LibVLC
-    ///   Tier 2: Embedded WebView2 + uBlock Origin fallback
+    ///   Tier 2: Explicitly selected website in WebView2 + uBlock Origin
     /// P2P downloads are a completely separate system (SeasonDownloader).
     /// </summary>
     public class TripleNetHandoff
@@ -39,12 +42,12 @@ namespace UniversalMediaOS.Core.Routing
         private static readonly HttpClient _httpClient = new();
 
         private readonly Configuration.DomainHotSwapper _config;
-        private readonly ScraperEngine _scraper;
+        private readonly IScraperResolver _scraper;
         private readonly HlsLoopbackProxy _proxy;
 
         public TripleNetHandoff(
             Configuration.DomainHotSwapper config,
-            ScraperEngine scraper,
+            IScraperResolver scraper,
             HlsLoopbackProxy proxy)
         {
             _config = config;
@@ -55,7 +58,7 @@ namespace UniversalMediaOS.Core.Routing
         /// <summary>
         /// Resolves the best streaming source for an episode.
         /// Tier 1: Python scraper (dynamic mirror pool + 4-stage extraction waterfall)
-        /// Tier 2: Embedded WebView2 (URL heuristic resolver)
+        /// Tier 2: Explicit website choice; never an automatic stream replacement
         /// </summary>
         public async Task<PlaybackSource?> ResolveBestSourceAsync(
             string query,
@@ -63,13 +66,23 @@ namespace UniversalMediaOS.Core.Routing
             string providerDomain,
             Action<string>? onStatusUpdate = null,
             SourceTier minimumTier = SourceTier.Tier1_PythonScraper,
-            CancellationToken token = default)
+            CancellationToken token = default,
+            string audioPreference = "sub",
+            IReadOnlyList<string>? titleAliases = null,
+            int aniListId = 0,
+            int malId = 0,
+            IReadOnlyList<string>? titleSynonyms = null)
         {
+            audioPreference = NormalizeAudioPreference(audioPreference);
+            token.ThrowIfCancellationRequested();
+            bool nativeRequested = minimumTier <= SourceTier.Tier1_PythonScraper;
+
             void Log(string msg)
             {
-                onStatusUpdate?.Invoke(msg);
-                System.Diagnostics.Debug.WriteLine(msg);
-                AppLogger.Log(msg);
+                string safeMessage = LogSanitizer.RedactSensitiveUrls(msg);
+                onStatusUpdate?.Invoke(safeMessage);
+                System.Diagnostics.Debug.WriteLine(safeMessage);
+                AppLogger.Log(safeMessage);
             }
 
             // ── Tier 1: Python Scraper → HLS Loopback Proxy ──────────────────
@@ -95,22 +108,31 @@ namespace UniversalMediaOS.Core.Routing
                 try
                 {
                     int maxSiteAttempts = GetScraperSiteAttemptLimit();
-                    Log($"> [Tier 1] Python scraper: resolving '{query}' across up to {maxSiteAttempts} indexed sites...");
+                    string siteScope = maxSiteAttempts == 0
+                        ? "all indexed sites"
+                        : $"up to {maxSiteAttempts} indexed sites";
+                    Log($"> [Tier 1] Python scraper: resolving '{query}' episode {episodeId} audio={audioPreference} across {siteScope}...");
 
-                    var stream = await _scraper.ResolveAsync(query, episodeId, maxSiteAttempts, token);
+                    var stream = await _scraper.ResolveAsync(query, episodeId, maxSiteAttempts, token, Log,
+                        audioPreference, titleAliases: titleAliases, aniListId: aniListId, malId: malId,
+                        titleSynonyms: titleSynonyms);
                     if (stream?.Url != null)
                     {
+                        if (!stream.RequiresWebView && audioPreference == "dub" && !HasRequestedDub(stream))
+                        {
+                            Log("> [Tier 1] The resolved stream has no verified English audio. Try another episode or choose Sub.");
+                            return null;
+                        }
+                        if (stream.RequiresWebView)
+                        {
+                            Log("> [Tier 1] Only a website player was found. Stream will not open it automatically; choose Open website if needed.");
+                            return null;
+                        }
+
                         return RegisterScraperStream(stream, Log);
                     }
 
-                    Log("> [Tier 1] Indexed-site resolve failed. Trying scraper search/extract fallback...");
-                    var fallback = await TryScraperSearchFallbackAsync(query, episodeId, Log, token);
-                    if (fallback != null)
-                    {
-                        return fallback;
-                    }
-
-                    Log("> [Tier 1] Scraper exhausted indexed sites and search fallback. Falling to Tier 2...");
+                    Log("> [Tier 1] No native stream was found within the configured indexed-site budget.");
                 }
                 catch (OperationCanceledException)
                 {
@@ -118,18 +140,88 @@ namespace UniversalMediaOS.Core.Routing
                 }
                 catch (Exception ex)
                 {
-                    Log($"> [Tier 1] Scraper error: {ex.Message}. Falling to Tier 2...");
+                    Log($"> [Tier 1] Scraper error: {ex.Message}.");
                 }
             }
             else if (minimumTier <= SourceTier.Tier1_PythonScraper && !_scraper.IsAvailable)
             {
-                Log("> [Tier 1] Python not available. Falling to Tier 2...");
+                Log("> [Tier 1] Python scraper is unavailable.");
+            }
+
+            if (nativeRequested)
+            {
+                token.ThrowIfCancellationRequested();
+                Log("> [Tier 1] Stream stopped. Retry later, choose another episode/audio option, or explicitly choose Open website.");
+                return null;
             }
 
             // ── Tier 2: Embedded WebView2 ─────────────────────────────────────
-            Log("> [Tier 2] Falling back to embedded WebView2...");
-            string finalUrl = await BuildWebViewUrlAsync(providerDomain, query, episodeId, Log, token);
+            Log("> [Tier 2] Opening the explicitly selected website player...");
+            if (string.IsNullOrWhiteSpace(providerDomain))
+            {
+                Log("> [Tier 2] Looking for the matching episode website through automatic providers...");
+                try
+                {
+                    if (!_scraper.IsAvailable)
+                    {
+                        await _scraper.EnsureReadyAsync(token);
+                    }
 
+                    if (_scraper.IsAvailable)
+                    {
+                        var discovered = await _scraper.ResolveAsync(
+                            query,
+                            episodeId,
+                            GetScraperSiteAttemptLimit(),
+                            token,
+                            Log,
+                            audioPreference,
+                            preferNative: false,
+                            titleAliases: titleAliases,
+                            aniListId: aniListId,
+                            malId: malId,
+                            titleSynonyms: titleSynonyms);
+                        if (!string.IsNullOrWhiteSpace(discovered?.Url))
+                        {
+                            if (!discovered.RequiresWebView && audioPreference == "dub" && !HasRequestedDub(discovered))
+                            {
+                                Log("> [Tier 2] The discovered stream has no verified English audio.");
+                                return null;
+                            }
+                            if (discovered.RequiresWebView)
+                            {
+                                return RegisterBrowserOnlyPage(discovered, Log);
+                            }
+
+                            if (IsLikelyBrowserPage(discovered.Referer))
+                            {
+                                Log($"> [Tier 2] Opening the scraper's captured player page: {discovered.Referer}");
+                                return new PlaybackSource
+                                {
+                                    Tier = SourceTier.Tier2_WebViewEmbed,
+                                    UrlOrPath = discovered.Referer!
+                                };
+                            }
+
+                            Log("> [Tier 2] The automatic resolver found verified media but no safe browser page. Opening the verified native stream instead.");
+                            return RegisterScraperStream(discovered, Log);
+                        }
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    Log($"> [Tier 2] Automatic browser discovery failed: {ex.Message}");
+                }
+
+                Log("> [Tier 2] No browser source was found in the indexed sites. Retry later or choose another episode/audio option.");
+                return null;
+            }
+
+            string finalUrl = await BuildWebViewUrlAsync(providerDomain, query, episodeId, Log, token);
             return new PlaybackSource
             {
                 Tier = SourceTier.Tier2_WebViewEmbed,
@@ -141,176 +233,83 @@ namespace UniversalMediaOS.Core.Routing
 
         private PlaybackSource RegisterScraperStream(ScraperStreamResult stream, Action<string> log)
         {
+            if (!_proxy.IsRunning)
+            {
+                _proxy.Start();
+            }
+
+            if (!_proxy.IsRunning)
+            {
+                throw new InvalidOperationException(
+                    $"The HLS proxy is unavailable{(string.IsNullOrWhiteSpace(_proxy.LastStartupError) ? "." : $": {_proxy.LastStartupError}")}");
+            }
+
             string sessionId = _proxy.RegisterSession(new ProxySession(
                 stream.Url!,
                 stream.UserAgent,
                 stream.Cookie,
                 stream.KeyUrl,
                 stream.Referer,
-                DateTime.UtcNow));
+                DateTime.UtcNow,
+                stream.Headers));
 
-            string localUrl = $"http://127.0.0.1:19475/stream?id={sessionId}";
-            log($"> [Tier 1] SUCCESS - proxied stream registered: {localUrl}");
+            bool isHls = IsHlsUrl(stream.Url!);
+            string localUrl = isHls
+                ? _proxy.CreateStreamUrl(sessionId)
+                : _proxy.CreateSegmentUrl(sessionId, stream.Url!);
+            if (isHls && !string.IsNullOrWhiteSpace(stream.ValidatedHlsVariant))
+            {
+                // Keep the master audio/subtitle groups, but start only the
+                // advertised variant that the scraper actually validated.
+                localUrl = _proxy.CreateVariantUrl(
+                    localUrl, _proxy.CreateStreamUrl(sessionId, stream.ValidatedHlsVariant));
+            }
+            log($"> [Tier 1] SUCCESS - proxied {(isHls ? "HLS" : "direct media")} stream registered: {localUrl}");
 
             return new PlaybackSource
             {
                 Tier = SourceTier.Tier1_PythonScraper,
                 UrlOrPath = localUrl,
-                UserAgent = DesktopUserAgent
+                EmbedOrigin = stream.Referer ?? string.Empty,
+                Cookie = stream.Cookie,
+                UserAgent = DesktopUserAgent,
+                Subtitles = MediaSubtitleTrack.Copy(stream.Subtitles),
+                AudioNotice = !HasEnglishAudio(stream) && stream.SelectedAudio == "dub"
+                    ? "Dub server selected · audio language unverified" : string.Empty
             };
         }
 
-        private async Task<PlaybackSource?> TryScraperSearchFallbackAsync(
-            string query,
-            string episodeId,
-            Action<string> log,
-            CancellationToken token)
+        private static bool IsHlsUrl(string url) =>
+            url.Contains(".m3u8", StringComparison.OrdinalIgnoreCase)
+            || url.Contains("mpegurl", StringComparison.OrdinalIgnoreCase);
+
+        private static bool HasEnglishAudio(ScraperStreamResult stream) =>
+            stream.AudioLanguages?.Any(language => string.Equals(language, "eng", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(language, "en", StringComparison.OrdinalIgnoreCase)) == true;
+
+        private static bool HasRequestedDub(ScraperStreamResult stream) =>
+            HasEnglishAudio(stream) || (stream.SelectedAudio == "dub" &&
+                stream.AudioLanguages?.Any(language => !string.IsNullOrWhiteSpace(language) &&
+                    !string.Equals(language, "und", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(language, "unknown", StringComparison.OrdinalIgnoreCase)) != true);
+
+        private static bool IsLikelyBrowserPage(string? url)
         {
-            var results = await _scraper.SearchAsync(query, token);
-            if (results.Length == 0)
-            {
-                log("> [Tier 1] Search fallback returned no scraper results.");
-                return null;
-            }
-
-            var orderedResults = results
-                .Select((result, index) => new
-                {
-                    Result = result,
-                    Index = index,
-                    Score = ScoreScraperResult(result, query)
-                })
-                .OrderByDescending(item => item.Score)
-                .ThenBy(item => item.Index)
-                .Take(12)
-                .ToList();
-
-            var triedUrls = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            foreach (var item in orderedResults)
-            {
-                token.ThrowIfCancellationRequested();
-
-                foreach (string epUrl in BuildEpisodeUrlCandidates(item.Result, episodeId))
-                {
-                    if (!triedUrls.Add(epUrl))
-                        continue;
-
-                    log($"> [Tier 1] Search fallback extracting from {item.Result.Provider}: {epUrl}");
-                    var stream = await _scraper.ExtractAsync(epUrl, token);
-                    if (stream?.Url != null)
-                    {
-                        return RegisterScraperStream(stream, log);
-                    }
-                }
-            }
-
-            log($"> [Tier 1] Search fallback exhausted {triedUrls.Count} candidate URLs.");
-            return null;
+            return Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
+                   uri.Scheme is "http" or "https" &&
+                   !IsHlsUrl(url) &&
+                   !Regex.IsMatch(uri.AbsolutePath, @"\.(?:mp4|mkv|avi|webm|ts|m4s)$", RegexOptions.IgnoreCase);
         }
 
-        private static int ScoreScraperResult(ScraperSearchResult result, string query)
+        private PlaybackSource RegisterBrowserOnlyPage(ScraperStreamResult stream, Action<string> log)
         {
-            string cleanQuery = NormalizeTitle(query);
-            string cleanTitle = NormalizeTitle(result.Title);
-            var queryWords = cleanQuery.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            log($"> [Tier 2] Opening the explicitly selected captured website player: {stream.Url}");
 
-            int score = queryWords.Count(word => cleanTitle.Contains(word, StringComparison.OrdinalIgnoreCase)) * 4;
-            string lowerUrl = result.Url.ToLowerInvariant();
-            score += queryWords.Count(word => lowerUrl.Contains(word, StringComparison.OrdinalIgnoreCase)) * 2;
-            if (lowerUrl.Contains("/watch", StringComparison.OrdinalIgnoreCase)) score += 4;
-            if (lowerUrl.Contains("/ep-", StringComparison.OrdinalIgnoreCase)) score += 3;
-            if (lowerUrl.Contains("episode", StringComparison.OrdinalIgnoreCase)) score += 2;
-            if (IsDubTitle(result.Title)) score -= 2;
-            return score;
-        }
-
-        private static System.Collections.Generic.IEnumerable<string> BuildEpisodeUrlCandidates(
-            ScraperSearchResult result,
-            string episodeId)
-        {
-            string baseUrl = result.Url.TrimEnd('/');
-            var candidates = new System.Collections.Generic.List<string>
+            return new PlaybackSource
             {
-                result.Url,
-                baseUrl,
-                MapEpisodeUrl(result, episodeId)
+                Tier = SourceTier.Tier2_WebViewEmbed,
+                UrlOrPath = stream.Url!
             };
-
-            if (!string.IsNullOrWhiteSpace(episodeId))
-            {
-                candidates.Add(Regex.Replace(baseUrl, @"/ep-\d+(?=/?(?:[?#]|$))", $"/ep-{episodeId}"));
-                candidates.Add(Regex.Replace(baseUrl, @"([?&]ep=)\d+", $"$1{episodeId}"));
-
-                if (!baseUrl.Contains("/ep-", StringComparison.OrdinalIgnoreCase) &&
-                    !baseUrl.Contains("ep=", StringComparison.OrdinalIgnoreCase))
-                {
-                    candidates.Add($"{baseUrl}/ep-{episodeId}");
-                    candidates.Add($"{baseUrl}?ep={episodeId}");
-                    candidates.Add($"{baseUrl}-episode-{episodeId}");
-                }
-            }
-
-            return candidates
-                .Where(url => !string.IsNullOrWhiteSpace(url))
-                .Distinct(StringComparer.OrdinalIgnoreCase);
-        }
-
-        private ScraperSearchResult? PickBestResult(ScraperSearchResult[] results, string query)
-        {
-            if (results.Length == 0) return null;
-
-            // Prefer exact or closest title match
-            string cleanQuery = NormalizeTitle(query);
-
-            ScraperSearchResult? exact = results.FirstOrDefault(r =>
-                NormalizeTitle(r.Title).Equals(cleanQuery, StringComparison.OrdinalIgnoreCase));
-            if (exact != null) return exact;
-
-            // Partial match — pick result whose title contains the most query words
-            var queryWords = cleanQuery.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            return results
-                .OrderByDescending(r =>
-                    queryWords.Count(w => NormalizeTitle(r.Title).Contains(w, StringComparison.OrdinalIgnoreCase)))
-                .FirstOrDefault();
-        }
-
-        /// <summary>
-        /// Constructs the episode URL from a search result + episode number.
-        /// Handles GogoAnime, AnimePahe, HiAnime naming conventions.
-        /// </summary>
-        private static string MapEpisodeUrl(ScraperSearchResult result, string episodeId)
-        {
-            string baseUrl = result.Url.TrimEnd('/');
-            string provider = result.Provider.ToLowerInvariant();
-
-            if (provider is "gogoanime" or "anitaku")
-            {
-                // baseUrl is like https://anitaku.so/category/show-name
-                // episode URL is like https://anitaku.so/show-name-episode-1
-                string slug = Regex.Match(baseUrl, @"/category/(.+)$").Groups[1].Value;
-                if (string.IsNullOrEmpty(slug))
-                    slug = baseUrl.Split('/').Last();
-                string domain = Regex.Match(baseUrl, @"https?://[^/]+").Value;
-                return $"{domain}/{slug}-episode-{episodeId}";
-            }
-
-            if (provider == "animepahe")
-            {
-                // baseUrl is like https://animepahe.ru/anime/{session}
-                // episode constructed as {session}-episode-{num}
-                string session = baseUrl.Split('/').Last();
-                return $"https://animepahe.ru/play/{session}/{episodeId}";
-            }
-
-            if (provider is "hianime" or "zoro" or "aniwatchtv")
-            {
-                // baseUrl is like https://hianime.to/watch/show-name-{id}
-                return $"{baseUrl}?ep={episodeId}";
-            }
-
-            // Generic fallback: append episode number
-            return $"{baseUrl}-episode-{episodeId}";
         }
 
         // ── Helper: WebView URL builder ──────────────────────────────────────
@@ -322,6 +321,13 @@ namespace UniversalMediaOS.Core.Routing
             Action<string> log,
             CancellationToken token)
         {
+            if (string.IsNullOrWhiteSpace(providerDomain))
+            {
+                throw new ArgumentException(
+                    "A provider URL is required when automatic browser discovery is unavailable.",
+                    nameof(providerDomain));
+            }
+
             string safeQuery = Uri.EscapeDataString(query);
 
             if (providerDomain.Contains("{slug}", StringComparison.OrdinalIgnoreCase) ||
@@ -463,9 +469,11 @@ namespace UniversalMediaOS.Core.Routing
 
             var candidates = new[]
             {
-                $"{domainRoot}/anime/{slug}",
                 $"{domainRoot}/watch/{slug}-episode-{episodeId}",
+                $"{domainRoot}/watch/{slug}?ep={episodeId}",
                 $"{domainRoot}/watch/{slug}",
+                $"{domainRoot}/play/{slug}/{episodeId}",
+                $"{domainRoot}/anime/{slug}",
                 $"{domainRoot}/category/{slug}",
                 $"{domainRoot}/search?q={safeQuery}",
                 $"{domainRoot}/search?keyword={safeQuery}",
@@ -519,6 +527,11 @@ namespace UniversalMediaOS.Core.Routing
                         log($"> [Tier 2] Probe returned a generic page, continuing: {url}");
                         continue;
                     }
+                    else if (!isSearchUrl && !IsLikelyPlaybackPage(url))
+                    {
+                        log($"> [Tier 2] Probe matched a non-player page, continuing: {url}");
+                        continue;
+                    }
 
                     return url;
                 }
@@ -535,6 +548,24 @@ namespace UniversalMediaOS.Core.Routing
             string searchFallback = $"{domainRoot}/search?keyword={safeQuery}";
             log($"> [Tier 2] No fallback route matched. Loading search URL: {searchFallback}");
             return searchFallback;
+        }
+
+        private static bool IsLikelyPlaybackPage(string url)
+        {
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            {
+                return false;
+            }
+
+            string pathAndQuery = (uri.AbsolutePath + uri.Query).ToLowerInvariant();
+            return pathAndQuery.Contains("/watch", StringComparison.OrdinalIgnoreCase) ||
+                   pathAndQuery.Contains("/play", StringComparison.OrdinalIgnoreCase) ||
+                   pathAndQuery.Contains("/embed", StringComparison.OrdinalIgnoreCase) ||
+                   pathAndQuery.Contains("/stream", StringComparison.OrdinalIgnoreCase) ||
+                   pathAndQuery.Contains("/episode", StringComparison.OrdinalIgnoreCase) ||
+                   pathAndQuery.Contains("/ep-", StringComparison.OrdinalIgnoreCase) ||
+                   pathAndQuery.Contains("?ep=", StringComparison.OrdinalIgnoreCase) ||
+                   pathAndQuery.Contains("&ep=", StringComparison.OrdinalIgnoreCase);
         }
 
         private static string? ExtractBestLinkFromSearchHtml(string html, string domainRoot, string query, string episodeId)
@@ -665,14 +696,15 @@ namespace UniversalMediaOS.Core.Routing
         private int GetScraperSiteAttemptLimit()
         {
             string raw = _config.GetSetting("ScraperSiteAttemptLimit");
-            return int.TryParse(raw, out int limit)
-                ? Math.Clamp(limit, 1, 30)
+            return int.TryParse(raw, out int limit) && limit >= 0
+                ? limit
                 : 6;
         }
 
-        private static string NormalizeTitle(string title) =>
-            Regex.Replace(title.ToLowerInvariant(), @"[^a-z0-9\s]", " ")
-                 .Replace("  ", " ").Trim();
+        private static string NormalizeAudioPreference(string? audioPreference) =>
+            (audioPreference ?? string.Empty).Equals("dub", StringComparison.OrdinalIgnoreCase)
+                ? "dub"
+                : "sub";
 
         private static string GenerateSlug(string input)
         {
@@ -683,12 +715,5 @@ namespace UniversalMediaOS.Core.Routing
             return slug;
         }
 
-        /// <summary>
-        /// Word-boundary safe dub detection — avoids false positives on "Dublin", "Dubious", etc.
-        /// </summary>
-        private static bool IsDubTitle(string title) =>
-            Regex.IsMatch(title,
-                @"\b(dub|dubbed|eng|english|dual[\s\-]audio|multi[\s\-]audio)\b",
-                RegexOptions.IgnoreCase);
     }
 }

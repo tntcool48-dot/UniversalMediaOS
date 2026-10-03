@@ -126,7 +126,8 @@ namespace UniversalMediaOS.Core.Helpers
             if (!IsEnabled || message == null) return;
             if (string.IsNullOrWhiteSpace(level)) level = "INFO";
 
-            string logLine = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [{level.ToUpper()}] {message}\n";
+            string safeMessage = LogSanitizer.RedactSensitiveUrls(message);
+            string logLine = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [{level.ToUpper()}] {safeMessage}\n";
             System.Diagnostics.Debug.Write(logLine);
 
             _logQueue.Enqueue(logLine);

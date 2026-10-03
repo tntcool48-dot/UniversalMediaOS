@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
@@ -20,18 +21,38 @@ namespace UniversalMediaOS.Core.Services
         [property: JsonPropertyName("cookie")] string? Cookie,
         [property: JsonPropertyName("key_url")] string? KeyUrl,
         [property: JsonPropertyName("referer")] string? Referer,
-        [property: JsonPropertyName("error")] string? Error);
+        [property: JsonPropertyName("headers")] Dictionary<string, string>? Headers,
+        [property: JsonPropertyName("requires_webview")] bool RequiresWebView,
+        [property: JsonPropertyName("error")] string? Error)
+    {
+        [JsonPropertyName("subtitles")]
+        public MediaSubtitleTrack[]? Subtitles { get; init; }
+
+        [JsonPropertyName("audio_languages")]
+        public string[]? AudioLanguages { get; init; }
+
+        // The selected provider frame, not a claim about spoken language.
+        [JsonPropertyName("selected_audio")]
+        public string? SelectedAudio { get; init; }
+
+        // Advertised video variant whose first media payload passed validation.
+        [JsonPropertyName("validated_hls_variant")]
+        public string? ValidatedHlsVariant { get; init; }
+    }
 
     /// <summary>
     /// Invokes the stateless scraper.py CLI as a subprocess.
     /// Parses stdout JSON and routes results through the HLS loopback proxy.
     /// </summary>
-    public sealed class ScraperEngine
+    public sealed class ScraperEngine : IScraperResolver
     {
         private readonly PythonBootstrapper _python;
 
         // Total budget across all mirrors — the Python script manages per-mirror 8s timeouts internally
-        private const int TotalTimeoutMs = 55_000;
+        private const int SearchTimeoutMs = 40_000;
+        private const int ExtractDefaultTimeoutMs = 45_000;
+        private const int ResolveMinTimeoutMs = 45_000;
+        private const int ResolveMaxTimeoutMs = 120_000;
 
         public bool IsAvailable => _python.IsAvailable;
 
@@ -51,15 +72,20 @@ namespace UniversalMediaOS.Core.Services
         /// </summary>
         public async Task<ScraperSearchResult[]> SearchAsync(
             string query,
-            CancellationToken token = default)
+            CancellationToken token = default,
+            Action<string>? progressLog = null)
         {
             try
             {
-                string stdout = await RunScraperAsync(token, "search", query);
+                string stdout = await RunScraperAsync(token, SearchTimeoutMs, progressLog, "search", query);
                 if (string.IsNullOrWhiteSpace(stdout)) return [];
 
                 var results = JsonSerializer.Deserialize<ScraperSearchResult[]>(stdout);
                 return results ?? [];
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -74,11 +100,23 @@ namespace UniversalMediaOS.Core.Services
         /// </summary>
         public async Task<ScraperStreamResult?> ExtractAsync(
             string episodeUrl,
-            CancellationToken token = default)
+            CancellationToken token = default,
+            Action<string>? progressLog = null,
+            int timeoutMs = ExtractDefaultTimeoutMs,
+            string audioPreference = "sub")
         {
             try
             {
-                string stdout = await RunScraperAsync(token, "extract", episodeUrl);
+                int boundedTimeoutMs = Math.Clamp(timeoutMs, 20_000, 120_000);
+                int pythonBudgetSeconds = Math.Max(15, boundedTimeoutMs / 1000 - 5);
+                string stdout = await RunScraperAsync(
+                    token,
+                    boundedTimeoutMs,
+                    progressLog,
+                    "extract",
+                    episodeUrl,
+                    NormalizeAudioPreference(audioPreference),
+                    pythonBudgetSeconds.ToString());
                 if (string.IsNullOrWhiteSpace(stdout)) return null;
 
                 var result = JsonSerializer.Deserialize<ScraperStreamResult>(stdout);
@@ -89,6 +127,10 @@ namespace UniversalMediaOS.Core.Services
                 }
 
                 return result;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -101,16 +143,35 @@ namespace UniversalMediaOS.Core.Services
             string query,
             string episodeId,
             int maxSiteAttempts,
-            CancellationToken token = default)
+            CancellationToken token = default,
+            Action<string>? progressLog = null,
+            string audioPreference = "sub",
+            bool preferNative = true,
+            IReadOnlyList<string>? titleAliases = null,
+            int aniListId = 0,
+            int malId = 0,
+            IReadOnlyList<string>? titleSynonyms = null)
         {
             try
             {
+                int requestedSiteAttempts = maxSiteAttempts < 0 ? 6 : maxSiteAttempts;
+                int timeoutMs = ComputeResolveTimeoutMs(requestedSiteAttempts);
+                int pythonBudgetSeconds = Math.Max(35, timeoutMs / 1000 - 10);
+
                 string stdout = await RunScraperAsync(
                     token,
+                    timeoutMs,
+                    progressLog,
                     "resolve",
                     query,
                     episodeId,
-                    Math.Clamp(maxSiteAttempts, 1, 30).ToString());
+                    requestedSiteAttempts.ToString(),
+                    NormalizeAudioPreference(audioPreference),
+                    pythonBudgetSeconds.ToString(),
+                    preferNative ? "native" : "website",
+                    JsonSerializer.Serialize(titleAliases ?? []),
+                    JsonSerializer.Serialize(new { anilist = Math.Max(0, aniListId), mal = Math.Max(0, malId) }),
+                    JsonSerializer.Serialize(titleSynonyms ?? []));
 
                 if (string.IsNullOrWhiteSpace(stdout)) return null;
 
@@ -123,6 +184,10 @@ namespace UniversalMediaOS.Core.Services
 
                 return result;
             }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 AppLogger.Log($"[ScraperEngine] Resolve failed: {ex.Message}", "WARNING");
@@ -132,14 +197,34 @@ namespace UniversalMediaOS.Core.Services
 
         // ── Subprocess Runner ────────────────────────────────────────────────
 
+        private static string NormalizeAudioPreference(string? audioPreference) =>
+            (audioPreference ?? string.Empty).Equals("dub", StringComparison.OrdinalIgnoreCase)
+                ? "dub"
+                : "sub";
+
+        private static int ComputeResolveTimeoutMs(int maxSiteAttempts)
+        {
+            // Zero means all indexed sites, but it retains the existing maximum
+            // process deadline rather than increasing network/runtime limits.
+            int timeoutSiteBudget = maxSiteAttempts == 0
+                ? 30
+                : Math.Clamp(maxSiteAttempts, 1, 30);
+            int timeoutMs = 25_000 + timeoutSiteBudget * 8_000;
+            return Math.Clamp(timeoutMs, ResolveMinTimeoutMs, ResolveMaxTimeoutMs);
+        }
+
         private async Task<string> RunScraperAsync(
             CancellationToken externalToken,
+            int timeoutMs,
+            Action<string>? progressLog,
             string mode,
             params string[] arguments)
         {
+            await _python.EnsureScraperReadyAsync(externalToken);
+
             string? pythonExe = _python.ResolvePythonExecutable();
             if (pythonExe == null)
-                throw new InvalidOperationException("Python executable not found on this system.");
+                throw new PythonPreparationException(_python.Snapshot);
 
             string scraperPath = _python.GetScraperPath();
             if (!File.Exists(scraperPath))
@@ -148,7 +233,7 @@ namespace UniversalMediaOS.Core.Services
             AppLogger.Log($"[ScraperEngine] Starting mode={mode}, python='{pythonExe}', scraper='{scraperPath}', args={arguments.Length}");
 
             // Combine caller token with our hard timeout
-            using var timeoutCts = new CancellationTokenSource(TotalTimeoutMs);
+            using var timeoutCts = new CancellationTokenSource(Math.Max(5_000, timeoutMs));
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(
                 externalToken, timeoutCts.Token);
 
@@ -174,7 +259,34 @@ namespace UniversalMediaOS.Core.Services
 
             // Read stdout and stderr concurrently to prevent deadlock
             var stdoutTask = proc.StandardOutput.ReadToEndAsync(linked.Token);
-            var stderrTask = proc.StandardError.ReadToEndAsync(linked.Token);
+            var stderrLines = new List<string>();
+            var stderrTask = Task.Run(async () =>
+            {
+                while (!linked.Token.IsCancellationRequested)
+                {
+                    string? line = await proc.StandardError.ReadLineAsync();
+                    if (line == null)
+                    {
+                        break;
+                    }
+
+                    string normalized = LogSanitizer.RedactSensitiveUrls(line.Trim());
+                    if (string.IsNullOrWhiteSpace(normalized))
+                    {
+                        continue;
+                    }
+
+                    stderrLines.Add(normalized);
+                    if (progressLog != null)
+                    {
+                        progressLog(normalized);
+                    }
+                    else
+                    {
+                        AppLogger.Log($"[ScraperEngine] {normalized}");
+                    }
+                }
+            }, linked.Token);
 
             try
             {
@@ -183,17 +295,44 @@ namespace UniversalMediaOS.Core.Services
             catch (OperationCanceledException)
             {
                 try { proc.Kill(entireProcessTree: true); } catch { }
-                AppLogger.Log($"[ScraperEngine] {mode} timed out or cancelled.", "WARNING");
+                try
+                {
+                    await Task.WhenAll(stdoutTask, stderrTask)
+                        .WaitAsync(TimeSpan.FromSeconds(2));
+                }
+                catch
+                {
+                    // The process has been killed; bounded drain failures are non-fatal.
+                }
+
+                if (externalToken.IsCancellationRequested)
+                {
+                    AppLogger.Log($"[ScraperEngine] {mode} cancelled by the caller.");
+                    throw new OperationCanceledException(externalToken);
+                }
+
+                AppLogger.Log($"[ScraperEngine] {mode} timed out.", "WARNING");
+                progressLog?.Invoke($"[ScraperEngine] {mode} timed out after {Math.Max(5_000, timeoutMs) / 1000}s; resolution stopped.");
                 return string.Empty;
             }
 
             string stdout = await stdoutTask;
-            string stderr = await stderrTask;
+            try
+            {
+                await stderrTask;
+            }
+            catch (OperationCanceledException)
+            {
+            }
 
-            if (!string.IsNullOrEmpty(stderr))
-                AppLogger.Log($"[ScraperEngine] stderr: {stderr.Trim()}", "INFO");
+            if (stderrLines.Count > 0 && progressLog == null)
+                AppLogger.Log($"[ScraperEngine] stderr lines={stderrLines.Count}", "INFO");
 
             AppLogger.Log($"[ScraperEngine] {mode} exit={proc.ExitCode}, stdout length={stdout.Length}");
+            if (proc.ExitCode != 0 && string.IsNullOrWhiteSpace(stdout))
+            {
+                AppLogger.Log($"[ScraperEngine] {mode} exited with code {proc.ExitCode} and no JSON response.", "WARNING");
+            }
             return stdout.Trim();
         }
     }

@@ -1,231 +1,890 @@
 <UserControl x:Class="UniversalMediaOS.WPF.Views.SettingsView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:helpers="clr-namespace:UniversalMediaOS.WPF.Helpers"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              mc:Ignorable="d"
-             d:DesignHeight="720" d:DesignWidth="1080"
-             Background="Transparent">
-    <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <StackPanel Margin="32">
+             d:DesignHeight="720" d:DesignWidth="1280"
+             Background="{DynamicResource BgApp}">
 
-            <TextBlock Text="Settings" FontSize="32" FontWeight="Bold"
-                       Foreground="{StaticResource TextPrimary}" Margin="0,0,0,32"
-                       Style="{StaticResource DisplayText}"/>
+    <UserControl.Resources>
+        <Style x:Key="SettingsNavButton" TargetType="Button" BasedOn="{StaticResource PremiumNavButton}">
+            <Setter Property="Margin" Value="0,2,8,2"/>
+        </Style>
 
-            <!-- ── Services ─────────────────────────────────────────── -->
-            <TextBlock Text="Services" FontSize="20" FontWeight="SemiBold"
-                       Foreground="{StaticResource TextPrimary}" Margin="0,0,0,16"/>
+        <Style x:Key="SettingsSectionCard" TargetType="Border" BasedOn="{StaticResource SurfaceCard}">
+            <Setter Property="HorizontalAlignment" Value="Stretch"/>
+            <Setter Property="Margin" Value="0,0,0,16"/>
+        </Style>
 
-            <CheckBox Content="Auto-manage local dependencies (Python scraper, uBlock, FFmpeg check, qBittorrent launch)"
-                      IsChecked="{Binding AutoManageServices}"
-                      Foreground="{StaticResource TextPrimary}" Margin="0,0,0,8"/>
-            <TextBlock Text="When enabled, the app prepares local streaming/downloading dependencies on launch and reports non-fatal warnings here."
-                       Foreground="{StaticResource TextMuted}" FontSize="12" Margin="24,0,0,24" TextWrapping="Wrap"/>
+        <Style x:Key="SettingsSaveButton" TargetType="Button" BasedOn="{StaticResource PrimaryButton}">
+            <Setter Property="MinWidth" Value="160"/>
+            <Setter Property="Height" Value="42"/>
+            <Setter Property="HorizontalAlignment" Value="Right"/>
+            <Setter Property="Margin" Value="0,8,0,12"/>
+        </Style>
 
-            <Grid Margin="0,0,0,24">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="200"/>
-                    <ColumnDefinition Width="120"/>
-                    <ColumnDefinition Width="*"/>
-                </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="Scraper Site Attempts" Foreground="{StaticResource TextMuted}" VerticalAlignment="Center"/>
-                <TextBox Grid.Column="1" Text="{Binding ScraperSiteAttemptLimit, UpdateSourceTrigger=PropertyChanged}"/>
-                <TextBlock Grid.Column="2" Text="How many indexed streaming sites Auto mode should try before WebView fallback."
-                           Foreground="{StaticResource TextMuted}" FontSize="12" Margin="12,0,0,0" TextWrapping="Wrap"
-                           VerticalAlignment="Center"/>
-            </Grid>
+        <Style x:Key="SettingsSectionScroller" TargetType="ScrollViewer">
+            <Setter Property="VerticalScrollBarVisibility" Value="Auto"/>
+            <Setter Property="HorizontalScrollBarVisibility" Value="Disabled"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+        </Style>
 
-            <Border Background="{StaticResource BgSurface}" BorderBrush="{StaticResource BorderSubtle}" BorderThickness="1"
-                    CornerRadius="8" Padding="12" Margin="0,0,0,24">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="{Binding ServiceHealthText}" Foreground="{StaticResource TextMuted}"
-                               FontFamily="Consolas" FontSize="12" TextWrapping="Wrap"/>
-                    <Button Grid.Column="1" Content="Refresh" Command="{Binding RefreshServiceHealthCommand}"
-                            Margin="12,0,0,0" Padding="12,6" VerticalAlignment="Top"
-                            Background="{StaticResource AccentPrimary}" Foreground="White" BorderThickness="0" Cursor="Hand"/>
-                </Grid>
-            </Border>
+        <Style x:Key="AccentSwatchToggle" TargetType="ToggleButton">
+            <Setter Property="Width" Value="34"/>
+            <Setter Property="Height" Value="34"/>
+            <Setter Property="Margin" Value="0,0,10,0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="BorderBrush" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="2"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="Outer"
+                                Width="{TemplateBinding Width}"
+                                Height="{TemplateBinding Height}"
+                                Background="Transparent"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="17">
+                            <Border Margin="3"
+                                    Background="{TemplateBinding Background}"
+                                    CornerRadius="14"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Outer" Property="BorderBrush" Value="{DynamicResource TextPrimary}"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Outer" Property="BorderBrush" Value="{DynamicResource AccentPrimary}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
 
-            <!-- qBittorrent -->
-            <TextBlock Text="qBittorrent WebUI" FontSize="16" FontWeight="SemiBold"
-                       Foreground="{StaticResource TextPrimary}" Margin="0,0,0,12"/>
+        <Style x:Key="SegmentToggle" TargetType="ToggleButton">
+            <Setter Property="MinWidth" Value="112"/>
+            <Setter Property="Height" Value="34"/>
+            <Setter Property="Padding" Value="14,0"/>
+            <Setter Property="Margin" Value="0,0,8,0"/>
+            <Setter Property="Background" Value="{DynamicResource BgElevated}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderStrong}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="Chrome"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="{DynamicResource RadiusMd}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource AccentSoft}"/>
+                                <Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource AccentPrimary}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource AccentPrimary}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
 
-            <Grid Margin="0,0,0,8">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="200"/>
-                    <ColumnDefinition Width="*"/>
-                </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="Host" Foreground="{StaticResource TextMuted}" VerticalAlignment="Center"/>
-                <TextBox   Grid.Column="1" Text="{Binding QbitHost, UpdateSourceTrigger=PropertyChanged}"/>
-            </Grid>
-            <Grid Margin="0,0,0,8">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="200"/>
-                    <ColumnDefinition Width="*"/>
-                </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="Port" Foreground="{StaticResource TextMuted}" VerticalAlignment="Center"/>
-                <TextBox   Grid.Column="1" Text="{Binding QbitPort, UpdateSourceTrigger=PropertyChanged}"/>
-            </Grid>
-            <Grid Margin="0,0,0,8">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="200"/>
-                    <ColumnDefinition Width="*"/>
-                </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="Username" Foreground="{StaticResource TextMuted}" VerticalAlignment="Center"/>
-                <TextBox   Grid.Column="1" Text="{Binding QbitUsername, UpdateSourceTrigger=PropertyChanged}"/>
-            </Grid>
-            <Grid Margin="0,0,0,24">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="200"/>
-                    <ColumnDefinition Width="*"/>
-                </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="Password" Foreground="{StaticResource TextMuted}" VerticalAlignment="Center"/>
-                <PasswordBox Grid.Column="1" x:Name="QbitPasswordBox" PasswordChanged="QbitPasswordBox_PasswordChanged"/>
-            </Grid>
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="188"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
 
-            <!-- MAL -->
-            <TextBlock Text="MyAnimeList Integration" FontSize="16" FontWeight="SemiBold"
-                       Foreground="{StaticResource TextPrimary}" Margin="0,0,0,12"/>
-            <Grid Margin="0,0,0,24">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="200"/>
-                    <ColumnDefinition Width="*"/>
-                </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="OAuth Token" Foreground="{StaticResource TextMuted}" VerticalAlignment="Center"/>
-                <TextBox   Grid.Column="1" Text="{Binding MalOAuthToken, UpdateSourceTrigger=PropertyChanged}"/>
-            </Grid>
+        <Border Grid.Column="0" Background="{DynamicResource BgChrome}" BorderBrush="{DynamicResource BorderSubtle}" BorderThickness="0,0,1,0">
+            <ScrollViewer VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Margin="0,14,0,0">
+                <TextBlock Text="{helpers:Loc SETTINGS}" Style="{StaticResource CaptionText}" FontWeight="Bold" Margin="10,0,0,12"/>
 
-            <!-- Playback -->
-            <TextBlock Text="Playback" FontSize="16" FontWeight="SemiBold"
-                       Foreground="{StaticResource TextPrimary}" Margin="0,0,0,12"/>
-            <Grid Margin="0,0,0,8">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="200"/>
-                    <ColumnDefinition Width="*"/>
-                </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="Default Audio" Foreground="{StaticResource TextMuted}" VerticalAlignment="Center"/>
-                <ComboBox  Grid.Column="1" SelectedValue="{Binding DefaultAudioPref}" SelectedValuePath="Content">
-                    <ComboBoxItem Content="Sub"/>
-                    <ComboBoxItem Content="Dub"/>
-                </ComboBox>
-            </Grid>
-            <CheckBox Content="Auto-play after download" IsChecked="{Binding AutoPlayAfterDownload}"
-                      Foreground="{StaticResource TextPrimary}" Margin="0,0,0,16"/>
-
-            <!-- ── Downloads ─────────────────────────────────── -->
-            <TextBlock Text="Downloads" FontSize="16" FontWeight="SemiBold"
-                       Foreground="{StaticResource TextPrimary}" Margin="0,0,0,12"/>
-
-            <Grid Margin="0,0,0,24">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="200"/>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="Download Directory" Foreground="{StaticResource TextMuted}" VerticalAlignment="Center"/>
-                <TextBox   Grid.Column="1" Text="{Binding DownloadDirectory, UpdateSourceTrigger=PropertyChanged}" 
-                           Foreground="{StaticResource TextPrimary}" CaretBrush="{StaticResource TextPrimary}"/>
-                <Button    Grid.Column="2" Content="Browse..." Command="{Binding BrowseDownloadDirectoryCommand}"
-                           Margin="8,0,0,0" Padding="12,6" Background="{StaticResource AccentPrimary}" 
-                           Foreground="White" BorderThickness="0" Cursor="Hand"/>
-            </Grid>
-
-            <!-- ── Debug & Logging ─────────────────────────────────── -->
-            <TextBlock Text="Debug &amp; Logging" FontSize="16" FontWeight="SemiBold"
-                       Foreground="{StaticResource TextPrimary}" Margin="0,0,0,12"/>
-            <CheckBox Content="Enable Debug Logging" IsChecked="{Binding EnableDebugLogging}"
-                       Foreground="{StaticResource TextPrimary}" Margin="0,0,0,8"/>
-            <TextBlock Text="Writes button clicks, network resolve events, and scraper logs to a local file for diagnosis."
-                       Foreground="{StaticResource TextMuted}" FontSize="12" Margin="24,0,0,12" TextWrapping="Wrap"/>
-            
-            <StackPanel Orientation="Horizontal" Margin="24,0,0,32">
-                <TextBlock Text="Log File Size: " Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center" FontWeight="Medium"/>
-                <TextBlock Text="{Binding LogFileSizeText}" Foreground="{StaticResource TextMuted}" VerticalAlignment="Center" Margin="0,0,16,0"/>
-                <Button Content="Clear Log File" Command="{Binding ClearLogCommand}" Padding="12,6" Background="#EF4444" Foreground="White" BorderThickness="0" Cursor="Hand"/>
+                <Button Content="{helpers:Loc Appearance}" Tag="&#xE790;" Command="{Binding SelectSectionCommand}" CommandParameter="Appearance" ToolTip="Open appearance and UI scale settings.">
+                    <Button.Style>
+                        <Style TargetType="Button" BasedOn="{StaticResource SettingsNavButton}">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SelectedSection}" Value="Appearance">
+                                    <Setter Property="Background" Value="#3B1B6D"/>
+                                    <Setter Property="Foreground" Value="#C4B5FD"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Button.Style>
+                </Button>
+                <Button Content="{helpers:Loc Services}" Tag="&#xE713;" Command="{Binding SelectSectionCommand}" CommandParameter="Services" ToolTip="Open local service, logging, and download-directory settings.">
+                    <Button.Style>
+                        <Style TargetType="Button" BasedOn="{StaticResource SettingsNavButton}">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SelectedSection}" Value="Services">
+                                    <Setter Property="Background" Value="#3B1B6D"/>
+                                    <Setter Property="Foreground" Value="#C4B5FD"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Button.Style>
+                </Button>
+                <Button Content="{helpers:Loc qBittorrent}" Tag="&#xE896;" Command="{Binding SelectSectionCommand}" CommandParameter="qBittorrent" ToolTip="Configure qBittorrent WebUI for resumable downloads.">
+                    <Button.Style>
+                        <Style TargetType="Button" BasedOn="{StaticResource SettingsNavButton}">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SelectedSection}" Value="qBittorrent">
+                                    <Setter Property="Background" Value="#3B1B6D"/>
+                                    <Setter Property="Foreground" Value="#C4B5FD"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Button.Style>
+                </Button>
+                <Button Content="{helpers:Loc MAL}" Tag="&#xE7C3;" Command="{Binding SelectSectionCommand}" CommandParameter="MAL" ToolTip="Configure MyAnimeList OAuth and sync setup.">
+                    <Button.Style>
+                        <Style TargetType="Button" BasedOn="{StaticResource SettingsNavButton}">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SelectedSection}" Value="MAL">
+                                    <Setter Property="Background" Value="#3B1B6D"/>
+                                    <Setter Property="Foreground" Value="#C4B5FD"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Button.Style>
+                </Button>
+                <Button Content="Providers &amp; Scrapers" Tag="&#xE8A5;" Command="{Binding SelectSectionCommand}" CommandParameter="Media Providers" ToolTip="Configure every scraper, metadata catalog, and fallback provider in one place.">
+                    <Button.Style>
+                        <Style TargetType="Button" BasedOn="{StaticResource SettingsNavButton}">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SelectedSection}" Value="Media Providers">
+                                    <Setter Property="Background" Value="#3B1B6D"/>
+                                    <Setter Property="Foreground" Value="#C4B5FD"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Button.Style>
+                </Button>
+                <Button Content="{helpers:Loc Notifications}" Tag="&#xE7F4;" Command="{Binding SelectSectionCommand}" CommandParameter="Notifications" ToolTip="Configure notification preferences.">
+                    <Button.Style>
+                        <Style TargetType="Button" BasedOn="{StaticResource SettingsNavButton}">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SelectedSection}" Value="Notifications">
+                                    <Setter Property="Background" Value="#3B1B6D"/>
+                                    <Setter Property="Foreground" Value="#C4B5FD"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Button.Style>
+                </Button>
+                <Button Content="{helpers:Loc Privacy}" Tag="&#xE72E;" Command="{Binding SelectSectionCommand}" CommandParameter="Privacy" ToolTip="Configure content and privacy preferences.">
+                    <Button.Style>
+                        <Style TargetType="Button" BasedOn="{StaticResource SettingsNavButton}">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SelectedSection}" Value="Privacy">
+                                    <Setter Property="Background" Value="#3B1B6D"/>
+                                    <Setter Property="Foreground" Value="#C4B5FD"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Button.Style>
+                </Button>
+                <Button Content="{helpers:Loc Language}" Tag="&#xE774;" Command="{Binding SelectSectionCommand}" CommandParameter="Language" ToolTip="Choose the app display language.">
+                    <Button.Style>
+                        <Style TargetType="Button" BasedOn="{StaticResource SettingsNavButton}">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SelectedSection}" Value="Language">
+                                    <Setter Property="Background" Value="#3B1B6D"/>
+                                    <Setter Property="Foreground" Value="#C4B5FD"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Button.Style>
+                </Button>
             </StackPanel>
+            </ScrollViewer>
+        </Border>
 
-            <!-- ── Custom Web Providers (Tier 3) ────────────────────── -->
-            <Border BorderBrush="{StaticResource BorderSubtle}" BorderThickness="0,1,0,0" Margin="0,16,0,24"/>
-            
-            <TextBlock Text="Custom Web Providers (WebView2 Fallback)" FontSize="20" FontWeight="SemiBold"
-                       Foreground="{StaticResource TextPrimary}" Margin="0,0,0,16"/>
-            
-            <TextBlock Text="Manage custom websites to load as embeds. The search URL must contain '{query}' where the anime name will be injected."
-                       Foreground="{StaticResource TextMuted}" FontSize="12" Margin="0,0,0,16" TextWrapping="Wrap"/>
+        <Grid Grid.Column="1" Margin="16,12,16,20">
+            <ScrollViewer>
+                <ScrollViewer.Style>
+                    <Style TargetType="ScrollViewer" BasedOn="{StaticResource SettingsSectionScroller}">
+                        <Setter Property="Visibility" Value="Collapsed"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding SelectedSection}" Value="Appearance">
+                                <Setter Property="Visibility" Value="Visible"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </ScrollViewer.Style>
+            <StackPanel>
+                <TextBlock Text="{helpers:Loc Appearance}" Style="{StaticResource DisplayText}" FontSize="22"/>
+                <TextBlock Text="Customize Universal Media OS" Style="{StaticResource BodyText}" Foreground="{DynamicResource TextMuted}" Margin="0,3,0,20"/>
+                <Border Style="{StaticResource SettingsSectionCard}">
+                    <StackPanel>
+                        <StackPanel Margin="0,0,0,20">
+                            <Grid Margin="0,0,0,16">
+                                <StackPanel>
+                                    <TextBlock Text="{helpers:Loc Key=Dark Mode}" Style="{StaticResource SubtitleText}" FontWeight="Bold"/>
+                                    <TextBlock Text="Applies the dark or light palette immediately" Style="{StaticResource CaptionText}"/>
+                                </StackPanel>
+                                <CheckBox IsChecked="{Binding IsDarkMode}"
+                                          HorizontalAlignment="Right"
+                                          VerticalAlignment="Center"
+                                          ToolTip="Switch between the dark and light app palettes."/>
+                            </Grid>
+                            <Border BorderBrush="{DynamicResource BorderSubtle}" BorderThickness="0,1,0,0" Margin="0,0,0,18"/>
 
-            <!-- Providers List -->
-            <ListBox ItemsSource="{Binding CustomSourcesList}" Background="Transparent" BorderThickness="0" Margin="0,0,0,24" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                <ListBox.ItemTemplate>
-                    <DataTemplate>
-                        <Border Background="{StaticResource BgSurface}" CornerRadius="8" Padding="12" Margin="0,0,0,8">
+                            <TextBlock Text="{helpers:Loc Key=Accent Color}" Style="{StaticResource BodyText}" FontWeight="Bold" Margin="0,0,0,10"/>
+                            <WrapPanel Margin="0,0,0,18">
+                                <ToggleButton Style="{StaticResource AccentSwatchToggle}" Background="#14B8A6" IsChecked="{Binding IsTealAccent, Mode=OneWay}" Command="{Binding SelectAccentColorCommand}" CommandParameter="Teal" AutomationProperties.Name="Teal accent" ToolTip="Use teal as the app accent."/>
+                                <ToggleButton Style="{StaticResource AccentSwatchToggle}" Background="#8B5CF6" IsChecked="{Binding IsPurpleAccent, Mode=OneWay}" Command="{Binding SelectAccentColorCommand}" CommandParameter="Purple" AutomationProperties.Name="Purple accent" ToolTip="Use purple as the app accent."/>
+                                <ToggleButton Style="{StaticResource AccentSwatchToggle}" Background="#EC4899" IsChecked="{Binding IsPinkAccent, Mode=OneWay}" Command="{Binding SelectAccentColorCommand}" CommandParameter="Pink" AutomationProperties.Name="Pink accent" ToolTip="Use pink as the app accent."/>
+                                <ToggleButton Style="{StaticResource AccentSwatchToggle}" Background="#06B6D4" IsChecked="{Binding IsCyanAccent, Mode=OneWay}" Command="{Binding SelectAccentColorCommand}" CommandParameter="Cyan" AutomationProperties.Name="Cyan accent" ToolTip="Use cyan as the app accent."/>
+                                <ToggleButton Style="{StaticResource AccentSwatchToggle}" Background="#F59E0B" IsChecked="{Binding IsAmberAccent, Mode=OneWay}" Command="{Binding SelectAccentColorCommand}" CommandParameter="Amber" AutomationProperties.Name="Amber accent" ToolTip="Use amber as the app accent."/>
+                                <ToggleButton Style="{StaticResource AccentSwatchToggle}" Background="#EF4444" IsChecked="{Binding IsRedAccent, Mode=OneWay}" Command="{Binding SelectAccentColorCommand}" CommandParameter="Red" AutomationProperties.Name="Red accent" ToolTip="Use red as the app accent."/>
+                            </WrapPanel>
+                            <Border BorderBrush="{DynamicResource BorderSubtle}" BorderThickness="0,1,0,0" Margin="0,0,0,18"/>
+
+                            <Grid Margin="0,0,0,12">
+                                <StackPanel>
+                                    <TextBlock Text="{helpers:Loc Key=UI Zoom}" Style="{StaticResource BodyText}" FontWeight="Bold"/>
+                                    <TextBlock Text="Scales workspace content; video and web readers stay pixel-aligned" Style="{StaticResource CaptionText}" TextWrapping="Wrap"/>
+                                </StackPanel>
+                                <TextBlock Text="{Binding UiScalePercent, StringFormat={}{0}%}" HorizontalAlignment="Right" Foreground="{DynamicResource AccentPrimary}" FontWeight="Bold"/>
+                            </Grid>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,18">
+                                <Button Content="-"
+                                        Command="{Binding DecreaseUiScaleCommand}"
+                                        Style="{StaticResource SecondaryButton}"
+                                        Width="46"
+                                        Margin="0,0,8,0"
+                                        ToolTip="Zoom out by 5 percent."/>
+                                <Button Content="{helpers:Loc Reset}"
+                                        Command="{Binding ResetUiScaleCommand}"
+                                        Style="{StaticResource SecondaryButton}"
+                                        MinWidth="84"
+                                        Margin="0,0,8,0"
+                                        ToolTip="Reset UI zoom to 100 percent."/>
+                                <Button Content="+"
+                                        Command="{Binding IncreaseUiScaleCommand}"
+                                        Style="{StaticResource PrimaryButton}"
+                                        Width="46"
+                                        ToolTip="Zoom in by 5 percent."/>
+                            </StackPanel>
+                            <Border BorderBrush="{DynamicResource BorderSubtle}" BorderThickness="0,1,0,0" Margin="0,0,0,18"/>
+
+                            <TextBlock Text="{helpers:Loc Key=Layout Density}" Style="{StaticResource BodyText}" FontWeight="Bold" Margin="0,0,0,8"/>
+                            <WrapPanel Margin="0,0,0,18">
+                                <ToggleButton Content="{helpers:Loc Compact}" Style="{StaticResource SegmentToggle}" IsChecked="{Binding IsCompactDensity, Mode=OneWay}" Command="{Binding SelectUiDensityCommand}" CommandParameter="Compact" ToolTip="Use tighter spacing and smaller controls."/>
+                                <ToggleButton Content="{helpers:Loc Comfortable}" Style="{StaticResource SegmentToggle}" IsChecked="{Binding IsComfortableDensity, Mode=OneWay}" Command="{Binding SelectUiDensityCommand}" CommandParameter="Comfortable" ToolTip="Use default spacing."/>
+                                <ToggleButton Content="{helpers:Loc Spacious}" Style="{StaticResource SegmentToggle}" IsChecked="{Binding IsSpaciousDensity, Mode=OneWay}" Command="{Binding SelectUiDensityCommand}" CommandParameter="Spacious" ToolTip="Use larger spacing and taller controls."/>
+                            </WrapPanel>
+
+                            <TextBlock Text="{helpers:Loc Key=Poster Image Fit}" Style="{StaticResource BodyText}" FontWeight="Bold" Margin="0,0,0,8"/>
+                            <WrapPanel Margin="0,0,0,18">
+                                <ToggleButton Content="{helpers:Loc Contain}" Style="{StaticResource SegmentToggle}" IsChecked="{Binding IsPosterContain, Mode=OneWay}" Command="{Binding SelectPosterFitCommand}" CommandParameter="Contain" ToolTip="Show the whole poster without cropping."/>
+                                <ToggleButton Content="{helpers:Loc Cover}" Style="{StaticResource SegmentToggle}" IsChecked="{Binding IsPosterCover, Mode=OneWay}" Command="{Binding SelectPosterFitCommand}" CommandParameter="Cover" ToolTip="Crop posters to fill the card."/>
+                                <ToggleButton Content="{helpers:Loc Key=Smart crop}" Style="{StaticResource SegmentToggle}" IsChecked="{Binding IsPosterSmartCrop, Mode=OneWay}" Command="{Binding SelectPosterFitCommand}" CommandParameter="Smart crop" ToolTip="Use cover-style cropping for card art."/>
+                            </WrapPanel>
+
+                            <Grid Margin="0,0,0,12">
+                                <StackPanel>
+                                    <TextBlock Text="{helpers:Loc Key=Corner Radius}" Style="{StaticResource BodyText}" FontWeight="Bold"/>
+                                    <TextBlock Text="Updates shared cards, inputs, menus, and buttons" Style="{StaticResource CaptionText}" TextWrapping="Wrap"/>
+                                </StackPanel>
+                                <TextBlock Text="{Binding CornerRadiusPreview, StringFormat={}{0}px}" HorizontalAlignment="Right" Foreground="{DynamicResource AccentPrimary}" FontWeight="Bold"/>
+                            </Grid>
+                            <Slider Minimum="0" Maximum="16" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding CornerRadiusPreview}" Margin="0,0,0,18" ToolTip="Set the shared app corner radius."/>
+
+                            <CheckBox Content="{helpers:Loc Key=Show service status bar}" IsChecked="{Binding ShowServiceBar}" Margin="0,0,0,10" ToolTip="Toggle the bottom service bar immediately."/>
+                            <CheckBox Content="{helpers:Loc Key=Reduce motion}" IsChecked="{Binding ReduceMotion}" Margin="0,0,0,10" ToolTip="Disable nonessential app animation durations."/>
+                            <CheckBox Content="{helpers:Loc Key=Start maximized}" IsChecked="{Binding StartMaximized}" ToolTip="Maximize or restore this window now and save the startup behavior."/>
+                        </StackPanel>
+
+                        <Border Background="{DynamicResource BgInput}"
+                                BorderBrush="{DynamicResource BorderSubtle}"
+                                BorderThickness="1"
+                                CornerRadius="{DynamicResource RadiusMd}"
+                                Padding="12"
+                                VerticalAlignment="Top">
+                            <StackPanel>
+                                <TextBlock Text="Live preview" Style="{StaticResource CaptionText}" FontWeight="Bold" Margin="0,0,0,10"/>
+                                <Border Height="126"
+                                        Background="{DynamicResource BgPanelAlt}"
+                                        BorderBrush="{DynamicResource BorderStrong}"
+                                        BorderThickness="1"
+                                        CornerRadius="{DynamicResource RadiusMd}"
+                                        ClipToBounds="True">
+                                    <Grid>
+                                        <Rectangle Fill="{DynamicResource AccentSoft}"/>
+                                        <Border Width="70"
+                                                Height="94"
+                                                HorizontalAlignment="Left"
+                                                Margin="14,14,0,14"
+                                                Background="{DynamicResource AccentPrimary}"
+                                                CornerRadius="{DynamicResource RadiusSm}"/>
+                                        <StackPanel Margin="96,18,12,12">
+                                            <TextBlock Text="Media card" Style="{StaticResource BodyText}" FontWeight="Bold"/>
+                                            <TextBlock Text="Accent, radius, density, and theme update here as you edit." Style="{StaticResource CaptionText}" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                                <Button Content="Run sample action"
+                                        Command="{Binding PreviewAppearanceCommand}"
+                                        Style="{StaticResource PrimaryButton}"
+                                        HorizontalAlignment="Stretch"
+                                        Margin="0,12,0,0"
+                                        AutomationProperties.Name="Run appearance sample action"
+                                        ToolTip="Run a local sample action using the shared primary-button style."/>
+                                <TextBlock Text="{Binding AppearancePreviewStatus}"
+                                           Style="{StaticResource CaptionText}"
+                                           TextWrapping="Wrap"
+                                           Margin="0,8,0,0"/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </Border>
+                <Button Content="{helpers:Loc Key=Save Settings}" AutomationProperties.Name="Save Settings" Command="{Binding SaveCommand}" Style="{StaticResource SettingsSaveButton}" ToolTip="Save these settings to the local app configuration."/>
+            </StackPanel>
+            </ScrollViewer>
+
+            <Grid>
+                <Grid.Style>
+                    <Style TargetType="Grid">
+                        <Setter Property="Visibility" Value="Collapsed"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding SelectedSection}" Value="Media Providers">
+                                <Setter Property="Visibility" Value="Visible"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Grid.Style>
+                <ScrollViewer Style="{StaticResource SettingsSectionScroller}">
+                    <StackPanel>
+                        <TextBlock Text="Providers &amp; Scrapers" Style="{StaticResource DisplayText}" FontSize="22"/>
+                        <TextBlock Text="Anime discovery, Movie, TV, Cartoon, Book, and dub availability settings"
+                                   Style="{StaticResource BodyText}"
+                                   Foreground="{DynamicResource TextMuted}"
+                                   TextWrapping="Wrap"
+                                   Margin="0,3,0,20"/>
+
+                        <Border Style="{StaticResource SettingsSectionCard}">
+                            <StackPanel>
+                                <TextBlock Text="Source discovery" Style="{StaticResource SubtitleText}" FontWeight="Bold"/>
+                                <TextBlock Text="Anime sources are discovered automatically from EverythingMoe and The Index, with a saved list when the indexes are unavailable. Choose Sub or Dub on the title page. The seed and manifest fields below apply only to Movies, TV, and Cartoons."
+                                           Style="{StaticResource CaptionText}"
+                                           TextWrapping="Wrap"
+                                           Margin="0,4,0,14"/>
+
+                                <Grid Margin="0,0,0,18">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="{helpers:Loc Key=Scraper site attempt limit}" Style="{StaticResource BodyText}" FontWeight="Bold"/>
+                                        <TextBlock Text="Enter a positive site count, or 0 to try all indexed sites within the existing resolve deadline."
+                                                   Style="{StaticResource CaptionText}"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,2,14,0"/>
+                                    </StackPanel>
+                                    <TextBox Grid.Column="1"
+                                             Text="{Binding ScraperSiteAttemptLimit, UpdateSourceTrigger=PropertyChanged}"
+                                             Width="92"
+                                             HorizontalContentAlignment="Center"
+                                             VerticalAlignment="Center"
+                                             AutomationProperties.Name="Scraper site attempt limit"
+                                             ToolTip="Use 0 for every indexed site, or enter a positive maximum."/>
+                                </Grid>
+
+                                <TextBlock Text="Primary audiovisual scraper seed" Style="{StaticResource CaptionText}" FontWeight="Bold" Margin="0,0,0,6"/>
+                                <TextBox Text="{Binding OtherMediaScraperUrl, UpdateSourceTrigger=PropertyChanged}"
+                                         AutomationProperties.Name="Scraper Seed URL"
+                                         Margin="0,0,0,14"
+                                         ToolTip="Base URL for the first Movie, TV, or Cartoon scraper mirror (for example https://vidsrc.to)."/>
+
+                                <CheckBox Content="Enable Internet Archive results"
+                                          IsChecked="{Binding OtherMediaEnableInternetArchive}"
+                                          Foreground="{DynamicResource TextPrimary}"
+                                          Margin="0,0,0,14"
+                                          ToolTip="Include Internet Archive in the audiovisual source waterfall."/>
+
+                                <TextBlock Text="Additional provider indexes" Style="{StaticResource CaptionText}" FontWeight="Bold" Margin="0,0,0,6"/>
+                                <TextBox Text="{Binding OtherMediaProviderIndexes, UpdateSourceTrigger=PropertyChanged}"
+                                         AutomationProperties.Name="Other media provider indexes"
+                                         AcceptsReturn="True"
+                                         MinHeight="92"
+                                         VerticalScrollBarVisibility="Auto"
+                                         TextWrapping="Wrap"
+                                         ToolTip="Enter one provider manifest URL per line, or a JSON string array."/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource SettingsSectionCard}">
+                            <StackPanel>
+                                <TextBlock Text="Movie, TV, and Cartoon metadata" Style="{StaticResource SubtitleText}" FontWeight="Bold"/>
+                                <TextBlock Text="Movies use Wikidata with available IMDb posters; TV shows use TVmaze. Neither needs an API key. The Cartoon catalog can use the optional TMDB key below or the enabled Internet Archive catalog. Source providers are configured separately."
+                                           Style="{StaticResource CaptionText}"
+                                           TextWrapping="Wrap"
+                                           Margin="0,4,0,14"/>
+                                <TextBlock Text="TMDB API key" Style="{StaticResource CaptionText}" FontWeight="Bold" Margin="0,0,0,6"/>
+                                <PasswordBox x:Name="TmdbApiKeyBox"
+                                             PasswordChanged="TmdbApiKeyBox_PasswordChanged"
+                                             AutomationProperties.Name="TMDB API key"
+                                             Margin="0,0,0,12"
+                                             ToolTip="Optional legacy TMDB v3 API key for the Cartoon catalog. Movie and TV metadata do not use this key."/>
+                                <TextBlock Text="TMDB language" Style="{StaticResource CaptionText}" FontWeight="Bold" Margin="0,0,0,6"/>
+                                <TextBox Text="{Binding TmdbLanguage, UpdateSourceTrigger=PropertyChanged}"
+                                         AutomationProperties.Name="TMDB language"
+                                         ToolTip="TMDB locale such as en-US or ar-JO."/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource SettingsSectionCard}">
+                            <StackPanel>
+                                <TextBlock Text="Book catalogs and reader cache" Style="{StaticResource SubtitleText}" FontWeight="Bold"/>
+                                <TextBlock Text="Open Library works without a key. Google Books is optional; EPUB and PDF files are cached locally before the reader opens them."
+                                           Style="{StaticResource CaptionText}"
+                                           TextWrapping="Wrap"
+                                           Margin="0,4,0,14"/>
+                                <TextBlock Text="Google Books API key" Style="{StaticResource CaptionText}" FontWeight="Bold" Margin="0,0,0,6"/>
+                                <PasswordBox x:Name="GoogleBooksApiKeyBox"
+                                             PasswordChanged="GoogleBooksApiKeyBox_PasswordChanged"
+                                             AutomationProperties.Name="Google Books API key"
+                                             Margin="0,0,0,12"
+                                             ToolTip="Optional Google Books API key used for book metadata search."/>
+                                <TextBlock Text="Anna's Archive mirror URL" Style="{StaticResource CaptionText}" FontWeight="Bold" Margin="0,0,0,6"/>
+                                <TextBox Text="{Binding AnnasArchiveUrl, UpdateSourceTrigger=PropertyChanged}"
+                                         AutomationProperties.Name="Anna's Archive Mirror URL"
+                                         Margin="0,0,0,14"
+                                         ToolTip="Base URL for the first Anna's Archive mirror."/>
+                                <TextBlock Text="Book cache directory" Style="{StaticResource CaptionText}" FontWeight="Bold" Margin="0,0,0,6"/>
+                                <TextBox Text="{Binding BookCacheDirectory, UpdateSourceTrigger=PropertyChanged}"
+                                         AutomationProperties.Name="Book cache directory"
+                                         ToolTip="Local folder for readable EPUB and PDF files."/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource SettingsSectionCard}">
+                            <StackPanel>
+                                <TextBlock Text="Dub availability providers" Style="{StaticResource SubtitleText}" FontWeight="Bold"/>
+                                <TextBlock Text="Configure the providers used for per-episode sub and dub availability badges."
+                                           Style="{StaticResource CaptionText}"
+                                           TextWrapping="Wrap"
+                                           Margin="0,4,0,14"/>
+
+                                <ItemsControl ItemsSource="{Binding DubAvailabilityProvidersList}" Margin="0,0,0,14">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border BorderBrush="{DynamicResource BorderSubtle}" BorderThickness="0,0,0,1" Padding="0,0,0,12" Margin="0,0,0,12">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <StackPanel Margin="0,0,16,0">
+                                                        <TextBlock Text="{Binding Name}" FontWeight="Bold" Foreground="{DynamicResource TextPrimary}"/>
+                                                        <TextBlock Text="{Binding SuggestUrlTemplate}" Foreground="{DynamicResource TextMuted}" TextTrimming="CharacterEllipsis" Margin="0,3,0,8"/>
+                                                        <WrapPanel>
+                                                            <CheckBox Content="Enabled"
+                                                                      IsChecked="{Binding Enabled, Mode=TwoWay}"
+                                                                      Foreground="{DynamicResource TextPrimary}"
+                                                                      Margin="0,0,18,0"/>
+                                                            <TextBlock Text="Timeout" Style="{StaticResource CaptionText}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                                            <Slider Minimum="1"
+                                                                    Maximum="30"
+                                                                    Width="140"
+                                                                    TickFrequency="1"
+                                                                    IsSnapToTickEnabled="True"
+                                                                    Value="{Binding TimeoutSeconds, Mode=TwoWay}"
+                                                                    VerticalAlignment="Center"
+                                                                    ToolTip="Maximum seconds to wait when checking this provider."/>
+                                                            <TextBlock Text="{Binding TimeoutSeconds, StringFormat={}{0}s}"
+                                                                       Style="{StaticResource CaptionText}"
+                                                                       VerticalAlignment="Center"
+                                                                       Margin="8,0,0,0"/>
+                                                        </WrapPanel>
+                                                    </StackPanel>
+                                                    <Button Grid.Column="1"
+                                                            Content="{helpers:Loc Delete}"
+                                                            Command="{Binding DataContext.RemoveDubAvailabilityProviderCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                            CommandParameter="{Binding}"
+                                                            Style="{StaticResource DangerButton}"
+                                                            Padding="12,6"
+                                                            VerticalAlignment="Center"
+                                                            ToolTip="Remove this dub availability provider."/>
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+
+                                <TextBlock Text="Provider name" Style="{StaticResource CaptionText}" FontWeight="Bold" Margin="0,0,0,6"/>
+                                <TextBox Text="{Binding NewDubProviderName, UpdateSourceTrigger=PropertyChanged}"
+                                         AutomationProperties.Name="Dub provider name"
+                                         Margin="0,0,0,12"
+                                         ToolTip="Friendly name for this dub availability provider."/>
+
+                                <TextBlock Text="Provider root or search URL" Style="{StaticResource CaptionText}" FontWeight="Bold" Margin="0,0,0,6"/>
+                                <TextBox Text="{Binding NewDubProviderUrl, UpdateSourceTrigger=PropertyChanged}"
+                                         AutomationProperties.Name="Dub provider URL"
+                                         Margin="0,0,0,14"
+                                         ToolTip="Use an exact HTTP(S) search URL containing {query}, or a provider root."/>
+
+                                <WrapPanel Margin="0,0,0,14">
+                                    <CheckBox Content="Enabled"
+                                              IsChecked="{Binding NewDubProviderEnabled}"
+                                              Foreground="{DynamicResource TextPrimary}"
+                                              VerticalAlignment="Center"
+                                              Margin="0,0,18,0"/>
+                                    <TextBlock Text="Timeout" Style="{StaticResource CaptionText}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                    <Slider Minimum="1"
+                                            Maximum="30"
+                                            Width="180"
+                                            TickFrequency="1"
+                                            IsSnapToTickEnabled="True"
+                                            Value="{Binding NewDubProviderTimeoutSeconds, Mode=TwoWay}"
+                                            VerticalAlignment="Center"
+                                            ToolTip="Maximum seconds to wait when checking this provider."/>
+                                    <TextBlock Text="{Binding NewDubProviderTimeoutSeconds, StringFormat={}{0}s}"
+                                               Style="{StaticResource CaptionText}"
+                                               VerticalAlignment="Center"
+                                               Margin="8,0,0,0"/>
+                                </WrapPanel>
+
+                                <Button Content="Add Dub Provider"
+                                        AutomationProperties.Name="Add Dub Provider"
+                                        Command="{Binding AddDubAvailabilityProviderCommand}"
+                                        Style="{StaticResource PrimaryButton}"
+                                        HorizontalAlignment="Left"
+                                        MinWidth="150"
+                                        ToolTip="Add the dub availability provider above."/>
+                            </StackPanel>
+                        </Border>
+
+                        <Button Content="{helpers:Loc Key=Save Settings}"
+                                AutomationProperties.Name="Save Settings"
+                                Command="{Binding SaveCommand}"
+                                Style="{StaticResource SettingsSaveButton}"
+                                ToolTip="Save all provider and scraper settings."/>
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+
+            <ScrollViewer>
+                <ScrollViewer.Style>
+                    <Style TargetType="ScrollViewer" BasedOn="{StaticResource SettingsSectionScroller}">
+                        <Setter Property="Visibility" Value="Collapsed"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding SelectedSection}" Value="Services">
+                                <Setter Property="Visibility" Value="Visible"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </ScrollViewer.Style>
+            <StackPanel>
+                <TextBlock Text="{helpers:Loc Services}" Style="{StaticResource DisplayText}" FontSize="22"/>
+                <TextBlock Text="Manage local dependencies, downloads, and diagnostics" Style="{StaticResource BodyText}" Foreground="{DynamicResource TextMuted}" Margin="0,3,0,20"/>
+                <Border Style="{StaticResource SettingsSectionCard}">
+                    <StackPanel>
+                        <CheckBox Content="{helpers:Loc Key=Auto-manage services}"
+                                  AutomationProperties.AutomationId="AutoManageServices"
+                                  IsChecked="{Binding AutoManageServices}"
+                                  Foreground="{DynamicResource TextPrimary}"
+                                  Margin="0,0,0,14"/>
+                        <CheckBox Content="{helpers:Loc Key=Auto-play after download}" IsChecked="{Binding AutoPlayAfterDownload}" Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,14"/>
+                        <TextBlock Text="{helpers:Loc Key=Download directory}" Style="{StaticResource BodyText}" FontWeight="Bold" Margin="0,0,0,8"/>
+                        <Grid Margin="0,0,0,14">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox Text="{Binding DownloadDirectory, UpdateSourceTrigger=PropertyChanged}" ToolTip="Folder where completed downloads are stored."/>
+                            <Button Grid.Column="1" Content="{helpers:Loc Key=Browse...}" Command="{Binding BrowseDownloadDirectoryCommand}" Style="{StaticResource SecondaryButton}" Margin="8,0,0,0" ToolTip="Choose a download folder."/>
+                        </Grid>
+                        <CheckBox Content="{helpers:Loc Key=Enable debug logging}" IsChecked="{Binding EnableDebugLogging}" Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,14"/>
+                        <Grid Margin="0,0,0,14">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="{Binding LogFileSizeText, StringFormat=Debug log size: {0}}" Style="{StaticResource CaptionText}" VerticalAlignment="Center"/>
+                            <Button Grid.Column="1" Content="{helpers:Loc Key=Refresh log size}" Command="{Binding RefreshLogSizeCommand}" Style="{StaticResource SecondaryButton}" Padding="10,5" Margin="8,0,0,0" ToolTip="Refresh the displayed debug log size."/>
+                            <Button Grid.Column="2" Content="{helpers:Loc Key=Clear debug log}" AutomationProperties.Name="Clear debug log" Command="{Binding ClearLogCommand}" Style="{StaticResource DangerButton}" Padding="10,5" Margin="8,0,0,0" ToolTip="Erase the current debug log file."/>
+                        </Grid>
+                        <Border Background="{DynamicResource BgInput}" BorderBrush="{DynamicResource BorderSubtle}" BorderThickness="1" CornerRadius="8" Padding="12">
                             <Grid>
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="150"/>
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
-                                
-                                <TextBlock Grid.Column="0" Text="{Binding Name}" FontWeight="Bold" Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center"/>
-                                <TextBlock Grid.Column="1" Text="{Binding Url}" Foreground="{StaticResource TextMuted}" VerticalAlignment="Center" Margin="16,0,16,0" TextTrimming="CharacterEllipsis"/>
-                                
-                                <Button Grid.Column="2" Content="Delete" 
-                                        Command="{Binding DataContext.RemoveSourceCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" 
-                                        CommandParameter="{Binding}"
-                                        Background="#EF4444" Foreground="White" Padding="12,6" BorderThickness="0" Cursor="Hand"/>
+                                <TextBlock Text="{Binding ServiceHealthText}" Foreground="{DynamicResource TextSecondary}" FontFamily="Consolas" FontSize="12" TextWrapping="Wrap"/>
+                                <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Top">
+                                    <Button Content="{helpers:Loc Refresh}" Command="{Binding RefreshServiceHealthCommand}" Style="{StaticResource SecondaryButton}" ToolTip="Refresh detected local service health."/>
+                                    <Button Content="Repair services" Command="{Binding RepairServicesCommand}" Style="{StaticResource SecondaryButton}" Margin="0,8,0,0" ToolTip="Prepare Python, verify FFmpeg, and retry uBlock installation. FFmpeg must be installed separately if missing."/>
+                                </StackPanel>
                             </Grid>
                         </Border>
-                    </DataTemplate>
-                </ListBox.ItemTemplate>
-            </ListBox>
+                    </StackPanel>
+                </Border>
+                <Button Content="{helpers:Loc Key=Save Settings}" AutomationProperties.Name="Save Settings" Command="{Binding SaveCommand}" Style="{StaticResource SettingsSaveButton}" ToolTip="Save these settings to the local app configuration."/>
+            </StackPanel>
+            </ScrollViewer>
 
-            <!-- Add Provider Form -->
-            <Border Background="{StaticResource BgSurface}" CornerRadius="12" Padding="20" Margin="0,0,0,32">
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="12"/>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="16"/>
-                        <RowDefinition Height="Auto"/>
-                    </Grid.RowDefinitions>
-                    
-                    <TextBlock Grid.Row="0" Text="Add New Web Provider" Style="{StaticResource SubtitleText}" FontWeight="Bold"/>
-                    
-                    <Grid Grid.Row="2">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="16"/>
-                            <ColumnDefinition Width="2*"/>
-                        </Grid.ColumnDefinitions>
-                        
-                        <StackPanel Grid.Column="0">
-                            <TextBlock Text="Provider Name" Style="{StaticResource CaptionText}" Margin="0,0,0,6"/>
-                            <TextBox Text="{Binding NewSourceName, UpdateSourceTrigger=PropertyChanged}"/>
-                        </StackPanel>
-                        
-                        <StackPanel Grid.Column="2">
-                            <TextBlock Text="Search URL Template (e.g. https://website.com/search?q={query})" Style="{StaticResource CaptionText}" Margin="0,0,0,6"/>
-                            <TextBox Text="{Binding NewSourceUrl, UpdateSourceTrigger=PropertyChanged}"/>
-                        </StackPanel>
-                    </Grid>
-                    
-                    <Button Grid.Row="4" Content="Add Provider" Command="{Binding AddSourceCommand}"
-                            HorizontalAlignment="Right" Padding="16,8" Background="#10B981" Foreground="White" BorderThickness="0" Cursor="Hand"/>
-                </Grid>
-            </Border>
+            <ScrollViewer>
+                <ScrollViewer.Style>
+                    <Style TargetType="ScrollViewer" BasedOn="{StaticResource SettingsSectionScroller}">
+                        <Setter Property="Visibility" Value="Collapsed"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding SelectedSection}" Value="qBittorrent">
+                                <Setter Property="Visibility" Value="Visible"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </ScrollViewer.Style>
+            <StackPanel>
+                <TextBlock Text="{helpers:Loc Key=Torrent Engine}" Style="{StaticResource DisplayText}" FontSize="22"/>
+                <TextBlock Text="qBittorrent is the preferred resumable WebUI path; MonoTorrent is the built-in fallback when qBittorrent is unavailable." Style="{StaticResource BodyText}" Foreground="{DynamicResource TextMuted}" TextWrapping="Wrap" Margin="0,3,0,20"/>
+                <Border Style="{StaticResource SettingsSectionCard}">
+                    <StackPanel>
+                        <Border Background="#2214B8A6" BorderBrush="{DynamicResource BorderStrong}" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,0,0,16">
+                            <TextBlock Text="Season downloads try qBittorrent first so downloads can continue and resume outside the app. If WebUI is off or unreachable, Universal Media OS falls back to the bundled MonoTorrent client." Style="{StaticResource BodyText}" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap"/>
+                        </Border>
+                        <TextBlock Text="{helpers:Loc Host}" Style="{StaticResource CaptionText}" FontWeight="Bold" Margin="0,0,0,6"/>
+                        <TextBox Text="{Binding QbitHost, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,12" ToolTip="qBittorrent WebUI host name or IP address."/>
+                        <TextBlock Text="{helpers:Loc Port}" Style="{StaticResource CaptionText}" FontWeight="Bold" Margin="0,0,0,6"/>
+                        <TextBox Text="{Binding QbitPort, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,12" ToolTip="qBittorrent WebUI port."/>
+                        <TextBlock Text="{helpers:Loc Username}" Style="{StaticResource CaptionText}" FontWeight="Bold" Margin="0,0,0,6"/>
+                        <TextBox Text="{Binding QbitUsername, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,12" ToolTip="qBittorrent WebUI username."/>
+                        <TextBlock Text="{helpers:Loc Password}" Style="{StaticResource CaptionText}" FontWeight="Bold" Margin="0,0,0,6"/>
+                        <PasswordBox x:Name="QbitPasswordBox" PasswordChanged="QbitPasswordBox_PasswordChanged" Margin="0,0,0,8" ToolTip="qBittorrent WebUI password."/>
+                        <TextBlock Text="Stored locally through the app configuration." Style="{StaticResource CaptionText}"/>
+                    </StackPanel>
+                </Border>
+                <Button Content="{helpers:Loc Key=Save Settings}" AutomationProperties.Name="Save Settings" Command="{Binding SaveCommand}" Style="{StaticResource SettingsSaveButton}" ToolTip="Save these settings to the local app configuration."/>
+            </StackPanel>
+            </ScrollViewer>
 
-            <!-- Save -->
-            <Button Content="Save Settings" Command="{Binding SaveCommand}"
-                    HorizontalAlignment="Left" Padding="24,12"
-                    Background="{StaticResource AccentPrimary}"
-                    Foreground="{StaticResource TextPrimary}"
-                    BorderThickness="0" Cursor="Hand"/>
+            <ScrollViewer>
+                <ScrollViewer.Style>
+                    <Style TargetType="ScrollViewer" BasedOn="{StaticResource SettingsSectionScroller}">
+                        <Setter Property="Visibility" Value="Collapsed"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding SelectedSection}" Value="MAL">
+                                <Setter Property="Visibility" Value="Visible"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </ScrollViewer.Style>
+            <StackPanel>
+                <TextBlock Text="{helpers:Loc MAL}" Style="{StaticResource DisplayText}" FontSize="22"/>
+                <TextBlock Text="MyAnimeList OAuth and progress sync setup" Style="{StaticResource BodyText}" Foreground="{DynamicResource TextMuted}" Margin="0,3,0,20"/>
+                <Border Style="{StaticResource SettingsSectionCard}">
+                    <StackPanel>
+                        <TextBlock Text="MyAnimeList app setup" Style="{StaticResource SubtitleText}" FontWeight="Bold" Margin="0,0,0,4"/>
+                        <TextBlock Text="Create a MAL API app, paste its Client ID here, and add the redirect URI below to that MAL app." Style="{StaticResource CaptionText}" TextWrapping="Wrap" Margin="0,0,0,14"/>
+                        <TextBlock Text="Client ID" Style="{StaticResource CaptionText}" FontWeight="Bold" Margin="0,0,0,6"/>
+                        <TextBox Text="{Binding MalClientId, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,10" ToolTip="Paste the Client ID from MyAnimeList API settings."/>
+                        <TextBlock Text="Client Secret (optional)" Style="{StaticResource CaptionText}" FontWeight="Bold" Margin="0,0,0,6"/>
+                        <TextBox Text="{Binding MalClientSecret, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,10" ToolTip="Paste the Client Secret if your MAL app has one."/>
+                        <TextBlock Text="Redirect URI" Style="{StaticResource CaptionText}" FontWeight="Bold" Margin="0,0,0,6"/>
+                        <TextBox Text="{Binding MalRedirectUri}" IsReadOnly="True" Margin="0,0,0,14" ToolTip="Register this exact redirect URI in your MyAnimeList API app."/>
+                        <Border Background="{DynamicResource BgInput}" BorderBrush="{DynamicResource BorderSubtle}" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,0,0,14">
+                            <TextBlock Text="{Binding MalConnectionStatus}" Style="{StaticResource BodyText}" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap"/>
+                        </Border>
+                        <WrapPanel Margin="0,0,0,8">
+                            <Button Content="{Binding MalConnectButtonText}"
+                                    Command="{Binding ConnectMalCommand}"
+                                    Style="{StaticResource PrimaryButton}"
+                                    MinWidth="130"
+                                    Margin="0,0,10,10"
+                                    ToolTip="Open MAL login and authorize this app."/>
+                            <Button Content="Refresh Token"
+                                    Command="{Binding RefreshMalConnectionCommand}"
+                                    Style="{StaticResource SecondaryButton}"
+                                    MinWidth="120"
+                                    Margin="0,0,10,10"
+                                    ToolTip="Refresh the stored MAL token now."/>
+                            <Button Content="Disconnect"
+                                    Command="{Binding DisconnectMalCommand}"
+                                    Style="{StaticResource SecondaryButton}"
+                                    MinWidth="110"
+                                    Margin="0,0,10,10"
+                                    ToolTip="Remove stored MAL tokens from this app."/>
+                            <Button Content="{helpers:Loc Key=Open MAL API setup}"
+                                    Command="{Binding OpenMalApiConfigCommand}"
+                                    Style="{StaticResource SecondaryButton}"
+                                    MinWidth="150"
+                                    Margin="0,0,0,10"
+                                    ToolTip="Open MyAnimeList API configuration in your browser."/>
+                        </WrapPanel>
+                        <TextBlock Text="Advanced manual token fallback" Style="{StaticResource CaptionText}" FontWeight="Bold" Margin="0,0,0,6"/>
+                        <TextBox Text="{Binding MalOAuthToken, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,8" ToolTip="Paste a temporary MAL OAuth token only if browser login cannot be used."/>
+                        <TextBlock Text="Manual tokens expire. The Connect MAL button stores a refresh token so the app can keep working automatically." Style="{StaticResource CaptionText}" TextWrapping="Wrap"/>
+                    </StackPanel>
+                </Border>
+                <Button Content="{helpers:Loc Key=Save Settings}" AutomationProperties.Name="Save Settings" Command="{Binding SaveCommand}" Style="{StaticResource SettingsSaveButton}" ToolTip="Save these settings to the local app configuration."/>
+            </StackPanel>
+            </ScrollViewer>
 
-        </StackPanel>
-    </ScrollViewer>
+
+            <ScrollViewer>
+                <ScrollViewer.Style>
+                    <Style TargetType="ScrollViewer" BasedOn="{StaticResource SettingsSectionScroller}">
+                        <Setter Property="Visibility" Value="Collapsed"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding SelectedSection}" Value="Notifications">
+                                <Setter Property="Visibility" Value="Visible"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </ScrollViewer.Style>
+            <StackPanel>
+                <TextBlock Text="{helpers:Loc Notifications}" Style="{StaticResource DisplayText}" FontSize="22"/>
+                <TextBlock Text="Manage notification preferences" Style="{StaticResource BodyText}" Foreground="{DynamicResource TextMuted}" Margin="0,3,0,20"/>
+                <Border Style="{StaticResource SettingsSectionCard}">
+                    <StackPanel>
+                        <CheckBox Content="{helpers:Loc Key=New episode alerts}" IsChecked="{Binding NewEpisodeAlerts}" Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,14"/>
+                        <CheckBox Content="{helpers:Loc Key=Auto-sync MAL progress}" IsChecked="{Binding AutoSyncMal}" Foreground="{DynamicResource TextPrimary}"/>
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource SettingsSectionCard}">
+                    <StackPanel>
+                        <DockPanel Margin="0,0,0,10">
+                            <Button Content="Clear history"
+                                    Command="{Binding ClearEpisodeAlertHistoryCommand}"
+                                    IsEnabled="{Binding HasEpisodeAlertHistory}"
+                                    Style="{StaticResource SecondaryButton}"
+                                    DockPanel.Dock="Right"
+                                    Padding="12,6"
+                                    AutomationProperties.Name="Clear episode alert history"
+                                    ToolTip="Remove all locally saved episode alerts."/>
+                            <StackPanel>
+                                <TextBlock Text="Recent episode alerts" Foreground="{DynamicResource TextPrimary}" FontSize="16" FontWeight="SemiBold"/>
+                                <TextBlock Text="Saved locally so you can revisit notifications you missed."
+                                           Foreground="{DynamicResource TextMuted}" FontSize="12" Margin="0,3,0,0"/>
+                            </StackPanel>
+                        </DockPanel>
+
+                        <TextBlock Text="No episode alerts yet. New releases for favorites will appear here."
+                                   Foreground="{DynamicResource TextMuted}"
+                                   TextWrapping="Wrap"
+                                   Margin="0,8,0,2">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Visible"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding HasEpisodeAlertHistory}" Value="True">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+
+                        <ListBox ItemsSource="{Binding EpisodeAlertHistory}"
+                                 MaxHeight="290"
+                                 Background="Transparent"
+                                 BorderThickness="0"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                 AutomationProperties.Name="Episode alert history">
+                            <ListBox.Style>
+                                <Style TargetType="ListBox">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding HasEpisodeAlertHistory}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </ListBox.Style>
+                            <ListBox.ItemContainerStyle>
+                                <Style TargetType="ListBoxItem">
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                    <Setter Property="IsHitTestVisible" Value="False"/>
+                                    <Setter Property="Padding" Value="0"/>
+                                    <Setter Property="Margin" Value="0,0,0,6"/>
+                                </Style>
+                            </ListBox.ItemContainerStyle>
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="{DynamicResource BgElevated}" CornerRadius="6" Padding="10,8">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding Title}" Foreground="{DynamicResource TextPrimary}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{Binding EpisodeText}" Foreground="{DynamicResource AccentPrimary}" FontSize="12" Margin="0,2,0,0"/>
+                                            </StackPanel>
+                                            <TextBlock Grid.Column="1" Text="{Binding CreatedAtText}" Foreground="{DynamicResource TextMuted}" FontSize="11" Margin="14,2,0,0"/>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </StackPanel>
+                </Border>
+                <Button Content="{helpers:Loc Key=Save Settings}" AutomationProperties.Name="Save Settings" Command="{Binding SaveCommand}" Style="{StaticResource SettingsSaveButton}" ToolTip="Save these settings to the local app configuration."/>
+            </StackPanel>
+            </ScrollViewer>
+
+            <ScrollViewer>
+                <ScrollViewer.Style>
+                    <Style TargetType="ScrollViewer" BasedOn="{StaticResource SettingsSectionScroller}">
+                        <Setter Property="Visibility" Value="Collapsed"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding SelectedSection}" Value="Privacy">
+                                <Setter Property="Visibility" Value="Visible"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </ScrollViewer.Style>
+            <StackPanel>
+                <TextBlock Text="{helpers:Loc Privacy}" Style="{StaticResource DisplayText}" FontSize="22"/>
+                <TextBlock Text="Control your content and privacy settings" Style="{StaticResource BodyText}" Foreground="{DynamicResource TextMuted}" Margin="0,3,0,20"/>
+                <Border Style="{StaticResource SettingsSectionCard}">
+                    <CheckBox Content="{helpers:Loc Key=Show adult content in search}" IsChecked="{Binding ShowAdultContent}" Foreground="{DynamicResource TextPrimary}"/>
+                </Border>
+                <Button Content="{helpers:Loc Key=Save Settings}" AutomationProperties.Name="Save Settings" Command="{Binding SaveCommand}" Style="{StaticResource SettingsSaveButton}" ToolTip="Save these settings to the local app configuration."/>
+            </StackPanel>
+            </ScrollViewer>
+
+            <ScrollViewer>
+                <ScrollViewer.Style>
+                    <Style TargetType="ScrollViewer" BasedOn="{StaticResource SettingsSectionScroller}">
+                        <Setter Property="Visibility" Value="Collapsed"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding SelectedSection}" Value="Language">
+                                <Setter Property="Visibility" Value="Visible"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </ScrollViewer.Style>
+            <StackPanel>
+                <TextBlock Text="{helpers:Loc Language}" Style="{StaticResource DisplayText}" FontSize="22"/>
+                <TextBlock Text="Set your preferred display language" Style="{StaticResource BodyText}" Foreground="{DynamicResource TextMuted}" Margin="0,3,0,20"/>
+                <Border Style="{StaticResource SettingsSectionCard}">
+                    <ComboBox SelectedValue="{Binding SelectedLanguage}" SelectedValuePath="Tag" ToolTip="Choose English or Arabic. Arabic switches the app layout to right-to-left.">
+                        <ComboBoxItem Content="{helpers:Loc English}" Tag="English"/>
+                        <ComboBoxItem Content="{helpers:Loc Arabic}" Tag="Arabic"/>
+                    </ComboBox>
+                </Border>
+                <Button Content="{helpers:Loc Key=Save Settings}" AutomationProperties.Name="Save Settings" Command="{Binding SaveCommand}" Style="{StaticResource SettingsSaveButton}" ToolTip="Save these settings to the local app configuration."/>
+            </StackPanel>
+            </ScrollViewer>
+        </Grid>
+    </Grid>
 </UserControl>

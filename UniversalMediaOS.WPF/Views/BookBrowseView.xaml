@@ -1,0 +1,266 @@
+<UserControl x:Class="UniversalMediaOS.WPF.Views.BookBrowseView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:controls="clr-namespace:UniversalMediaOS.WPF.Controls"
+             mc:Ignorable="d"
+             d:DesignHeight="720"
+             d:DesignWidth="1180"
+             Background="{DynamicResource BgApp}">
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0"
+                Background="{DynamicResource BgPanel}"
+                BorderBrush="{DynamicResource BorderSubtle}"
+                BorderThickness="0,0,0,1"
+                Padding="16">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="12"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <TextBox Grid.Column="0"
+                         Text="{Binding SearchQuery, UpdateSourceTrigger=PropertyChanged}"
+                         Style="{DynamicResource AppTextBox}"
+                         AutomationProperties.Name="Book search"
+                         ToolTip="Search every enabled book catalog."
+                         KeyDown="SearchBox_KeyDown"/>
+
+                <Button Grid.Column="2"
+                        Content="Search"
+                        Command="{Binding SearchBooksCommand}"
+                        Style="{DynamicResource PrimaryButton}"
+                        MinWidth="108"
+                        AutomationProperties.Name="Search Books"
+                        ToolTip="Search every enabled book catalog."/>
+
+                <Button Grid.Column="3"
+                        Content="Cancel"
+                        Command="{Binding SearchBooksCancelCommand}"
+                        Style="{DynamicResource DangerButton}"
+                        MinWidth="84"
+                        Margin="8,0,0,0"
+                        Visibility="{Binding SearchBooksCommand.IsRunning, Converter={StaticResource BoolToVisibility}}"
+                        AutomationProperties.Name="Cancel Book Search"
+                        ToolTip="Cancel the current book search."/>
+
+                <WrapPanel Grid.Row="1"
+                           Grid.ColumnSpan="4"
+                           HorizontalAlignment="Right"
+                           Margin="0,10,0,0">
+                    <Button Content="Continue Reading"
+                            Command="{Binding ShowContinueReadingCommand}"
+                            Style="{DynamicResource SecondaryButton}"
+                            MinWidth="142"
+                            Margin="0,0,8,0"
+                            AutomationProperties.Name="Continue Reading Books"
+                            ToolTip="Show books with saved local reading progress."/>
+
+                    <Button Content="Import EPUB / PDF"
+                            Click="ImportBook_Click"
+                            Style="{DynamicResource SecondaryButton}"
+                            MinWidth="154"
+                            AutomationProperties.Name="Import Local Book"
+                            ToolTip="Import and read a local EPUB or PDF."/>
+                </WrapPanel>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="1" Margin="16,12,16,10">
+            <StackPanel>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="{Binding StatusMessage}"
+                               Style="{DynamicResource BodyText}"
+                               Foreground="{DynamicResource TextSecondary}"
+                               TextWrapping="Wrap"
+                               Margin="0,0,16,0"/>
+                    <TextBlock Grid.Column="1"
+                               Style="{DynamicResource CaptionText}"
+                               Foreground="{DynamicResource TextMuted}">
+                        <Run Text="{Binding ResultCount, Mode=OneWay}"/>
+                        <Run Text=" shown &#x00B7; "/>
+                        <Run Text="{Binding TotalAvailable, Mode=OneWay}"/>
+                        <Run Text=" catalog matches"/>
+                    </TextBlock>
+                </Grid>
+
+                <TextBlock Text="{Binding ErrorMessage}"
+                           Foreground="{DynamicResource Error}"
+                           TextWrapping="Wrap"
+                           Margin="0,6,0,0">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Visible"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding ErrorMessage}" Value="">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+            </StackPanel>
+
+            <ProgressBar IsIndeterminate="True"
+                         Height="3"
+                         VerticalAlignment="Bottom"
+                         Foreground="{DynamicResource AccentPrimary}"
+                         Visibility="{Binding IsBusy, Converter={StaticResource BoolToVisibility}}"/>
+        </Grid>
+
+        <Grid Grid.Row="2" Margin="16,0,16,16">
+            <ListBox ItemsSource="{Binding Books}"
+                     Background="Transparent"
+                     BorderThickness="0"
+                     ScrollViewer.CanContentScroll="True"
+                     VirtualizingPanel.IsVirtualizing="True"
+                     VirtualizingPanel.VirtualizationMode="Recycling">
+                <ListBox.ItemContainerStyle>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                        <Setter Property="Padding" Value="0"/>
+                        <Setter Property="Margin" Value="0,0,0,10"/>
+                        <Setter Property="Background" Value="Transparent"/>
+                        <Setter Property="BorderThickness" Value="0"/>
+                        <Setter Property="Focusable" Value="False"/>
+                    </Style>
+                </ListBox.ItemContainerStyle>
+
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <Border Style="{DynamicResource SurfaceCard}" Padding="12">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="82"/>
+                                    <ColumnDefinition Width="16"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="18"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+
+                                <Border Grid.Column="0"
+                                        Width="82"
+                                        Height="118"
+                                        Background="{DynamicResource BgElevated}"
+                                        BorderBrush="{DynamicResource BorderStrong}"
+                                        BorderThickness="1"
+                                        CornerRadius="6"
+                                        ClipToBounds="True">
+                                    <Grid>
+                                        <TextBlock Text="BOOK"
+                                                   Foreground="{DynamicResource TextMuted}"
+                                                   FontSize="11"
+                                                   FontWeight="Bold"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center"/>
+                                        <Image controls:AsyncImageLoader.ImageUrl="{Binding CoverUrl}"
+                                               Stretch="UniformToFill"
+                                               RenderOptions.BitmapScalingMode="HighQuality"/>
+                                    </Grid>
+                                </Border>
+
+                                <Grid Grid.Column="2">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="*"/>
+                                    </Grid.RowDefinitions>
+
+                                    <TextBlock Text="{Binding Title}"
+                                               Style="{DynamicResource SubtitleText}"
+                                               FontSize="18"
+                                               FontWeight="Bold"
+                                               TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock Grid.Row="1"
+                                               Text="{Binding AuthorLine}"
+                                               Style="{DynamicResource BodyText}"
+                                               Foreground="{DynamicResource TextSecondary}"
+                                               TextTrimming="CharacterEllipsis"
+                                               Margin="0,4,0,0"/>
+                                    <StackPanel Grid.Row="2"
+                                                Orientation="Horizontal"
+                                                Margin="0,8,0,0">
+                                        <Border Background="#3314B8A6"
+                                                CornerRadius="5"
+                                                Padding="7,3"
+                                                Margin="0,0,8,0">
+                                            <TextBlock Text="{Binding Source}"
+                                                       Foreground="{DynamicResource AccentPrimary}"
+                                                       FontSize="11"
+                                                       FontWeight="SemiBold"/>
+                                        </Border>
+                                        <TextBlock Text="{Binding MetadataLine}"
+                                                   Style="{DynamicResource CaptionText}"
+                                                   VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                    <TextBlock Grid.Row="3"
+                                               Text="{Binding SubjectLine}"
+                                               Style="{DynamicResource CaptionText}"
+                                               Foreground="{DynamicResource TextMuted}"
+                                               TextTrimming="CharacterEllipsis"
+                                               VerticalAlignment="Bottom"
+                                               Margin="0,10,0,0"/>
+                                </Grid>
+
+                                <Button Grid.Column="4"
+                                        Content="Details"
+                                        Command="{Binding DataContext.OpenDetailsCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                        CommandParameter="{Binding}"
+                                        Style="{DynamicResource SecondaryButton}"
+                                        MinWidth="94"
+                                        VerticalAlignment="Center"
+                                        AutomationProperties.Name="Open Book Details"
+                                        ToolTip="Open metadata and available reading editions."/>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+
+            <StackPanel HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Width="480">
+                <StackPanel.Style>
+                    <Style TargetType="StackPanel">
+                        <Setter Property="Visibility" Value="Collapsed"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding HasBooks}" Value="False">
+                                <Setter Property="Visibility" Value="Visible"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </StackPanel.Style>
+                <TextBlock Text="Find your next book"
+                           Style="{DynamicResource DisplayText}"
+                           FontSize="28"
+                           FontWeight="Black"
+                           TextAlignment="Center"/>
+                <TextBlock Text="Search public metadata catalogs, then read an explicitly open edition or a local EPUB/PDF."
+                           Style="{DynamicResource BodyText}"
+                           Foreground="{DynamicResource TextMuted}"
+                           TextAlignment="Center"
+                           TextWrapping="Wrap"
+                           Margin="0,10,0,0"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</UserControl>

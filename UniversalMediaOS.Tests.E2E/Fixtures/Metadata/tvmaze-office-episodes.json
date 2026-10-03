@@ -1,0 +1,1423 @@
+[
+  {
+    "id": 47640,
+    "name": "Pilot",
+    "season": 1,
+    "number": 1,
+    "type": "regular"
+  },
+  {
+    "id": 47641,
+    "name": "Diversity Day",
+    "season": 1,
+    "number": 2,
+    "type": "regular"
+  },
+  {
+    "id": 47642,
+    "name": "Health Care",
+    "season": 1,
+    "number": 3,
+    "type": "regular"
+  },
+  {
+    "id": 47643,
+    "name": "The Alliance",
+    "season": 1,
+    "number": 4,
+    "type": "regular"
+  },
+  {
+    "id": 47644,
+    "name": "Basketball",
+    "season": 1,
+    "number": 5,
+    "type": "regular"
+  },
+  {
+    "id": 47645,
+    "name": "Hot Girl",
+    "season": 1,
+    "number": 6,
+    "type": "regular"
+  },
+  {
+    "id": 47646,
+    "name": "The Dundies",
+    "season": 2,
+    "number": 1,
+    "type": "regular"
+  },
+  {
+    "id": 47647,
+    "name": "Sexual Harassment",
+    "season": 2,
+    "number": 2,
+    "type": "regular"
+  },
+  {
+    "id": 47648,
+    "name": "Office Olympics",
+    "season": 2,
+    "number": 3,
+    "type": "regular"
+  },
+  {
+    "id": 47649,
+    "name": "The Fire",
+    "season": 2,
+    "number": 4,
+    "type": "regular"
+  },
+  {
+    "id": 47650,
+    "name": "Halloween",
+    "season": 2,
+    "number": 5,
+    "type": "regular"
+  },
+  {
+    "id": 47651,
+    "name": "The Fight",
+    "season": 2,
+    "number": 6,
+    "type": "regular"
+  },
+  {
+    "id": 47652,
+    "name": "The Client",
+    "season": 2,
+    "number": 7,
+    "type": "regular"
+  },
+  {
+    "id": 47653,
+    "name": "Performance Review",
+    "season": 2,
+    "number": 8,
+    "type": "regular"
+  },
+  {
+    "id": 47654,
+    "name": "E-Mail Surveillance",
+    "season": 2,
+    "number": 9,
+    "type": "regular"
+  },
+  {
+    "id": 47655,
+    "name": "Christmas Party",
+    "season": 2,
+    "number": 10,
+    "type": "regular"
+  },
+  {
+    "id": 47656,
+    "name": "Booze Cruise",
+    "season": 2,
+    "number": 11,
+    "type": "regular"
+  },
+  {
+    "id": 47657,
+    "name": "The Injury",
+    "season": 2,
+    "number": 12,
+    "type": "regular"
+  },
+  {
+    "id": 47658,
+    "name": "The Secret",
+    "season": 2,
+    "number": 13,
+    "type": "regular"
+  },
+  {
+    "id": 47659,
+    "name": "The Carpet",
+    "season": 2,
+    "number": 14,
+    "type": "regular"
+  },
+  {
+    "id": 47660,
+    "name": "Boys and Girls",
+    "season": 2,
+    "number": 15,
+    "type": "regular"
+  },
+  {
+    "id": 47661,
+    "name": "Valentine's Day",
+    "season": 2,
+    "number": 16,
+    "type": "regular"
+  },
+  {
+    "id": 47662,
+    "name": "Dwight's Speech",
+    "season": 2,
+    "number": 17,
+    "type": "regular"
+  },
+  {
+    "id": 47663,
+    "name": "Take Your Daughter to Work Day",
+    "season": 2,
+    "number": 18,
+    "type": "regular"
+  },
+  {
+    "id": 47664,
+    "name": "Michael's Birthday",
+    "season": 2,
+    "number": 19,
+    "type": "regular"
+  },
+  {
+    "id": 47665,
+    "name": "Drug Testing",
+    "season": 2,
+    "number": 20,
+    "type": "regular"
+  },
+  {
+    "id": 47666,
+    "name": "Conflict Resolution",
+    "season": 2,
+    "number": 21,
+    "type": "regular"
+  },
+  {
+    "id": 47667,
+    "name": "Casino Night",
+    "season": 2,
+    "number": 22,
+    "type": "regular"
+  },
+  {
+    "id": 47668,
+    "name": "Gay Witch Hunt",
+    "season": 3,
+    "number": 1,
+    "type": "regular"
+  },
+  {
+    "id": 47669,
+    "name": "The Convention",
+    "season": 3,
+    "number": 2,
+    "type": "regular"
+  },
+  {
+    "id": 47670,
+    "name": "The Coup",
+    "season": 3,
+    "number": 3,
+    "type": "regular"
+  },
+  {
+    "id": 47671,
+    "name": "Grief Counseling",
+    "season": 3,
+    "number": 4,
+    "type": "regular"
+  },
+  {
+    "id": 47672,
+    "name": "Initiation",
+    "season": 3,
+    "number": 5,
+    "type": "regular"
+  },
+  {
+    "id": 47673,
+    "name": "Diwali",
+    "season": 3,
+    "number": 6,
+    "type": "regular"
+  },
+  {
+    "id": 47674,
+    "name": "Branch Closing",
+    "season": 3,
+    "number": 7,
+    "type": "regular"
+  },
+  {
+    "id": 47675,
+    "name": "The Merger",
+    "season": 3,
+    "number": 8,
+    "type": "regular"
+  },
+  {
+    "id": 47676,
+    "name": "The Convict",
+    "season": 3,
+    "number": 9,
+    "type": "regular"
+  },
+  {
+    "id": 47677,
+    "name": "A Benihana Christmas (1)",
+    "season": 3,
+    "number": 10,
+    "type": "regular"
+  },
+  {
+    "id": 47678,
+    "name": "A Benihana Christmas (2)",
+    "season": 3,
+    "number": 11,
+    "type": "regular"
+  },
+  {
+    "id": 47679,
+    "name": "Back from Vacation",
+    "season": 3,
+    "number": 12,
+    "type": "regular"
+  },
+  {
+    "id": 47680,
+    "name": "Traveling Salesmen",
+    "season": 3,
+    "number": 13,
+    "type": "regular"
+  },
+  {
+    "id": 47681,
+    "name": "The Return",
+    "season": 3,
+    "number": 14,
+    "type": "regular"
+  },
+  {
+    "id": 47682,
+    "name": "Ben Franklin",
+    "season": 3,
+    "number": 15,
+    "type": "regular"
+  },
+  {
+    "id": 47683,
+    "name": "Phyllis' Wedding",
+    "season": 3,
+    "number": 16,
+    "type": "regular"
+  },
+  {
+    "id": 47684,
+    "name": "Business School",
+    "season": 3,
+    "number": 17,
+    "type": "regular"
+  },
+  {
+    "id": 47685,
+    "name": "Cocktails",
+    "season": 3,
+    "number": 18,
+    "type": "regular"
+  },
+  {
+    "id": 47686,
+    "name": "The Negotiation",
+    "season": 3,
+    "number": 19,
+    "type": "regular"
+  },
+  {
+    "id": 47687,
+    "name": "Safety Training",
+    "season": 3,
+    "number": 20,
+    "type": "regular"
+  },
+  {
+    "id": 47688,
+    "name": "Product Recall",
+    "season": 3,
+    "number": 21,
+    "type": "regular"
+  },
+  {
+    "id": 47689,
+    "name": "Women's Appreciation",
+    "season": 3,
+    "number": 22,
+    "type": "regular"
+  },
+  {
+    "id": 47690,
+    "name": "Beach Games",
+    "season": 3,
+    "number": 23,
+    "type": "regular"
+  },
+  {
+    "id": 47691,
+    "name": "The Job (1)",
+    "season": 3,
+    "number": 24,
+    "type": "regular"
+  },
+  {
+    "id": 47692,
+    "name": "The Job (2)",
+    "season": 3,
+    "number": 25,
+    "type": "regular"
+  },
+  {
+    "id": 47693,
+    "name": "Fun Run (1)",
+    "season": 4,
+    "number": 1,
+    "type": "regular"
+  },
+  {
+    "id": 47694,
+    "name": "Fun Run (2)",
+    "season": 4,
+    "number": 2,
+    "type": "regular"
+  },
+  {
+    "id": 47695,
+    "name": "Dunder Mifflin Infinity (1)",
+    "season": 4,
+    "number": 3,
+    "type": "regular"
+  },
+  {
+    "id": 47696,
+    "name": "Dunder Mifflin Infinity (2)",
+    "season": 4,
+    "number": 4,
+    "type": "regular"
+  },
+  {
+    "id": 47697,
+    "name": "Launch Party (1)",
+    "season": 4,
+    "number": 5,
+    "type": "regular"
+  },
+  {
+    "id": 47698,
+    "name": "Launch Party (2)",
+    "season": 4,
+    "number": 6,
+    "type": "regular"
+  },
+  {
+    "id": 47699,
+    "name": "Money (1)",
+    "season": 4,
+    "number": 7,
+    "type": "regular"
+  },
+  {
+    "id": 47700,
+    "name": "Money (2)",
+    "season": 4,
+    "number": 8,
+    "type": "regular"
+  },
+  {
+    "id": 47701,
+    "name": "Local Ad",
+    "season": 4,
+    "number": 9,
+    "type": "regular"
+  },
+  {
+    "id": 47702,
+    "name": "Branch Wars",
+    "season": 4,
+    "number": 10,
+    "type": "regular"
+  },
+  {
+    "id": 47703,
+    "name": "Survivor Man",
+    "season": 4,
+    "number": 11,
+    "type": "regular"
+  },
+  {
+    "id": 47704,
+    "name": "The Deposition",
+    "season": 4,
+    "number": 12,
+    "type": "regular"
+  },
+  {
+    "id": 47705,
+    "name": "Dinner Party",
+    "season": 4,
+    "number": 13,
+    "type": "regular"
+  },
+  {
+    "id": 47706,
+    "name": "Chair Model",
+    "season": 4,
+    "number": 14,
+    "type": "regular"
+  },
+  {
+    "id": 47707,
+    "name": "Night Out",
+    "season": 4,
+    "number": 15,
+    "type": "regular"
+  },
+  {
+    "id": 47708,
+    "name": "Did I Stutter?",
+    "season": 4,
+    "number": 16,
+    "type": "regular"
+  },
+  {
+    "id": 47709,
+    "name": "Job Fair",
+    "season": 4,
+    "number": 17,
+    "type": "regular"
+  },
+  {
+    "id": 47710,
+    "name": "Goodbye, Toby (1)",
+    "season": 4,
+    "number": 18,
+    "type": "regular"
+  },
+  {
+    "id": 47711,
+    "name": "Goodbye, Toby (2)",
+    "season": 4,
+    "number": 19,
+    "type": "regular"
+  },
+  {
+    "id": 47712,
+    "name": "Weight Loss (1)",
+    "season": 5,
+    "number": 1,
+    "type": "regular"
+  },
+  {
+    "id": 47713,
+    "name": "Weight Loss (2)",
+    "season": 5,
+    "number": 2,
+    "type": "regular"
+  },
+  {
+    "id": 47714,
+    "name": "Business Ethics",
+    "season": 5,
+    "number": 3,
+    "type": "regular"
+  },
+  {
+    "id": 47715,
+    "name": "Baby Shower",
+    "season": 5,
+    "number": 4,
+    "type": "regular"
+  },
+  {
+    "id": 47716,
+    "name": "Crime Aid",
+    "season": 5,
+    "number": 5,
+    "type": "regular"
+  },
+  {
+    "id": 47717,
+    "name": "Employee Transfer",
+    "season": 5,
+    "number": 6,
+    "type": "regular"
+  },
+  {
+    "id": 47718,
+    "name": "Customer Survey",
+    "season": 5,
+    "number": 7,
+    "type": "regular"
+  },
+  {
+    "id": 47719,
+    "name": "Business Trip",
+    "season": 5,
+    "number": 8,
+    "type": "regular"
+  },
+  {
+    "id": 47720,
+    "name": "Frame Toby",
+    "season": 5,
+    "number": 9,
+    "type": "regular"
+  },
+  {
+    "id": 47721,
+    "name": "The Surplus",
+    "season": 5,
+    "number": 10,
+    "type": "regular"
+  },
+  {
+    "id": 47722,
+    "name": "Moroccan Christmas",
+    "season": 5,
+    "number": 11,
+    "type": "regular"
+  },
+  {
+    "id": 47723,
+    "name": "The Duel",
+    "season": 5,
+    "number": 12,
+    "type": "regular"
+  },
+  {
+    "id": 47724,
+    "name": "Prince Family Paper",
+    "season": 5,
+    "number": 13,
+    "type": "regular"
+  },
+  {
+    "id": 47725,
+    "name": "Stress Relief (1)",
+    "season": 5,
+    "number": 14,
+    "type": "regular"
+  },
+  {
+    "id": 47726,
+    "name": "Stress Relief (2)",
+    "season": 5,
+    "number": 15,
+    "type": "regular"
+  },
+  {
+    "id": 47727,
+    "name": "Lecture Circuit (1)",
+    "season": 5,
+    "number": 16,
+    "type": "regular"
+  },
+  {
+    "id": 47728,
+    "name": "Lecture Circuit (2)",
+    "season": 5,
+    "number": 17,
+    "type": "regular"
+  },
+  {
+    "id": 47729,
+    "name": "Blood Drive",
+    "season": 5,
+    "number": 18,
+    "type": "regular"
+  },
+  {
+    "id": 47730,
+    "name": "Golden Ticket",
+    "season": 5,
+    "number": 19,
+    "type": "regular"
+  },
+  {
+    "id": 47731,
+    "name": "New Boss",
+    "season": 5,
+    "number": 20,
+    "type": "regular"
+  },
+  {
+    "id": 47732,
+    "name": "Two Weeks",
+    "season": 5,
+    "number": 21,
+    "type": "regular"
+  },
+  {
+    "id": 47733,
+    "name": "Dream Team",
+    "season": 5,
+    "number": 22,
+    "type": "regular"
+  },
+  {
+    "id": 47734,
+    "name": "The Michael Scott Paper Company",
+    "season": 5,
+    "number": 23,
+    "type": "regular"
+  },
+  {
+    "id": 47735,
+    "name": "Heavy Competition",
+    "season": 5,
+    "number": 24,
+    "type": "regular"
+  },
+  {
+    "id": 47736,
+    "name": "Broke",
+    "season": 5,
+    "number": 25,
+    "type": "regular"
+  },
+  {
+    "id": 47737,
+    "name": "Casual Friday",
+    "season": 5,
+    "number": 26,
+    "type": "regular"
+  },
+  {
+    "id": 47738,
+    "name": "Cafe Disco",
+    "season": 5,
+    "number": 27,
+    "type": "regular"
+  },
+  {
+    "id": 47739,
+    "name": "Company Picnic",
+    "season": 5,
+    "number": 28,
+    "type": "regular"
+  },
+  {
+    "id": 47740,
+    "name": "Gossip",
+    "season": 6,
+    "number": 1,
+    "type": "regular"
+  },
+  {
+    "id": 47741,
+    "name": "The Meeting",
+    "season": 6,
+    "number": 2,
+    "type": "regular"
+  },
+  {
+    "id": 47742,
+    "name": "The Promotion",
+    "season": 6,
+    "number": 3,
+    "type": "regular"
+  },
+  {
+    "id": 47743,
+    "name": "Niagara (1)",
+    "season": 6,
+    "number": 4,
+    "type": "regular"
+  },
+  {
+    "id": 47744,
+    "name": "Niagara (2)",
+    "season": 6,
+    "number": 5,
+    "type": "regular"
+  },
+  {
+    "id": 47745,
+    "name": "Mafia",
+    "season": 6,
+    "number": 6,
+    "type": "regular"
+  },
+  {
+    "id": 47746,
+    "name": "The Lover",
+    "season": 6,
+    "number": 7,
+    "type": "regular"
+  },
+  {
+    "id": 47747,
+    "name": "Koi Pond",
+    "season": 6,
+    "number": 8,
+    "type": "regular"
+  },
+  {
+    "id": 47748,
+    "name": "Double Date",
+    "season": 6,
+    "number": 9,
+    "type": "regular"
+  },
+  {
+    "id": 47749,
+    "name": "Murder",
+    "season": 6,
+    "number": 10,
+    "type": "regular"
+  },
+  {
+    "id": 47750,
+    "name": "Shareholder Meeting",
+    "season": 6,
+    "number": 11,
+    "type": "regular"
+  },
+  {
+    "id": 47751,
+    "name": "Scott's Tots",
+    "season": 6,
+    "number": 12,
+    "type": "regular"
+  },
+  {
+    "id": 47752,
+    "name": "Secret Santa",
+    "season": 6,
+    "number": 13,
+    "type": "regular"
+  },
+  {
+    "id": 47753,
+    "name": "The Banker",
+    "season": 6,
+    "number": 14,
+    "type": "regular"
+  },
+  {
+    "id": 47754,
+    "name": "Sabre",
+    "season": 6,
+    "number": 15,
+    "type": "regular"
+  },
+  {
+    "id": 47755,
+    "name": "The Manager and the Salesman",
+    "season": 6,
+    "number": 16,
+    "type": "regular"
+  },
+  {
+    "id": 47756,
+    "name": "The Delivery (1)",
+    "season": 6,
+    "number": 17,
+    "type": "regular"
+  },
+  {
+    "id": 47757,
+    "name": "The Delivery (2)",
+    "season": 6,
+    "number": 18,
+    "type": "regular"
+  },
+  {
+    "id": 47758,
+    "name": "St. Patrick's Day",
+    "season": 6,
+    "number": 19,
+    "type": "regular"
+  },
+  {
+    "id": 47759,
+    "name": "New Leads",
+    "season": 6,
+    "number": 20,
+    "type": "regular"
+  },
+  {
+    "id": 47760,
+    "name": "Happy Hour",
+    "season": 6,
+    "number": 21,
+    "type": "regular"
+  },
+  {
+    "id": 47761,
+    "name": "Secretary's Day",
+    "season": 6,
+    "number": 22,
+    "type": "regular"
+  },
+  {
+    "id": 47762,
+    "name": "Body Language",
+    "season": 6,
+    "number": 23,
+    "type": "regular"
+  },
+  {
+    "id": 47763,
+    "name": "The Cover-Up",
+    "season": 6,
+    "number": 24,
+    "type": "regular"
+  },
+  {
+    "id": 47764,
+    "name": "The Chump",
+    "season": 6,
+    "number": 25,
+    "type": "regular"
+  },
+  {
+    "id": 47765,
+    "name": "Whistleblower",
+    "season": 6,
+    "number": 26,
+    "type": "regular"
+  },
+  {
+    "id": 47766,
+    "name": "Nepotism",
+    "season": 7,
+    "number": 1,
+    "type": "regular"
+  },
+  {
+    "id": 47767,
+    "name": "Counseling",
+    "season": 7,
+    "number": 2,
+    "type": "regular"
+  },
+  {
+    "id": 47768,
+    "name": "Andy's Play",
+    "season": 7,
+    "number": 3,
+    "type": "regular"
+  },
+  {
+    "id": 47769,
+    "name": "Sex Ed",
+    "season": 7,
+    "number": 4,
+    "type": "regular"
+  },
+  {
+    "id": 47770,
+    "name": "The Sting",
+    "season": 7,
+    "number": 5,
+    "type": "regular"
+  },
+  {
+    "id": 47771,
+    "name": "Costume Contest",
+    "season": 7,
+    "number": 6,
+    "type": "regular"
+  },
+  {
+    "id": 47772,
+    "name": "Christening",
+    "season": 7,
+    "number": 7,
+    "type": "regular"
+  },
+  {
+    "id": 47773,
+    "name": "Viewing Party",
+    "season": 7,
+    "number": 8,
+    "type": "regular"
+  },
+  {
+    "id": 47774,
+    "name": "WUPHF.com",
+    "season": 7,
+    "number": 9,
+    "type": "regular"
+  },
+  {
+    "id": 47775,
+    "name": "China",
+    "season": 7,
+    "number": 10,
+    "type": "regular"
+  },
+  {
+    "id": 47776,
+    "name": "Classy Christmas (1)",
+    "season": 7,
+    "number": 11,
+    "type": "regular"
+  },
+  {
+    "id": 47777,
+    "name": "Classy Christmas (2)",
+    "season": 7,
+    "number": 12,
+    "type": "regular"
+  },
+  {
+    "id": 47778,
+    "name": "Ultimatum",
+    "season": 7,
+    "number": 13,
+    "type": "regular"
+  },
+  {
+    "id": 47779,
+    "name": "The Seminar",
+    "season": 7,
+    "number": 14,
+    "type": "regular"
+  },
+  {
+    "id": 47780,
+    "name": "The Search",
+    "season": 7,
+    "number": 15,
+    "type": "regular"
+  },
+  {
+    "id": 47781,
+    "name": "PDA",
+    "season": 7,
+    "number": 16,
+    "type": "regular"
+  },
+  {
+    "id": 47782,
+    "name": "Threat Level Midnight",
+    "season": 7,
+    "number": 17,
+    "type": "regular"
+  },
+  {
+    "id": 47783,
+    "name": "Todd Packer",
+    "season": 7,
+    "number": 18,
+    "type": "regular"
+  },
+  {
+    "id": 47784,
+    "name": "Garage Sale",
+    "season": 7,
+    "number": 19,
+    "type": "regular"
+  },
+  {
+    "id": 47785,
+    "name": "Training Day",
+    "season": 7,
+    "number": 20,
+    "type": "regular"
+  },
+  {
+    "id": 47786,
+    "name": "Michael's Last Dundies",
+    "season": 7,
+    "number": 21,
+    "type": "regular"
+  },
+  {
+    "id": 47787,
+    "name": "Goodbye, Michael (1)",
+    "season": 7,
+    "number": 22,
+    "type": "regular"
+  },
+  {
+    "id": 2326095,
+    "name": "Goodbye, Michael (2)",
+    "season": 7,
+    "number": 23,
+    "type": "regular"
+  },
+  {
+    "id": 47788,
+    "name": "The Inner Circle",
+    "season": 7,
+    "number": 24,
+    "type": "regular"
+  },
+  {
+    "id": 47789,
+    "name": "Dwight K. Schrute, (Acting) Manager",
+    "season": 7,
+    "number": 25,
+    "type": "regular"
+  },
+  {
+    "id": 47790,
+    "name": "Search Committee (1)",
+    "season": 7,
+    "number": 26,
+    "type": "regular"
+  },
+  {
+    "id": 47791,
+    "name": "Search Committee (2)",
+    "season": 7,
+    "number": 27,
+    "type": "regular"
+  },
+  {
+    "id": 47792,
+    "name": "The List",
+    "season": 8,
+    "number": 1,
+    "type": "regular"
+  },
+  {
+    "id": 47793,
+    "name": "The Incentive",
+    "season": 8,
+    "number": 2,
+    "type": "regular"
+  },
+  {
+    "id": 47794,
+    "name": "Lotto",
+    "season": 8,
+    "number": 3,
+    "type": "regular"
+  },
+  {
+    "id": 47795,
+    "name": "Garden Party",
+    "season": 8,
+    "number": 4,
+    "type": "regular"
+  },
+  {
+    "id": 47796,
+    "name": "Spooked",
+    "season": 8,
+    "number": 5,
+    "type": "regular"
+  },
+  {
+    "id": 47797,
+    "name": "Doomsday",
+    "season": 8,
+    "number": 6,
+    "type": "regular"
+  },
+  {
+    "id": 47798,
+    "name": "Pam's Replacement",
+    "season": 8,
+    "number": 7,
+    "type": "regular"
+  },
+  {
+    "id": 47799,
+    "name": "Gettysburg",
+    "season": 8,
+    "number": 8,
+    "type": "regular"
+  },
+  {
+    "id": 47800,
+    "name": "Mrs. California",
+    "season": 8,
+    "number": 9,
+    "type": "regular"
+  },
+  {
+    "id": 47801,
+    "name": "Christmas Wishes",
+    "season": 8,
+    "number": 10,
+    "type": "regular"
+  },
+  {
+    "id": 47802,
+    "name": "Trivia",
+    "season": 8,
+    "number": 11,
+    "type": "regular"
+  },
+  {
+    "id": 47803,
+    "name": "Pool Party",
+    "season": 8,
+    "number": 12,
+    "type": "regular"
+  },
+  {
+    "id": 47804,
+    "name": "Jury Duty",
+    "season": 8,
+    "number": 13,
+    "type": "regular"
+  },
+  {
+    "id": 47805,
+    "name": "Special Project",
+    "season": 8,
+    "number": 14,
+    "type": "regular"
+  },
+  {
+    "id": 47806,
+    "name": "Tallahassee",
+    "season": 8,
+    "number": 15,
+    "type": "regular"
+  },
+  {
+    "id": 47807,
+    "name": "After Hours",
+    "season": 8,
+    "number": 16,
+    "type": "regular"
+  },
+  {
+    "id": 47808,
+    "name": "Test the Store",
+    "season": 8,
+    "number": 17,
+    "type": "regular"
+  },
+  {
+    "id": 47809,
+    "name": "Last Day in Florida",
+    "season": 8,
+    "number": 18,
+    "type": "regular"
+  },
+  {
+    "id": 47810,
+    "name": "Get the Girl",
+    "season": 8,
+    "number": 19,
+    "type": "regular"
+  },
+  {
+    "id": 47811,
+    "name": "Welcome Party",
+    "season": 8,
+    "number": 20,
+    "type": "regular"
+  },
+  {
+    "id": 47812,
+    "name": "Angry Andy",
+    "season": 8,
+    "number": 21,
+    "type": "regular"
+  },
+  {
+    "id": 47813,
+    "name": "Fundraiser",
+    "season": 8,
+    "number": 22,
+    "type": "regular"
+  },
+  {
+    "id": 47814,
+    "name": "Turf War",
+    "season": 8,
+    "number": 23,
+    "type": "regular"
+  },
+  {
+    "id": 47815,
+    "name": "Free Family Portrait Studio",
+    "season": 8,
+    "number": 24,
+    "type": "regular"
+  },
+  {
+    "id": 47816,
+    "name": "The New Guys",
+    "season": 9,
+    "number": 1,
+    "type": "regular"
+  },
+  {
+    "id": 47817,
+    "name": "Roy's Wedding",
+    "season": 9,
+    "number": 2,
+    "type": "regular"
+  },
+  {
+    "id": 47818,
+    "name": "Andy's Ancestry",
+    "season": 9,
+    "number": 3,
+    "type": "regular"
+  },
+  {
+    "id": 47819,
+    "name": "Work Bus",
+    "season": 9,
+    "number": 4,
+    "type": "regular"
+  },
+  {
+    "id": 47820,
+    "name": "Here Comes Treble",
+    "season": 9,
+    "number": 5,
+    "type": "regular"
+  },
+  {
+    "id": 47821,
+    "name": "The Boat",
+    "season": 9,
+    "number": 6,
+    "type": "regular"
+  },
+  {
+    "id": 47822,
+    "name": "The Whale",
+    "season": 9,
+    "number": 7,
+    "type": "regular"
+  },
+  {
+    "id": 47823,
+    "name": "The Target",
+    "season": 9,
+    "number": 8,
+    "type": "regular"
+  },
+  {
+    "id": 47824,
+    "name": "Dwight Christmas",
+    "season": 9,
+    "number": 9,
+    "type": "regular"
+  },
+  {
+    "id": 47825,
+    "name": "Lice",
+    "season": 9,
+    "number": 10,
+    "type": "regular"
+  },
+  {
+    "id": 47826,
+    "name": "Suit Warehouse",
+    "season": 9,
+    "number": 11,
+    "type": "regular"
+  },
+  {
+    "id": 47827,
+    "name": "Customer Loyalty",
+    "season": 9,
+    "number": 12,
+    "type": "regular"
+  },
+  {
+    "id": 47828,
+    "name": "Junior Salesman",
+    "season": 9,
+    "number": 13,
+    "type": "regular"
+  },
+  {
+    "id": 47829,
+    "name": "Vandalism",
+    "season": 9,
+    "number": 14,
+    "type": "regular"
+  },
+  {
+    "id": 47830,
+    "name": "Couples Discount",
+    "season": 9,
+    "number": 15,
+    "type": "regular"
+  },
+  {
+    "id": 47831,
+    "name": "Moving On",
+    "season": 9,
+    "number": 16,
+    "type": "regular"
+  },
+  {
+    "id": 47832,
+    "name": "The Farm",
+    "season": 9,
+    "number": 17,
+    "type": "regular"
+  },
+  {
+    "id": 47833,
+    "name": "Promos",
+    "season": 9,
+    "number": 18,
+    "type": "regular"
+  },
+  {
+    "id": 47834,
+    "name": "Stairmageddon",
+    "season": 9,
+    "number": 19,
+    "type": "regular"
+  },
+  {
+    "id": 47835,
+    "name": "Paper Airplane",
+    "season": 9,
+    "number": 20,
+    "type": "regular"
+  },
+  {
+    "id": 47836,
+    "name": "Livin' the Dream",
+    "season": 9,
+    "number": 21,
+    "type": "regular"
+  },
+  {
+    "id": 47837,
+    "name": "A.A.R.M. (1)",
+    "season": 9,
+    "number": 22,
+    "type": "regular"
+  },
+  {
+    "id": 47838,
+    "name": "A.A.R.M. (2)",
+    "season": 9,
+    "number": 23,
+    "type": "regular"
+  },
+  {
+    "id": 711197,
+    "name": "Finale (1)",
+    "season": 9,
+    "number": 24,
+    "type": "regular"
+  },
+  {
+    "id": 711203,
+    "name": "Finale (2)",
+    "season": 9,
+    "number": 25,
+    "type": "regular"
+  },
+  {
+    "id": 47839,
+    "name": "Retrospective",
+    "season": 9,
+    "number": null,
+    "type": "insignificant_special"
+  }
+]

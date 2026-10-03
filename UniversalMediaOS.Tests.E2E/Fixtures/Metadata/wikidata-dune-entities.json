@@ -1,0 +1,689 @@
+{
+  "entities": {
+    "Q60834962": {
+      "type": "item",
+      "id": "Q60834962",
+      "labels": {
+        "en": {
+          "language": "en",
+          "value": "Dune"
+        },
+        "mul": {
+          "language": "mul",
+          "value": "Dune"
+        }
+      },
+      "claims": {
+        "P31": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P31",
+              "hash": "fa41184cb03f49f0edfbf2fc4f9d33e35afecaea",
+              "datavalue": {
+                "value": {
+                  "entity-type": "item",
+                  "numeric-id": 11424,
+                  "id": "Q11424"
+                },
+                "type": "wikibase-entityid"
+              },
+              "datatype": "wikibase-item"
+            }
+          }
+        ],
+        "P345": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P345",
+              "hash": "bd948bf9578f186f4b83ba76872ecd708cc6b156",
+              "datavalue": {
+                "value": "tt1160419",
+                "type": "string"
+              },
+              "datatype": "external-id"
+            }
+          }
+        ],
+        "P577": [
+          {
+            "rank": "preferred",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "19186feef460c254c0e18d163d86c64a146c9f23",
+              "datavalue": {
+                "value": {
+                  "time": "+2021-09-03T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "d12bcdfddb86950a3a4959a45da22f78a267b15e",
+              "datavalue": {
+                "value": {
+                  "time": "+2021-09-15T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "3acc824be93cbe9f658da8f0e689523c54612f34",
+              "datavalue": {
+                "value": {
+                  "time": "+2021-09-16T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "6f2e4a9318ca31803c48122cd98921905cfd53ec",
+              "datavalue": {
+                "value": {
+                  "time": "+2021-09-17T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "30eb2c6f00d8c95bedae2f171a166f358829745d",
+              "datavalue": {
+                "value": {
+                  "time": "+2021-09-23T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "0ae3f64891a07e6ea9e22eb2261d66119bfb8d70",
+              "datavalue": {
+                "value": {
+                  "time": "+2021-10-13T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "f39475a8bfcd1710ca59a2b8aafae46d7f5c6496",
+              "datavalue": {
+                "value": {
+                  "time": "+2021-10-14T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "03f98f161c24c5ef38b470b7b897363bbecd9f30",
+              "datavalue": {
+                "value": {
+                  "time": "+2021-10-15T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "452b03648f527afb89100d3a2259b40d9f7ea936",
+              "datavalue": {
+                "value": {
+                  "time": "+2021-10-20T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "9e6f567a0c145d21b1312762ef94a3bb39178cf4",
+              "datavalue": {
+                "value": {
+                  "time": "+2021-10-21T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "20eba5921814498d3c288af20ac6746f733df52c",
+              "datavalue": {
+                "value": {
+                  "time": "+2021-10-22T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "f542dacddd203ca3ce95d814019bf5595de81d39",
+              "datavalue": {
+                "value": {
+                  "time": "+2021-12-02T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          }
+        ]
+      }
+    },
+    "Q114819": {
+      "type": "item",
+      "id": "Q114819",
+      "labels": {
+        "en": {
+          "language": "en",
+          "value": "Dune"
+        }
+      },
+      "claims": {
+        "P31": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P31",
+              "hash": "fa41184cb03f49f0edfbf2fc4f9d33e35afecaea",
+              "datavalue": {
+                "value": {
+                  "entity-type": "item",
+                  "numeric-id": 11424,
+                  "id": "Q11424"
+                },
+                "type": "wikibase-entityid"
+              },
+              "datatype": "wikibase-item"
+            }
+          }
+        ],
+        "P345": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P345",
+              "hash": "8f450c6673b0ccc334425d6040c9902a95bbe006",
+              "datavalue": {
+                "value": "tt0087182",
+                "type": "string"
+              },
+              "datatype": "external-id"
+            }
+          }
+        ],
+        "P577": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "99eb0ecb9a93d55404fbaf6182fda7126bb9db4d",
+              "datavalue": {
+                "value": {
+                  "time": "+1984-12-14T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          }
+        ]
+      }
+    },
+    "Q109228991": {
+      "type": "item",
+      "id": "Q109228991",
+      "labels": {
+        "en": {
+          "language": "en",
+          "value": "Dune: Part Two"
+        }
+      },
+      "claims": {
+        "P31": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P31",
+              "hash": "fa41184cb03f49f0edfbf2fc4f9d33e35afecaea",
+              "datavalue": {
+                "value": {
+                  "entity-type": "item",
+                  "numeric-id": 11424,
+                  "id": "Q11424"
+                },
+                "type": "wikibase-entityid"
+              },
+              "datatype": "wikibase-item"
+            }
+          }
+        ],
+        "P345": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P345",
+              "hash": "a3e9c51a67ddb83fd21c39cdabbec96751ebc94a",
+              "datavalue": {
+                "value": "tt15239678",
+                "type": "string"
+              },
+              "datatype": "external-id"
+            }
+          }
+        ],
+        "P577": [
+          {
+            "rank": "deprecated",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "040ac444cd11eeb55ebdeb56fafbe60c116c2a1a",
+              "datavalue": {
+                "value": {
+                  "time": "+2023-10-18T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "deprecated",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "8b5fe4696d27405050d4eb784669344926406355",
+              "datavalue": {
+                "value": {
+                  "time": "+2023-10-20T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "deprecated",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "dd16753e6f3e54861e9f516778fa02207f3dff4b",
+              "datavalue": {
+                "value": {
+                  "time": "+2023-11-17T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "22c69a027008447e33f29b69bfc70fd49c616441",
+              "datavalue": {
+                "value": {
+                  "time": "+2024-02-27T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "5af3e11a388c89eda27fcddf30bbcceb02c9ad6c",
+              "datavalue": {
+                "value": {
+                  "time": "+2024-03-01T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "d0ca5d27036993b886b6aa1adb305b62aa7aec4d",
+              "datavalue": {
+                "value": {
+                  "time": "+2024-02-29T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          }
+        ]
+      }
+    },
+    "Q20972530": {
+      "type": "item",
+      "id": "Q20972530",
+      "labels": {
+        "en": {
+          "language": "en",
+          "value": "The Dune"
+        }
+      },
+      "claims": {
+        "P31": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P31",
+              "hash": "fa41184cb03f49f0edfbf2fc4f9d33e35afecaea",
+              "datavalue": {
+                "value": {
+                  "entity-type": "item",
+                  "numeric-id": 11424,
+                  "id": "Q11424"
+                },
+                "type": "wikibase-entityid"
+              },
+              "datatype": "wikibase-item"
+            }
+          }
+        ],
+        "P577": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "778036c94bcd494bb7efdf84b69d7acef1d1dfaa",
+              "datavalue": {
+                "value": {
+                  "time": "+2014-00-00T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 9,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          },
+          {
+            "rank": "preferred",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "cb1e0bbc37d64171b10ed2e451cfba608ca4bd5a",
+              "datavalue": {
+                "value": {
+                  "time": "+2014-08-13T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          }
+        ],
+        "P345": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P345",
+              "hash": "957a0e614c6fa801340dc7218d970a28c67387e5",
+              "datavalue": {
+                "value": "tt2251648",
+                "type": "string"
+              },
+              "datatype": "external-id"
+            }
+          }
+        ]
+      }
+    },
+    "Q15052318": {
+      "type": "item",
+      "id": "Q15052318",
+      "labels": {
+        "en": {
+          "language": "en",
+          "value": "Jodorowsky's Dune"
+        }
+      },
+      "claims": {
+        "P31": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P31",
+              "hash": "fa41184cb03f49f0edfbf2fc4f9d33e35afecaea",
+              "datavalue": {
+                "value": {
+                  "entity-type": "item",
+                  "numeric-id": 11424,
+                  "id": "Q11424"
+                },
+                "type": "wikibase-entityid"
+              },
+              "datatype": "wikibase-item"
+            }
+          }
+        ],
+        "P577": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "23123200bee276c97ea6b80cc64df1e2bf1dadd6",
+              "datavalue": {
+                "value": {
+                  "time": "+2013-05-18T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            }
+          }
+        ],
+        "P345": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P345",
+              "hash": "cff729fd7ea084b1a9c0fa0b3e9b6ff83a2fe62b",
+              "datavalue": {
+                "value": "tt1935156",
+                "type": "string"
+              },
+              "datatype": "external-id"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "success": 1
+}

@@ -1,0 +1,262 @@
+<UserControl x:Class="UniversalMediaOS.WPF.Views.BookDetailsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:controls="clr-namespace:UniversalMediaOS.WPF.Controls"
+             mc:Ignorable="d"
+             d:DesignHeight="720"
+             d:DesignWidth="1120"
+             Background="{DynamicResource BgApp}">
+
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="18"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <DockPanel Grid.Row="0">
+            <Button Content="Back"
+                    Command="{Binding GoBackCommand}"
+                    Style="{DynamicResource SecondaryButton}"
+                    DockPanel.Dock="Left"
+                    MinWidth="88"
+                    AutomationProperties.Name="Back from Book Details"/>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                <TextBlock Text="{Binding ProgressText}"
+                           Style="{DynamicResource BodyText}"
+                           Foreground="{DynamicResource AccentPrimary}"
+                           VerticalAlignment="Center"
+                           Margin="0,0,14,0"/>
+                <Button Content="Read best edition"
+                        Command="{Binding ReadPreferredCommand}"
+                        Style="{DynamicResource PrimaryButton}"
+                        MinWidth="152"
+                        AutomationProperties.Name="Read Book"/>
+            </StackPanel>
+        </DockPanel>
+
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="210"/>
+                <ColumnDefinition Width="16"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="16"/>
+                <ColumnDefinition Width="280"/>
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0"
+                    Background="{DynamicResource BgPanelAlt}"
+                    BorderBrush="{DynamicResource BorderSubtle}"
+                    BorderThickness="1"
+                    CornerRadius="10"
+                    ClipToBounds="True">
+                <Grid>
+                    <TextBlock Text="BOOK"
+                               Foreground="{DynamicResource TextMuted}"
+                               FontSize="14"
+                               FontWeight="Bold"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center"/>
+                    <Image controls:AsyncImageLoader.ImageUrl="{Binding Book.CoverUrl}"
+                           Stretch="UniformToFill"
+                           RenderOptions.BitmapScalingMode="HighQuality"/>
+                </Grid>
+            </Border>
+
+            <Grid Grid.Column="2">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <StackPanel>
+                    <TextBlock Text="{Binding Book.Title}"
+                               Style="{DynamicResource DisplayText}"
+                               FontSize="34"
+                               FontWeight="Black"
+                               TextWrapping="Wrap"/>
+                    <TextBlock Text="{Binding Book.Subtitle}"
+                               Style="{DynamicResource SubtitleText}"
+                               Foreground="{DynamicResource TextSecondary}"
+                               TextWrapping="Wrap"
+                               Margin="0,6,0,0"/>
+                    <TextBlock Text="{Binding Book.AuthorLine}"
+                               Style="{DynamicResource BodyText}"
+                               Foreground="{DynamicResource AccentPrimary}"
+                               Margin="0,12,0,0"/>
+                    <WrapPanel Margin="0,14,0,0">
+                        <Border Background="#3314B8A6"
+                                CornerRadius="6"
+                                Padding="8,4"
+                                Margin="0,0,8,8">
+                            <TextBlock Text="{Binding Book.Source}"
+                                       Foreground="{DynamicResource AccentPrimary}"
+                                       FontSize="11"
+                                       FontWeight="Bold"/>
+                        </Border>
+                        <Border Background="{DynamicResource BgElevated}"
+                                BorderBrush="{DynamicResource BorderStrong}"
+                                BorderThickness="1"
+                                CornerRadius="6"
+                                Padding="8,4"
+                                Margin="0,0,8,8">
+                            <TextBlock Text="{Binding Book.MetadataLine}"
+                                       Style="{DynamicResource ChipText}"/>
+                        </Border>
+                    </WrapPanel>
+                </StackPanel>
+
+                <Border Grid.Row="1"
+                        Style="{DynamicResource SurfaceCard}"
+                        Margin="0,20,0,16">
+                    <StackPanel>
+                        <TextBlock Text="Publication"
+                                   Style="{DynamicResource SubtitleText}"
+                                   FontWeight="Bold"
+                                   Margin="0,0,0,8"/>
+                        <TextBlock Style="{DynamicResource BodyText}"
+                                   Foreground="{DynamicResource TextSecondary}">
+                            <Run Text="{Binding Book.Publisher, Mode=OneWay}"/>
+                            <Run Text=" "/>
+                            <Run Text="{Binding Book.PublishedDate, Mode=OneWay}"/>
+                        </TextBlock>
+                        <TextBlock Text="{Binding Book.SubjectLine}"
+                                   Style="{DynamicResource CaptionText}"
+                                   TextWrapping="Wrap"
+                                   Margin="0,6,0,0"/>
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Row="2" Style="{DynamicResource SurfaceCard}">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <TextBlock Text="Description"
+                                   Style="{DynamicResource SubtitleText}"
+                                   FontWeight="Bold"
+                                   Margin="0,0,0,10"/>
+                        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                            <TextBlock Text="{Binding Book.Description}"
+                                       Style="{DynamicResource BodyText}"
+                                       Foreground="{DynamicResource TextSecondary}"
+                                       TextWrapping="Wrap"
+                                       LineHeight="22"/>
+                        </ScrollViewer>
+                    </Grid>
+                </Border>
+            </Grid>
+
+            <Grid Grid.Column="4">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <Border Style="{DynamicResource SurfaceCard}">
+                    <StackPanel>
+                        <DockPanel>
+                            <TextBlock Text="Readable editions"
+                                       Style="{DynamicResource SubtitleText}"
+                                       FontSize="17"
+                                       FontWeight="Bold"/>
+                            <ProgressBar DockPanel.Dock="Right"
+                                         Width="56"
+                                         Height="4"
+                                         IsIndeterminate="True"
+                                         Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibility}}"/>
+                        </DockPanel>
+                        <TextBlock Text="{Binding AvailabilityMessage}"
+                                   Style="{DynamicResource CaptionText}"
+                                   Foreground="{DynamicResource TextMuted}"
+                                   TextWrapping="Wrap"
+                                   Margin="0,8,0,0"/>
+                        <TextBlock Text="{Binding ErrorMessage}"
+                                   Foreground="{DynamicResource Error}"
+                                   TextWrapping="Wrap"
+                                   Margin="0,6,0,0"/>
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Row="1"
+                        Background="#1A10B981"
+                        BorderBrush="#4D10B981"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Padding="12"
+                        Margin="0,12,0,12">
+                    <TextBlock Text="EPUB and PDF editions are combined from every enabled book provider and your local imports."
+                               Foreground="{DynamicResource TextSecondary}"
+                               FontSize="12"
+                               TextWrapping="Wrap"/>
+                </Border>
+
+                <ListBox Grid.Row="2"
+                         ItemsSource="{Binding Assets}"
+                         Background="Transparent"
+                         BorderThickness="0"
+                         ScrollViewer.CanContentScroll="True"
+                         VirtualizingPanel.IsVirtualizing="True"
+                         VirtualizingPanel.VirtualizationMode="Recycling">
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem">
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                            <Setter Property="Padding" Value="0"/>
+                            <Setter Property="Margin" Value="0,0,0,8"/>
+                            <Setter Property="Focusable" Value="False"/>
+                        </Style>
+                    </ListBox.ItemContainerStyle>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <Border Background="{DynamicResource BgPanel}"
+                                    BorderBrush="{DynamicResource BorderSubtle}"
+                                    BorderThickness="1"
+                                    CornerRadius="8"
+                                    Padding="11">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="10"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding DisplayName}"
+                                                   Style="{DynamicResource BodyText}"
+                                                   FontWeight="Bold"
+                                                   TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock Style="{DynamicResource CaptionText}"
+                                                   Foreground="{DynamicResource TextMuted}"
+                                                   Margin="0,4,0,0">
+                                            <Run Text="{Binding FormatLabel, Mode=OneWay}"/>
+                                            <Run Text=" &#x00B7; "/>
+                                            <Run Text="{Binding AccessLabel, Mode=OneWay}"/>
+                                            <Run Text=" &#x00B7; "/>
+                                            <Run Text="{Binding SizeLabel, Mode=OneWay}"/>
+                                        </TextBlock>
+                                        <TextBlock Text="{Binding SourceLabel}"
+                                                   Foreground="{DynamicResource AccentPrimary}"
+                                                   FontSize="11"
+                                                   Margin="0,4,0,0"/>
+                                    </StackPanel>
+                                    <Button Grid.Column="2"
+                                            Content="Read"
+                                            Command="{Binding DataContext.OpenEditionCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                            CommandParameter="{Binding}"
+                                            Style="{DynamicResource PrimaryButton}"
+                                            MinWidth="72"
+                                            VerticalAlignment="Center"
+                                            AutomationProperties.Name="Open Book Edition"/>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </Grid>
+        </Grid>
+    </Grid>
+</UserControl>

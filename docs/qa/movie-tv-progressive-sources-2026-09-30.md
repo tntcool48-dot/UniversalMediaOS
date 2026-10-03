@@ -1,0 +1,9 @@
+# Movie/TV progressive source checkpoint — 2026-09-30
+
+Movie and Television source searches now consume the existing provider update stream. A verified result appears when its provider finishes, without waiting for slower alternatives. The result can be selected while the remaining search continues. Changing the title, episode or language cancels and removes the old result; a new search can start immediately. If a later provider fails, an already ready source remains available.
+
+Source cards distinguish **MATCH VERIFIED** from **MATCH UNVERIFIED**. A source without independent identity, unit or audio evidence is a labelled **Try stream** candidate, not an exact-match claim. Its displayed unit and audio language are marked unverified; a rejected source never becomes a card. Direct media uses the native player, while a website needs the separate **Open website** choice. Both still pass the existing public-location safety check when selected.
+
+Internet Archive items with an explicit feature-film classification, provider title and year now carry independent item evidence. Its broad `movies` category alone does not establish that a file is a feature film, and item language is not treated as audio-track proof. The matcher also rejects an observed media kind that conflicts with the selected catalog kind.
+
+Verification: focused source/UI/Archive tests passed; the full suite passed 536 tests with 22 existing skips. The WPF project built with zero warnings and errors. Tests cover early ready display, stale selection, retry availability while an old provider is pending, later failure retaining ready sources, unverified/rejected presentation, and explicit Archive feature evidence. No visible Movie/TV playback journey was claimed in this batch. Many scraper and configured-provider results still lack independent evidence, so this does not complete Movie/TV native watchability or Watch via download.
