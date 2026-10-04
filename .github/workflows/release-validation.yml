@@ -24,6 +24,15 @@ jobs:
         run: dotnet restore UniversalMediaOS.sln
       - name: Build
         run: dotnet build UniversalMediaOS.sln -c Release --no-restore --nologo
+      - name: Prepare native media test tools
+        shell: pwsh
+        run: |
+          choco install ffmpeg --version=7.1.1 --yes --no-progress --limit-output
+          if ($LASTEXITCODE -ne 0) { throw 'FFmpeg installation failed.' }
+          ffmpeg -version
+          if ($LASTEXITCODE -ne 0) { throw 'FFmpeg is unavailable on PATH.' }
+          ffprobe -version
+          if ($LASTEXITCODE -ne 0) { throw 'ffprobe is unavailable on PATH.' }
       - name: Test
         run: dotnet test UniversalMediaOS.sln -c Release --no-build --nologo
       - name: Validate Python scraper syntax
