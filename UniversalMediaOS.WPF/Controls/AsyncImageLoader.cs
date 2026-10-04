@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Net.Http;
 using System.Threading;
@@ -14,7 +15,7 @@ namespace UniversalMediaOS.WPF.Controls
     public static class AsyncImageLoader
     {
         private static readonly HttpClient _httpClient = CreateHttpClient();
-        private static readonly LruCache<string, ImageSource> _imageCache = new(150);
+        private static readonly ImageRequestLoader _requestLoader = new(_httpClient);
 
         private static HttpClient CreateHttpClient()
         {
@@ -32,10 +33,10 @@ namespace UniversalMediaOS.WPF.Controls
 
         internal static HttpClient CreateHttpClientForTesting() => CreateHttpClient();
         
-        private static readonly DependencyProperty CancellationTokenSourceProperty =
+        private static readonly DependencyProperty LoadStateProperty =
             DependencyProperty.RegisterAttached(
-                "CancellationTokenSource", 
-                typeof(CancellationTokenSource), 
+                "LoadState",
+                typeof(ImageLoadState),
                 typeof(AsyncImageLoader), 
                 new PropertyMetadata(null));
 
@@ -54,119 +55,229 @@ namespace UniversalMediaOS.WPF.Controls
                 "DecodeWidth", 
                 typeof(int), 
                 typeof(AsyncImageLoader), 
-                new PropertyMetadata(200));
+                new PropertyMetadata(200, OnImageUrlChanged));
 
         public static int GetDecodeWidth(DependencyObject obj) => (int)obj.GetValue(DecodeWidthProperty);
         public static void SetDecodeWidth(DependencyObject obj, int value) => obj.SetValue(DecodeWidthProperty, value);
 
-        private static async void OnImageUrlChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        private static void OnImageUrlChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         {
             if (d is not Image imageControl) return;
-
-            // 1. Cancel previous pending request for this recycled container
-            if (imageControl.GetValue(CancellationTokenSourceProperty) is CancellationTokenSource oldCts)
-            {
-                oldCts.Cancel();
-            }
-
-            string? url = e.NewValue as string;
-            
-            // 2. Clear stale image immediately to prevent recycling flashes
+            ImageLoadState state = GetState(imageControl);
+            CancelPending(state);
+            state.CompletedKey = null;
             imageControl.Source = null;
+            if (state.FailureToolTip != null && Equals(imageControl.ToolTip, state.FailureToolTip)) imageControl.ToolTip = null;
+            state.FailureToolTip = null;
+            if (state.IsAttached) _ = LoadImageAsync(imageControl, state);
+        }
 
+        private static ImageLoadState GetState(Image image)
+        {
+            if (image.GetValue(LoadStateProperty) is ImageLoadState existing) return existing;
+            var state = new ImageLoadState { IsAttached = image.IsLoaded };
+            image.SetValue(LoadStateProperty, state);
+            image.Loaded += ImageLoaded;
+            image.Unloaded += ImageUnloaded;
+            return state;
+        }
+
+        private static void ImageLoaded(object sender, RoutedEventArgs e)
+        {
+            var image = (Image)sender;
+            ImageLoadState state = GetState(image);
+            state.IsAttached = true;
+            string key = ImageRequestLoader.Key(GetImageUrl(image), GetDecodeWidth(image));
+            if (state.Active != null || (state.CompletedKey == key && image.Source != null)) return;
+            _ = LoadImageAsync(image, state);
+        }
+
+        private static void ImageUnloaded(object sender, RoutedEventArgs e)
+        {
+            ImageLoadState state = GetState((Image)sender);
+            state.IsAttached = false;
+            CancelPending(state);
+        }
+
+        private static void CancelPending(ImageLoadState state)
+        {
+            state.Active?.Cancel();
+            state.Active = null; // The canceled operation disposes its own source in finally.
+        }
+
+        private static async Task LoadImageAsync(Image imageControl, ImageLoadState state)
+        {
+            string url = GetImageUrl(imageControl);
             if (string.IsNullOrWhiteSpace(url)) return;
-
-            // 3. Setup new cancellation token
-            var newCts = new CancellationTokenSource();
-            imageControl.SetValue(CancellationTokenSourceProperty, newCts);
             int decodeWidth = GetDecodeWidth(imageControl);
-            string cacheKey = $"{decodeWidth}|{url}";
-            bool shouldCache = decodeWidth is > 0 and <= 600;
-
-            // 4. Check cache first
-            if (shouldCache && _imageCache.TryGetValue(cacheKey, out var cachedImage))
-            {
-                imageControl.Source = cachedImage;
-                imageControl.SetValue(CancellationTokenSourceProperty, null);
-                newCts.Dispose();
-                return;
-            }
-
+            string key = ImageRequestLoader.Key(url, decodeWidth);
+            using var operation = new CancellationTokenSource();
+            state.Active = operation;
+            bool IsCurrent() => state.IsAttached && ReferenceEquals(state.Active, operation) &&
+                !operation.IsCancellationRequested && key == ImageRequestLoader.Key(GetImageUrl(imageControl), GetDecodeWidth(imageControl));
             try
             {
-                // 5. Fetch stream asynchronously
-                using var request = CreateImageRequest(url);
-                using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, newCts.Token);
-                response.EnsureSuccessStatusCode();
-                string contentType = response.Content.Headers.ContentType?.MediaType ?? string.Empty;
-                if (!string.IsNullOrWhiteSpace(contentType) &&
-                    !contentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) &&
-                    !contentType.Equals("application/octet-stream", StringComparison.OrdinalIgnoreCase))
-                {
-                    throw new InvalidDataException($"Unexpected image content type '{contentType}'.");
-                }
-
-                const int maximumImageBytes = 25 * 1024 * 1024;
-                if (response.Content.Headers.ContentLength is > maximumImageBytes)
-                {
-                    throw new InvalidDataException("Image exceeds the 25 MB safety limit.");
-                }
-
-                using var stream = await response.Content.ReadAsStreamAsync(newCts.Token);
-                using var ms = new MemoryStream();
-                byte[] buffer = new byte[16 * 1024];
-                while (true)
-                {
-                    int read = await stream.ReadAsync(buffer.AsMemory(0, buffer.Length), newCts.Token);
-                    if (read <= 0)
-                    {
-                        break;
-                    }
-
-                    if (ms.Length + read > maximumImageBytes)
-                    {
-                        throw new InvalidDataException("Image exceeds the 25 MB safety limit.");
-                    }
-
-                    await ms.WriteAsync(buffer.AsMemory(0, read), newCts.Token);
-                }
-                newCts.Token.ThrowIfCancellationRequested();
-
-                byte[] imageBytes = ms.ToArray();
-                BitmapImage bitmap = await Task.Run(
-                    () => DecodeBitmap(imageBytes, decodeWidth, newCts.Token),
-                    newCts.Token);
-
-                if (!newCts.Token.IsCancellationRequested)
-                {
-                    if (shouldCache)
-                    {
-                        _imageCache.Add(cacheKey, bitmap);
-                    }
-                    imageControl.Source = bitmap;
-                }
+                BitmapImage bitmap = await (state.Loader ?? _requestLoader).LoadAsync(url, decodeWidth, operation.Token);
+                if (!IsCurrent()) return;
+                imageControl.Source = bitmap;
+                state.CompletedKey = key;
+                if (state.FailureToolTip != null && Equals(imageControl.ToolTip, state.FailureToolTip))
+                    imageControl.ToolTip = null;
+                state.FailureToolTip = null;
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (operation.IsCancellationRequested)
             {
-                // Container was recycled/cancelled. Safe to ignore.
+                // Recycled, detached or superseded consumer; other owners may continue.
             }
             catch (Exception ex)
             {
+                if (!IsCurrent()) return;
                 AppLogger.Log($"Image load failed for '{url}': {ex.Message}", "WARNING");
-                if (!newCts.Token.IsCancellationRequested)
+                imageControl.Source = CreateFallbackImage();
+                if (imageControl.ToolTip == null)
                 {
-                    imageControl.Source = CreateFallbackImage();
-                    imageControl.ToolTip ??= "Image failed to load.";
+                    state.FailureToolTip = ex is TimeoutException ? "Image request timed out." : "Image failed to load.";
+                    imageControl.ToolTip = state.FailureToolTip;
                 }
             }
             finally
             {
-                // Ensure CTS is disposed. Only clear the DP if it still belongs to this run.
-                if (imageControl.GetValue(CancellationTokenSourceProperty) == newCts)
+                if (ReferenceEquals(state.Active, operation)) state.Active = null;
+            }
+        }
+
+        private sealed class ImageLoadState
+        {
+            public bool IsAttached;
+            public string? CompletedKey;
+            public string? FailureToolTip;
+            public CancellationTokenSource? Active;
+            public ImageRequestLoader? Loader;
+        }
+
+        internal static void SetRequestLoaderForTesting(Image image, ImageRequestLoader loader) => GetState(image).Loader = loader;
+
+        internal sealed class ImageRequestLoader
+        {
+            private const int MaximumImageBytes = 25 * 1024 * 1024;
+            private readonly HttpClient _client;
+            private readonly TimeSpan _requestLifetime;
+            private readonly SemaphoreSlim _concurrency;
+            private readonly object _sync = new();
+            private readonly Dictionary<string, Flight> _flights = new(StringComparer.Ordinal);
+            private readonly LruCache<string, BitmapImage> _cache = new(150);
+            private int _active;
+            private int _peak;
+
+            public ImageRequestLoader(HttpClient client, TimeSpan? requestLifetime = null, int concurrency = 4)
+            {
+                _client = client;
+                _requestLifetime = requestLifetime ?? TimeSpan.FromSeconds(18);
+                _concurrency = new(Math.Clamp(concurrency, 1, 8));
+            }
+
+            internal static string Key(string url, int decodeWidth) => $"{decodeWidth}|{url}";
+            internal int Active => Volatile.Read(ref _active);
+            internal int Peak => Volatile.Read(ref _peak);
+            internal int Pending { get { lock (_sync) return _flights.Count; } }
+            internal int Cached => _cache.Count;
+
+            public async Task<BitmapImage> LoadAsync(string url, int decodeWidth, CancellationToken token = default)
+            {
+                token.ThrowIfCancellationRequested();
+                string key = Key(url, decodeWidth);
+                Flight flight;
+                lock (_sync)
                 {
-                    imageControl.SetValue(CancellationTokenSourceProperty, null);
+                    if (decodeWidth is > 0 and <= 600 && _cache.TryGetValue(key, out var cached)) return cached;
+                    if (!_flights.TryGetValue(key, out flight!))
+                    {
+                        flight = new(f => FetchAndCacheAsync(key, url, decodeWidth, f));
+                        _flights.Add(key, flight);
+                    }
+                    flight.Owners++;
                 }
-                newCts.Dispose();
+                Task<BitmapImage> task = flight.Task;
+                try { return await task.WaitAsync(token).ConfigureAwait(false); }
+                finally
+                {
+                    bool cancel = false;
+                    lock (_sync)
+                    {
+                        if (--flight.Owners == 0 && !task.IsCompleted)
+                        {
+                            Remove(key, flight);
+                            cancel = true;
+                        }
+                    }
+                    if (cancel) flight.Cancel();
+                }
+            }
+
+            private void Remove(string key, Flight flight)
+            {
+                if (_flights.TryGetValue(key, out var current) && ReferenceEquals(current, flight)) _flights.Remove(key);
+            }
+
+            private async Task<BitmapImage> FetchAndCacheAsync(string key, string url, int decodeWidth, Flight flight)
+            {
+                bool acquired = false;
+                try
+                {
+                    await _concurrency.WaitAsync(flight.Cancellation.Token).ConfigureAwait(false);
+                    acquired = true;
+                    int active = Interlocked.Increment(ref _active);
+                    int prior;
+                    do { prior = Volatile.Read(ref _peak); } while (active > prior && Interlocked.CompareExchange(ref _peak, active, prior) != prior);
+                    using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(flight.Cancellation.Token);
+                    lifetime.CancelAfter(_requestLifetime);
+                    CancellationToken token = lifetime.Token;
+                    try
+                    {
+                        using var request = CreateImageRequest(url);
+                        using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false);
+                        response.EnsureSuccessStatusCode();
+                        string contentType = response.Content.Headers.ContentType?.MediaType ?? string.Empty;
+                        if (!string.IsNullOrWhiteSpace(contentType) && !contentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) &&
+                            !contentType.Equals("application/octet-stream", StringComparison.OrdinalIgnoreCase))
+                            throw new InvalidDataException($"Unexpected image content type '{contentType}'.");
+                        if (response.Content.Headers.ContentLength is > MaximumImageBytes)
+                            throw new InvalidDataException("Image exceeds the 25 MB safety limit.");
+                        using var stream = await response.Content.ReadAsStreamAsync(token).WaitAsync(token).ConfigureAwait(false);
+                        using var bytes = new MemoryStream();
+                        byte[] buffer = new byte[16 * 1024];
+                        while (true)
+                        {
+                            int read = await stream.ReadAsync(buffer.AsMemory(), token).AsTask().WaitAsync(token).ConfigureAwait(false);
+                            if (read == 0) break;
+                            if (bytes.Length + read > MaximumImageBytes) throw new InvalidDataException("Image exceeds the 25 MB safety limit.");
+                            bytes.Write(buffer, 0, read);
+                        }
+                        token.ThrowIfCancellationRequested();
+                        var bitmap = await Task.Run(() => DecodeBitmap(bytes.ToArray(), decodeWidth, token), token).ConfigureAwait(false);
+                        token.ThrowIfCancellationRequested();
+                        if (decodeWidth is > 0 and <= 600) _cache.Add(key, bitmap);
+                        return bitmap;
+                    }
+                    catch (OperationCanceledException) when (!flight.Cancellation.IsCancellationRequested)
+                    { throw new TimeoutException("Image headers, body or decode exceeded the request deadline."); }
+                }
+                finally
+                {
+                    if (acquired) { Interlocked.Decrement(ref _active); _concurrency.Release(); }
+                    lock (_sync) Remove(key, flight);
+                    flight.Cancellation.Dispose();
+                }
+            }
+
+            private sealed class Flight
+            {
+                public int Owners;
+                public CancellationTokenSource Cancellation { get; } = new();
+                private readonly Lazy<Task<BitmapImage>> _task;
+                public Flight(Func<Flight, Task<BitmapImage>> factory) => _task = new(() => factory(this), LazyThreadSafetyMode.ExecutionAndPublication);
+                public Task<BitmapImage> Task => _task.Value;
+                public void Cancel() { try { Cancellation.Cancel(); } catch (ObjectDisposedException) { } }
             }
         }
 
@@ -243,6 +354,8 @@ namespace UniversalMediaOS.WPF.Controls
             {
                 _capacity = capacity;
             }
+
+            public int Count { get { lock (_lock) return _cacheMap.Count; } }
 
             public bool TryGetValue(TKey key, out TValue value)
             {

@@ -48,6 +48,11 @@ namespace UniversalMediaOS.Tests.E2E.Tests
                 Assert.Same(stableSecondRow, viewModel.SearchResultRows[1]);
                 Assert.Equal(Enumerable.Range(1, 9), viewModel.SearchResultRows.SelectMany(row => row.Results).Select(result => result.Id));
 
+                viewModel.SetResultsViewportWidth(1_084);
+                var partialRow = viewModel.SearchResultRows[^1];
+                viewModel.SearchResults.ReplaceRange(viewModel.SearchResults.ToArray());
+                Assert.Same(partialRow, viewModel.SearchResultRows[^1]);
+
                 viewModel.SetResultsViewportWidth(552);
 
                 Assert.Equal([2, 2, 2, 2, 1], viewModel.SearchResultRows.Select(row => row.Results.Count));

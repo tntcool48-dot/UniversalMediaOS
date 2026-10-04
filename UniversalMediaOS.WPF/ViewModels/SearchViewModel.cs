@@ -168,7 +168,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             int overlap = Math.Min(SearchResultRows.Count, rows.Length);
             for (int i = firstChangedRow; i < overlap; i++)
             {
-                SearchResultRows[i] = rows[i];
+                if (!SearchResultRows[i].Results.SequenceEqual(rows[i].Results)) SearchResultRows[i] = rows[i];
             }
 
             while (SearchResultRows.Count > rows.Length)
