@@ -53,6 +53,17 @@ namespace UniversalMediaOS.Core.Services
 
         /// <summary>Exact distinct provider episode numbers, populated only by verified lookups.</summary>
         public IReadOnlyList<decimal> DubbedEpisodeNumbers { get; init; } = Array.Empty<decimal>();
+        public IReadOnlyList<DubProviderUpdate> ProviderOutcomes { get; init; } = Array.Empty<DubProviderUpdate>();
+    }
+
+    public enum DubProviderOutcome { Pending, Completed, TimedOut, Unavailable, Backoff, IdentityRejected }
+
+    public sealed record DubProviderUpdate(string Provider, DubProviderOutcome Outcome, DubAvailabilityResult? Result = null);
+
+    public sealed record DubAvailabilityUpdate(DubAvailabilityResult Result, IReadOnlyList<DubProviderUpdate> Providers, bool IsComplete)
+    {
+        public long Sequence { get; init; }
+        public int PendingProviders => Providers.Count(provider => provider.Outcome == DubProviderOutcome.Pending);
     }
 
     public sealed record DubAvailabilityProviderConfig
@@ -242,21 +253,27 @@ namespace UniversalMediaOS.Core.Services
             MediaResult media,
             CancellationToken token = default,
             bool bypassCache = false,
-            DubAvailabilityCheckMode mode = DubAvailabilityCheckMode.Verified)
+            DubAvailabilityCheckMode mode = DubAvailabilityCheckMode.Verified,
+            IProgress<DubAvailabilityUpdate>? progress = null)
         {
             if (media == null || string.IsNullOrWhiteSpace(media.OfficialTitle))
             {
                 return new DubAvailabilityResult(false, 0, 0, string.Empty, "No title to check");
             }
 
+            token.ThrowIfCancellationRequested();
+
             string key = $"{BuildCacheKey(media)}:{mode}";
             if (!bypassCache && TryGetCached(key, out DubAvailabilityResult? cached))
             {
+                if (progress != null) LookupFlight.Report(progress, new(cached!, cached!.ProviderOutcomes, true));
                 return cached!;
             }
 
-            var candidate = new LookupFlight(sharedToken => LookupAndCacheAsync(key, media, mode, sharedToken));
+            var candidate = new LookupFlight((sharedToken, publish) => LookupAndCacheAsync(key, media, mode, sharedToken, publish));
             LookupFlight flight = _singleFlights.GetOrAdd(key, candidate);
+            flight.AddWaiter();
+            using IDisposable? subscription = flight.Subscribe(progress);
             if (!ReferenceEquals(candidate, flight))
             {
                 candidate.Cancel();
@@ -270,7 +287,6 @@ namespace UniversalMediaOS.Core.Services
                     TaskScheduler.Default);
             }
 
-            flight.AddWaiter();
             try
             {
                 return await flight.Task.WaitAsync(token).ConfigureAwait(false);
@@ -289,10 +305,14 @@ namespace UniversalMediaOS.Core.Services
             string key,
             MediaResult media,
             DubAvailabilityCheckMode mode,
-            CancellationToken token)
+            CancellationToken token,
+            Action<DubAvailabilityUpdate> publish)
         {
-            DubAvailabilityResult result = await LookupCoreAsync(media, mode, token).ConfigureAwait(false);
+            DubAvailabilityResult result = await LookupCoreAsync(media, mode, token, publish).ConfigureAwait(false);
+            token.ThrowIfCancellationRequested();
             TimeSpan ttl = GetCacheTtl(media, result);
+            if (result.ProviderOutcomes.Any(provider => provider.Outcome is DubProviderOutcome.TimedOut or DubProviderOutcome.Unavailable or DubProviderOutcome.Backoff))
+                ttl = GetCacheTtl(media, Unknown(media));
             _cache[key] = new CacheEntry(result, _timeProvider.GetUtcNow().Add(ttl));
             PruneCache();
             return result;
@@ -301,102 +321,89 @@ namespace UniversalMediaOS.Core.Services
         private async Task<DubAvailabilityResult> LookupCoreAsync(
             MediaResult media,
             DubAvailabilityCheckMode mode,
-            CancellationToken token)
+            CancellationToken token,
+            Action<DubAvailabilityUpdate> publish)
         {
             var enabledProviders = _providers.Where(provider => provider.Enabled).ToArray();
             var queryTitles = BuildTitleCandidates(media).Take(8).ToArray();
             if (enabledProviders.Length == 0 || queryTitles.Length == 0)
             {
+                publish(new(Unknown(media), [], true));
                 return Unknown(media);
             }
 
-            DubAvailabilityResult? bestZero = null;
-            string lastProviderDetail = string.Empty;
-            string lastProviderName = string.Empty;
-            bool attemptedBuiltIn = false;
+            var outcomes = enabledProviders.Select(provider => new DubProviderUpdate(
+                NormalizeProviderName(provider.Name), DubProviderOutcome.Pending)).ToArray();
+            var sync = new object();
+            using var concurrency = new SemaphoreSlim(2, 2);
 
-            foreach (DubAvailabilityProviderConfig provider in enabledProviders)
+            DubAvailabilityResult BestResult()
             {
-                token.ThrowIfCancellationRequested();
-                string providerName = NormalizeProviderName(provider.Name);
-                lastProviderName = providerName;
-                attemptedBuiltIn |= provider.IsBuiltIn;
+                DubAvailabilityResult? best = outcomes.Select((update, index) => (update, index))
+                    .Where(item => item.update.Result?.Checked == true)
+                    .OrderByDescending(item => item.update.Result!.DubEpisodes > 0)
+                    .ThenByDescending(item => item.update.Result!.Confidence)
+                    .ThenBy(item => item.index).Select(item => item.update.Result).FirstOrDefault();
+                if (best != null)
+                {
+                    // Other providers can still find a dub. An interim zero is not final absence.
+                    return best.DubEpisodes == 0 && outcomes.Any(item => item.Outcome == DubProviderOutcome.Pending)
+                        ? best with { Confidence = DubAvailabilityConfidence.Summary,
+                            HighestContiguousDubEpisode = 0, DubbedEpisodeNumbers = Array.Empty<decimal>() }
+                        : best;
+                }
+                DubProviderUpdate? rejected = outcomes.FirstOrDefault(item => item.Outcome == DubProviderOutcome.IdentityRejected);
+                return Unknown(media, rejected?.Provider ?? outcomes.Last().Provider,
+                    rejected != null ? MalMismatchDetail : UnknownDetail);
+            }
 
+            void Update(int index, DubProviderOutcome outcome, DubAvailabilityResult? result = null)
+            {
+                lock (sync)
+                {
+                    token.ThrowIfCancellationRequested();
+                    outcomes[index] = new(outcomes[index].Provider, outcome, result);
+                    publish(new(BestResult(), outcomes.ToArray(), outcomes.All(item => item.Outcome != DubProviderOutcome.Pending)));
+                }
+            }
+
+            publish(new(Unknown(media), outcomes.ToArray(), false));
+            await Task.WhenAll(enabledProviders.Select(async (provider, index) =>
+            {
+                await concurrency.WaitAsync(token).ConfigureAwait(false);
                 try
                 {
                     using var providerCts = CancellationTokenSource.CreateLinkedTokenSource(token);
                     providerCts.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(provider.TimeoutSeconds, 1, 30)));
                     DubAvailabilityResult result = IsAniKotoProvider(provider)
-                        ? await CheckAniKotoProviderAsync(provider, media, mode, providerCts.Token).ConfigureAwait(false)
+                        ? await CheckAniKotoProviderAsync(provider, media, mode, providerCts.Token,
+                            summary => Update(index, DubProviderOutcome.Pending, summary)).ConfigureAwait(false)
                         : await CheckBadgeProviderAsync(provider, media, queryTitles, providerCts.Token).ConfigureAwait(false);
-
-                    if (!result.Checked)
-                    {
-                        lastProviderDetail = result.Detail;
-                        continue;
-                    }
-
-                    if (result.DubEpisodes > 0)
-                    {
-                        AppLogger.Log(
-                            $"Dub availability provider '{providerName}' resolved '{media.OfficialTitle}': " +
-                            $"dub={result.DubEpisodes}, confidence={result.Confidence}.");
-                        return result;
-                    }
-
-                    // A real zero is useful, but must not prevent a later configured provider from
-                    // reporting available dub episodes. Prefer a verified zero over a badge summary.
-                    if (bestZero == null || result.Confidence > bestZero.Confidence)
-                    {
-                        bestZero = result;
-                    }
+                    Update(index, result.Detail.Equals(MalMismatchDetail, StringComparison.Ordinal)
+                        ? DubProviderOutcome.IdentityRejected : result.Checked
+                            ? DubProviderOutcome.Completed : DubProviderOutcome.Unavailable, result);
                 }
-                catch (ProviderBackoffException ex)
+                catch (ProviderBackoffException)
                 {
-                    lastProviderDetail = $"{providerName} is respecting provider backoff until {ex.RetryAtUtc:O}.";
+                    Update(index, DubProviderOutcome.Backoff);
                 }
                 catch (OperationCanceledException) when (!token.IsCancellationRequested)
                 {
                     BackOffProviderHost(provider, TimeSpan.FromSeconds(45));
-                    lastProviderDetail = $"{providerName} timed out.";
-                    AppLogger.Log($"Dub availability provider '{providerName}' timed out.", "WARNING");
+                    Update(index, DubProviderOutcome.TimedOut, outcomes[index].Result);
                 }
-                catch (OperationCanceledException)
-                {
-                    AppLogger.Log($"Dub availability lookup cancelled for provider '{providerName}'.");
-                    throw;
-                }
-                catch (PayloadTooLargeException)
-                {
-                    BackOffProviderHost(provider, TimeSpan.FromSeconds(45));
-                    lastProviderDetail = $"{providerName} returned an oversized response.";
-                    AppLogger.Log($"Dub availability provider '{providerName}' response exceeded the safe size limit.", "WARNING");
-                }
+                catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
                 {
+                    token.ThrowIfCancellationRequested();
                     BackOffProviderHost(provider, TimeSpan.FromSeconds(45));
-                    lastProviderDetail = ex.Message;
-                    AppLogger.Log($"Dub availability lookup failed for provider '{providerName}': {ex.Message}", "WARNING");
+                    Update(index, DubProviderOutcome.Unavailable, outcomes[index].Result);
+                    AppLogger.Log($"Dub availability lookup failed for '{NormalizeProviderName(provider.Name)}': {ex.Message}", "WARNING");
                 }
-            }
-
-            if (bestZero != null)
-            {
-                return bestZero;
-            }
-
-            if (!string.IsNullOrWhiteSpace(lastProviderDetail))
-            {
-                AppLogger.Log($"Dub availability unresolved for '{media.OfficialTitle}': {lastProviderDetail}", "INFO");
-            }
-
-            string unknownSource = attemptedBuiltIn ? "AniKoto (built-in)" : lastProviderName;
-            string detail = lastProviderDetail.Equals(MalMismatchDetail, StringComparison.Ordinal)
-                ? MalMismatchDetail
-                : attemptedBuiltIn
-                    ? $"{UnknownDetail} The built-in AniKoto verifier could not confirm this title."
-                    : UnknownDetail;
-            return Unknown(media, unknownSource, detail);
+                finally { concurrency.Release(); }
+            })).ConfigureAwait(false);
+            token.ThrowIfCancellationRequested();
+            lock (sync) return BestResult() with { ProviderOutcomes = outcomes.ToArray() };
         }
 
         public static bool IsValidProviderTemplate(string? template)
@@ -523,7 +530,8 @@ namespace UniversalMediaOS.Core.Services
             DubAvailabilityProviderConfig provider,
             MediaResult media,
             DubAvailabilityCheckMode mode,
-            CancellationToken token)
+            CancellationToken token,
+            Action<DubAvailabilityResult>? publishSummary = null)
         {
             string providerName = NormalizeProviderName(provider.Name);
             if (!TryGetProviderOrigin(provider, out Uri? origin))
@@ -536,6 +544,7 @@ namespace UniversalMediaOS.Core.Services
             if (mode == DubAvailabilityCheckMode.Verified &&
                 TryGetAniKotoDiscovery(discoveryKey, out AniKotoDiscoveryEntry? cachedDiscovery))
             {
+                if (cachedDiscovery!.Summary.Checked) publishSummary?.Invoke(cachedDiscovery.Summary);
                 DubAvailabilityResult cachedVerification = await VerifyAniKotoDiscoveryAsync(
                     providerOrigin,
                     cachedDiscovery!,
@@ -578,6 +587,7 @@ namespace UniversalMediaOS.Core.Services
                 if (summary.Checked)
                 {
                     summary = summary with { Confidence = DubAvailabilityConfidence.Summary };
+                    publishSummary?.Invoke(summary);
                 }
 
                 Match tipMatch = DataTipRegex.Match(exactCard.Html);
@@ -1966,12 +1976,47 @@ namespace UniversalMediaOS.Core.Services
             private readonly CancellationTokenSource _cts = new();
             private readonly Lazy<Task<DubAvailabilityResult>> _task;
             private int _waiters;
+            private readonly object _sync = new();
+            private readonly List<IProgress<DubAvailabilityUpdate>> _subscribers = new();
+            private DubAvailabilityUpdate? _latest;
+            private long _sequence;
 
-            public LookupFlight(Func<CancellationToken, Task<DubAvailabilityResult>> factory)
+            public LookupFlight(Func<CancellationToken, Action<DubAvailabilityUpdate>, Task<DubAvailabilityResult>> factory)
             {
                 _task = new Lazy<Task<DubAvailabilityResult>>(
-                    () => factory(_cts.Token),
+                    () => factory(_cts.Token, Publish),
                     LazyThreadSafetyMode.ExecutionAndPublication);
+            }
+
+            public IDisposable? Subscribe(IProgress<DubAvailabilityUpdate>? progress)
+            {
+                if (progress == null) return null;
+                lock (_sync)
+                {
+                    _subscribers.Add(progress);
+                    if (_latest != null) Report(progress, _latest);
+                }
+                return new Subscription(this, progress);
+            }
+
+            private void Publish(DubAvailabilityUpdate update)
+            {
+                lock (_sync)
+                {
+                    _latest = update with { Sequence = ++_sequence };
+                    foreach (var subscriber in _subscribers.ToArray()) Report(subscriber, _latest);
+                }
+            }
+
+            public static void Report(IProgress<DubAvailabilityUpdate> progress, DubAvailabilityUpdate update)
+            {
+                try { progress.Report(update); }
+                catch (Exception ex) { AppLogger.Log($"Dub progress consumer failed: {ex.Message}", "WARNING"); }
+            }
+
+            private sealed class Subscription(LookupFlight flight, IProgress<DubAvailabilityUpdate> progress) : IDisposable
+            {
+                public void Dispose() { lock (flight._sync) flight._subscribers.Remove(progress); }
             }
 
             public Task<DubAvailabilityResult> Task => _task.Value;

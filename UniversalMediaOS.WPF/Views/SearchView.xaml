@@ -94,12 +94,12 @@
                 <Button Grid.Column="2"
                         Content="Cancel"
                         AutomationProperties.Name="Cancel search"
-                        Command="{Binding SearchCancelCommand}"
+                        Command="{Binding CancelActiveSearchCommand}"
                         Style="{StaticResource DangerButton}"
                         Height="38"
                         MinWidth="84"
                         Margin="8,0,0,0"
-                        Visibility="{Binding SearchCommand.IsRunning, Converter={StaticResource BoolToVisibility}}"
+                        Visibility="{Binding CanCancelSearch, Converter={StaticResource BoolToVisibility}}"
                         ToolTip="Cancel the current anime search."/>
             </Grid>
         </Border>

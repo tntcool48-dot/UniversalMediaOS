@@ -30,6 +30,7 @@ namespace UniversalMediaOS.WPF.ViewModels
         private TaskCompletionSource<bool> _searchIdleSignal = CreateCompletedSearchIdleSignal();
         private CancellationTokenSource? _filterRefreshCts;
         private CancellationTokenSource? _dubAnnotationCts;
+        private CancellationTokenSource? _activeSearchCts;
         private int _searchGeneration;
         private bool _isInitialized;
         private bool _isDisposed;
@@ -44,6 +45,17 @@ namespace UniversalMediaOS.WPF.ViewModels
         private string _resultsDescription = "Loading AniList recommendations";
 
         private bool _isLoadingMore;
+
+        public bool CanCancelSearch => IsSearching || _isLoadingMore;
+
+        [RelayCommand(CanExecute = nameof(CanCancelSearch))]
+        private void CancelActiveSearch()
+        {
+            SearchCommand.Cancel();
+            _activeSearchCts?.Cancel();
+            _filterRefreshCts?.Cancel();
+            _dubAnnotationCts?.Cancel();
+        }
 
         [ObservableProperty]
         private string _selectedStatus = "Any";
@@ -190,6 +202,7 @@ namespace UniversalMediaOS.WPF.ViewModels
 
             _filterRefreshCts?.Cancel();
             _dubAnnotationCts?.Cancel();
+            _activeSearchCts?.Cancel();
         }
 
         private async Task InitializeAsync(CancellationToken token)
@@ -238,6 +251,9 @@ namespace UniversalMediaOS.WPF.ViewModels
         private async Task LoadRecommendationsAsync(CancellationToken token)
         {
             int generation = NextSearchGeneration();
+            using var operation = CancellationTokenSource.CreateLinkedTokenSource(token, _lifecycleCts.Token);
+            _activeSearchCts = operation;
+            token = operation.Token;
             IsSearching = true;
             ResultsDescription = "Trending anime from AniList";
             _currentPage = 1;
@@ -246,7 +262,7 @@ namespace UniversalMediaOS.WPF.ViewModels
 
             try
             {
-                var page = await _searchService.SearchAnimePageAsync(string.Empty, _currentPage, 36, BuildFilters(), token);
+                var page = await _searchService.SearchAnimePageAsync(string.Empty, _currentPage, 36, BuildFilters(), token).WaitAsync(token);
                 token.ThrowIfCancellationRequested();
                 if (!IsCurrentSearchGeneration(generation))
                 {
@@ -254,7 +270,7 @@ namespace UniversalMediaOS.WPF.ViewModels
                 }
 
                 _hasNextPage = page.HasNextPage;
-                var filtered = await ApplyAudioFilterAsync(page.Results, token);
+                var filtered = await ApplyAudioFilterAsync(page.Results, token, generation);
                 token.ThrowIfCancellationRequested();
                 if (!IsCurrentSearchGeneration(generation))
                 {
@@ -274,6 +290,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             catch (OperationCanceledException)
             {
                 UniversalMediaOS.Core.Helpers.AppLogger.Log("Anime recommendation load cancelled.");
+                if (IsCurrentSearchGeneration(generation)) ResultsDescription = "Search canceled; available and unknown results retained.";
             }
             catch (Exception ex)
             {
@@ -282,6 +299,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             }
             finally
             {
+                if (ReferenceEquals(_activeSearchCts, operation)) _activeSearchCts = null;
                 if (IsCurrentSearchGeneration(generation))
                 {
                     IsSearching = false;
@@ -310,6 +328,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             }
 
             int generation = NextSearchGeneration();
+            _activeSearchCts = linkedCts;
             UniversalMediaOS.Core.Helpers.AppLogger.Log($"SearchAsync invoked. Query: '{SearchQuery}'");
             IsSearching = true;
             ResultsDescription = $"AniList results for \"{SearchQuery.Trim()}\"";
@@ -318,7 +337,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             _hasNextPage = true;
             try
             {
-                var page = await _searchService.SearchAnimePageAsync(_activeQuery, _currentPage, 36, BuildFilters(), token);
+                var page = await _searchService.SearchAnimePageAsync(_activeQuery, _currentPage, 36, BuildFilters(), token).WaitAsync(token);
                 token.ThrowIfCancellationRequested();
                 if (!IsCurrentSearchGeneration(generation))
                 {
@@ -326,7 +345,7 @@ namespace UniversalMediaOS.WPF.ViewModels
                 }
 
                 _hasNextPage = page.HasNextPage;
-                var filtered = await ApplyAudioFilterAsync(page.Results, token);
+                var filtered = await ApplyAudioFilterAsync(page.Results, token, generation);
                 token.ThrowIfCancellationRequested();
                 if (!IsCurrentSearchGeneration(generation))
                 {
@@ -341,6 +360,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             catch (OperationCanceledException)
             {
                 UniversalMediaOS.Core.Helpers.AppLogger.Log("SearchAsync cancelled by user.");
+                if (IsCurrentSearchGeneration(generation)) ResultsDescription = "Search canceled; available and unknown results retained.";
             }
             catch (Exception ex)
             {
@@ -349,6 +369,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             }
             finally
             {
+                if (ReferenceEquals(_activeSearchCts, linkedCts)) _activeSearchCts = null;
                 if (IsCurrentSearchGeneration(generation))
                 {
                     IsSearching = false;
@@ -366,20 +387,24 @@ namespace UniversalMediaOS.WPF.ViewModels
             }
 
             _isLoadingMore = true;
+            OnPropertyChanged(nameof(CanCancelSearch));
+            CancelActiveSearchCommand.NotifyCanExecuteChanged();
             int generation = Volatile.Read(ref _searchGeneration);
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_lifecycleCts.Token);
+            _activeSearchCts = linkedCts;
             var token = linkedCts.Token;
             try
             {
                 int nextPage = _currentPage + 1;
-                var page = await _searchService.SearchAnimePageAsync(_activeQuery, nextPage, 36, BuildFilters(), token);
+                var page = await _searchService.SearchAnimePageAsync(_activeQuery, nextPage, 36, BuildFilters(), token).WaitAsync(token);
                 token.ThrowIfCancellationRequested();
                 if (!IsCurrentSearchGeneration(generation))
                 {
                     return;
                 }
 
-                var filtered = await ApplyAudioFilterAsync(page.Results, token);
+                bool progressiveDub = SelectedAudio.Equals("Dub", StringComparison.OrdinalIgnoreCase);
+                var filtered = await ApplyAudioFilterAsync(page.Results, token, generation, SearchResults.ToArray());
                 token.ThrowIfCancellationRequested();
                 if (!IsCurrentSearchGeneration(generation))
                 {
@@ -391,12 +416,12 @@ namespace UniversalMediaOS.WPF.ViewModels
                     if (filtered.Count > 0)
                     {
                         _favoriteService.ApplyFavorites(filtered);
-                        SearchResults.AddRange(filtered);
+                        if (!progressiveDub) SearchResults.AddRange(filtered);
                         UpdateNoResultsState();
                     }
                     _currentPage = nextPage;
                     _hasNextPage = page.HasNextPage;
-                    ResultsDescription = string.IsNullOrWhiteSpace(_activeQuery)
+                    if (!progressiveDub) ResultsDescription = string.IsNullOrWhiteSpace(_activeQuery)
                         ? $"Trending anime from AniList - page {_currentPage}"
                         : $"AniList results for \"{_activeQuery}\" - page {_currentPage}";
                 }
@@ -408,6 +433,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             catch (OperationCanceledException)
             {
                 UniversalMediaOS.Core.Helpers.AppLogger.Log("LoadMoreAnimeAsync cancelled.");
+                if (IsCurrentSearchGeneration(generation)) ResultsDescription = "Page lookup canceled; available and unknown results retained.";
             }
             catch (Exception ex)
             {
@@ -415,7 +441,10 @@ namespace UniversalMediaOS.WPF.ViewModels
             }
             finally
             {
+                if (ReferenceEquals(_activeSearchCts, linkedCts)) _activeSearchCts = null;
                 _isLoadingMore = false;
+                OnPropertyChanged(nameof(CanCancelSearch));
+                CancelActiveSearchCommand.NotifyCanExecuteChanged();
                 if (IsCurrentSearchGeneration(generation))
                 {
                     UpdateNoResultsState();
@@ -459,7 +488,8 @@ namespace UniversalMediaOS.WPF.ViewModels
                 Audio: SelectedAudio);
         }
 
-        private async Task<List<MediaResult>> ApplyAudioFilterAsync(List<MediaResult> results, CancellationToken token)
+        private async Task<List<MediaResult>> ApplyAudioFilterAsync(List<MediaResult> results, CancellationToken token,
+            int generation, IReadOnlyList<MediaResult>? existingResults = null)
         {
             if (SelectedAudio.Equals("Sub", StringComparison.OrdinalIgnoreCase))
             {
@@ -471,7 +501,38 @@ namespace UniversalMediaOS.WPF.ViewModels
                 return results;
             }
 
-            var checkedResults = new List<MediaResult>();
+            var sync = new object();
+            var updates = new Dictionary<MediaResult, DubAvailabilityUpdate>();
+            // A canceled page can already be visible. Retrying that same catalog page replaces
+            // its exact AniList identities instead of appending duplicate provisional cards.
+            var pageIds = results.Where(result => result.Id > 0).Select(result => result.Id).ToHashSet();
+            var preservedResults = (existingResults ?? []).Where(result => result.Id <= 0 || !pageIds.Contains(result.Id)).ToArray();
+            List<MediaResult> CurrentResults() => results.Where(result => !updates.TryGetValue(result, out var update) ||
+                !update.IsComplete || result.AvailableDubEpisodes > 0 || !update.Result.Checked).ToList();
+            void Publish(MediaResult? media = null, DubAvailabilityUpdate? update = null)
+            {
+                lock (sync)
+                {
+                    if (token.IsCancellationRequested || !IsCurrentSearchGeneration(generation)) return;
+                    if (media != null && update != null)
+                    {
+                        if (updates.TryGetValue(media, out var prior) && prior.Sequence >= update.Sequence) return;
+                        updates[media] = update;
+                        ApplyDubAvailability(media, update.Result, clearSummary: update.IsComplete &&
+                            update.Providers.Any(provider => provider.Outcome == DubProviderOutcome.IdentityRejected));
+                    }
+                    List<MediaResult> current = CurrentResults();
+                    _favoriteService.ApplyFavorites(current);
+                    SearchResults.ReplaceRange(preservedResults.Concat(current));
+                    int pending = results.Count - updates.Values.Count(item => item.IsComplete);
+                    bool incomplete = updates.Values.Any(item => item.Providers.Any(provider =>
+                        provider.Outcome is not (DubProviderOutcome.Completed or DubProviderOutcome.Pending)));
+                    ResultsDescription = $"{(string.IsNullOrWhiteSpace(_activeQuery) ? "Trending anime" : $"Results for \"{_activeQuery}\"")} · " +
+                        (pending > 0 ? $"Checking {pending} Dub result(s); unknown titles retained."
+                            : incomplete ? "Dub lookup incomplete; partial and unknown results retained." : "Dub checks complete.");
+                }
+            }
+            Publish();
             using var semaphore = new SemaphoreSlim(DubCheckConcurrencyLimit);
             var tasks = results.Select(async result =>
             {
@@ -483,11 +544,9 @@ namespace UniversalMediaOS.WPF.ViewModels
                         result,
                         token,
                         bypassCache: false,
-                        mode: DubAvailabilityCheckMode.Summary);
-                    if (availability.Checked)
-                    {
-                        ApplyDubAvailability(result, availability);
-                    }
+                        mode: DubAvailabilityCheckMode.Summary,
+                        progress: new Progress<DubAvailabilityUpdate>(update => Publish(result, update)));
+                    Publish(result, new(availability, availability.ProviderOutcomes, true) { Sequence = long.MaxValue });
 
                     return result.AvailableDubEpisodes > 0 || !availability.Checked
                         ? result
@@ -499,10 +558,8 @@ namespace UniversalMediaOS.WPF.ViewModels
                 }
             });
 
-            var checkedItems = await Task.WhenAll(tasks);
-            checkedResults.AddRange(checkedItems.Where(result => result != null).Cast<MediaResult>());
-
-            return checkedResults;
+            await Task.WhenAll(tasks);
+            lock (sync) return CurrentResults();
         }
 
         private void UpdateNoResultsState()
@@ -569,15 +626,21 @@ namespace UniversalMediaOS.WPF.ViewModels
                             return;
                         }
 
+                        long latestSequence = -1;
+                        void ApplyUpdate(DubAvailabilityUpdate update)
+                        {
+                            if (cts.IsCancellationRequested || !IsCurrentSearchGeneration(generation) || update.Sequence <= latestSequence) return;
+                            latestSequence = update.Sequence;
+                            ApplyDubAvailability(result, update.Result, clearSummary: update.IsComplete &&
+                                update.Providers.Any(provider => provider.Outcome == DubProviderOutcome.IdentityRejected));
+                        }
                         var availability = await _dubAvailabilityService.CheckAsync(
                             result,
                             cts.Token,
                             bypassCache: false,
-                            mode: DubAvailabilityCheckMode.Summary);
-                        if (availability.Checked && IsCurrentSearchGeneration(generation))
-                        {
-                            ApplyDubAvailability(result, availability);
-                        }
+                            mode: DubAvailabilityCheckMode.Summary,
+                            progress: new Progress<DubAvailabilityUpdate>(ApplyUpdate));
+                        ApplyUpdate(new(availability, availability.ProviderOutcomes, true) { Sequence = long.MaxValue });
                     }
                     catch (OperationCanceledException)
                     {
@@ -603,15 +666,16 @@ namespace UniversalMediaOS.WPF.ViewModels
 
         private static void ApplyDubAvailability(
             MediaResult media,
-            DubAvailabilityResult availability)
+            DubAvailabilityResult availability,
+            bool clearSummary = false)
         {
-            if (!availability.Checked ||
+            if ((!availability.Checked && !clearSummary) ||
                 (media.IsDubAvailabilityVerified && !availability.Verified))
             {
                 return;
             }
 
-            media.AvailableDubEpisodes = Math.Max(0, availability.DubEpisodes);
+            media.AvailableDubEpisodes = availability.Checked ? Math.Max(0, availability.DubEpisodes) : 0;
             media.HighestContiguousDubEpisode = availability.Verified
                 ? Math.Max(0, availability.HighestContiguousDubEpisode)
                 : 0;
@@ -620,12 +684,14 @@ namespace UniversalMediaOS.WPF.ViewModels
                 : Array.Empty<decimal>();
             media.DubAvailabilityState = availability.Verified
                 ? MediaDubAvailabilityState.Verified
-                : MediaDubAvailabilityState.Summary;
-            media.DubAvailabilityChecked = true;
+                : availability.Checked ? MediaDubAvailabilityState.Summary : MediaDubAvailabilityState.Unknown;
+            media.DubAvailabilityChecked = availability.Checked;
         }
 
         private int NextSearchGeneration()
         {
+            _activeSearchCts?.Cancel();
+            _activeSearchCts = null;
             _dubAnnotationCts?.Cancel();
             _dubAnnotationCts?.Dispose();
             _dubAnnotationCts = null;
@@ -644,6 +710,8 @@ namespace UniversalMediaOS.WPF.ViewModels
 
         partial void OnIsSearchingChanged(bool value)
         {
+            OnPropertyChanged(nameof(CanCancelSearch));
+            CancelActiveSearchCommand.NotifyCanExecuteChanged();
             lock (_searchIdleLock)
             {
                 if (value)

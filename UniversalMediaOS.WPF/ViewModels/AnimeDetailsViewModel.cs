@@ -64,6 +64,7 @@ namespace UniversalMediaOS.WPF.ViewModels
         private CancellationTokenSource? _routingCts;
         private CancellationTokenSource? _temporaryWatchCts;
         private CancellationTokenSource? _dubLookupCts;
+        private int _dubLookupGeneration;
         private DownloadQueueJob? _downloadJob;
         private MediaResult? _observedMedia;
         private bool _isDisposed;
@@ -94,6 +95,13 @@ namespace UniversalMediaOS.WPF.ViewModels
 
         [ObservableProperty]
         private bool _isMalStatusLoading;
+
+        [ObservableProperty]
+        [NotifyCanExecuteChangedFor(nameof(CancelDubCheckCommand))]
+        private bool _isDubChecking;
+
+        [ObservableProperty]
+        private string _dubCheckStatus = string.Empty;
 
         [ObservableProperty]
         private string _episodePageText = "Episodes";
@@ -226,9 +234,11 @@ namespace UniversalMediaOS.WPF.ViewModels
 
         partial void OnMediaChanged(MediaResult? value)
         {
+            int generation = Interlocked.Increment(ref _dubLookupGeneration);
             _dubLookupCts?.Cancel();
-            _dubLookupCts?.Dispose();
             _dubLookupCts = null;
+            IsDubChecking = false;
+            DubCheckStatus = string.Empty;
 
             if (_observedMedia != null)
             {
@@ -268,7 +278,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             ResetScraperActivity();
             _ = LoadMalStatusAsync(value);
             _dubLookupCts = CancellationTokenSource.CreateLinkedTokenSource(_lifecycleCts.Token);
-            _ = ResolveDubAvailabilityAsync(value, _dubLookupCts.Token);
+            _ = ResolveDubAvailabilityAsync(value, _dubLookupCts, generation);
         }
 
         private void Media_PropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -602,11 +612,42 @@ namespace UniversalMediaOS.WPF.ViewModels
             }
         }
 
-        private async Task ResolveDubAvailabilityAsync(MediaResult media, CancellationToken token)
+        [RelayCommand(CanExecute = nameof(IsDubChecking))]
+        private void CancelDubCheck() => _dubLookupCts?.Cancel();
+
+        private async Task ResolveDubAvailabilityAsync(MediaResult media, CancellationTokenSource operation, int generation)
         {
+            using var ownedOperation = operation;
+            CancellationToken token = operation.Token;
+            bool IsCurrent() => !_isDisposed && !token.IsCancellationRequested &&
+                generation == Volatile.Read(ref _dubLookupGeneration) && ReferenceEquals(Media, media);
             if (!ShouldResolveDubAvailability(media))
             {
+                if (ReferenceEquals(_dubLookupCts, operation)) _dubLookupCts = null;
                 return;
+            }
+
+            IsDubChecking = true;
+            DubCheckStatus = "Checking dubbed episode availability\u2026";
+            long latestSequence = -1;
+            void ApplyUpdate(DubAvailabilityUpdate update)
+            {
+                if (!IsCurrent() || update.Sequence <= latestSequence) return;
+                latestSequence = update.Sequence;
+                ApplyDubResult(media, update.Result, clearSummary: update.IsComplete &&
+                    update.Providers.Any(provider => provider.Outcome == DubProviderOutcome.IdentityRejected));
+                string failures = string.Join("; ", update.Providers
+                    .Where(provider => provider.Outcome is not (DubProviderOutcome.Completed or DubProviderOutcome.Pending))
+                    .Select(provider => $"{provider.Provider}: {provider.Outcome switch
+                    {
+                        DubProviderOutcome.TimedOut => "timed out",
+                        DubProviderOutcome.Backoff => "waiting after a provider failure",
+                        DubProviderOutcome.IdentityRejected => "identity conflict",
+                        _ => "unavailable"
+                    }}"));
+                DubCheckStatus = !update.IsComplete
+                    ? $"{(update.Result.Checked ? update.Result.Verified ? "Verified episode result available" : "Badge summary available" : "Availability unknown")}; checking {update.PendingProviders} provider(s)\u2026"
+                    : failures.Length > 0 ? $"Lookup incomplete. {failures}" : update.Result.Detail;
             }
 
             try
@@ -616,30 +657,17 @@ namespace UniversalMediaOS.WPF.ViewModels
                     media,
                     token,
                     bypassCache: false,
-                    mode: DubAvailabilityCheckMode.Verified);
+                    mode: DubAvailabilityCheckMode.Verified,
+                    progress: new Progress<DubAvailabilityUpdate>(ApplyUpdate));
                 token.ThrowIfCancellationRequested();
-                if (!ReferenceEquals(Media, media))
+                if (!IsCurrent())
                 {
                     return;
                 }
 
+                ApplyUpdate(new(result, result.ProviderOutcomes, true) { Sequence = long.MaxValue });
                 if (result.Checked)
                 {
-                    if (!media.IsDubAvailabilityVerified || result.Verified)
-                    {
-                        media.AvailableDubEpisodes = Math.Max(0, result.DubEpisodes);
-                        media.HighestContiguousDubEpisode = result.Verified
-                            ? Math.Max(0, result.HighestContiguousDubEpisode)
-                            : 0;
-                        media.DubbedEpisodeNumbers = result.Verified
-                            ? result.DubbedEpisodeNumbers
-                            : Array.Empty<decimal>();
-                        media.DubAvailabilityState = result.Verified
-                            ? MediaDubAvailabilityState.Verified
-                            : MediaDubAvailabilityState.Summary;
-                        media.DubAvailabilityChecked = true;
-                    }
-
                     string state = result.Verified
                         ? result.DubEpisodes > 0 ? "Verified" : "None"
                         : result.DubEpisodes > 0 ? "Summary" : "Checked";
@@ -653,14 +681,37 @@ namespace UniversalMediaOS.WPF.ViewModels
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
+                if (!_isDisposed && generation == Volatile.Read(ref _dubLookupGeneration) && ReferenceEquals(Media, media))
+                    DubCheckStatus = "Dub check canceled. Available results retained.";
                 UniversalMediaOS.Core.Helpers.AppLogger.Log(
                     $"Dub availability check cancelled for '{media.OfficialTitle}'.");
             }
             catch (Exception ex)
             {
                 UniversalMediaOS.Core.Helpers.AppLogger.Log($"Dub availability check failed: {ex.Message}", "WARNING");
-                AddScraperActivity("Dub availability check could not reach the provider.", "Unknown");
+                if (IsCurrent())
+                {
+                    DubCheckStatus = "Dub availability could not be checked.";
+                    AddScraperActivity("Dub availability check could not reach the provider.", "Unknown");
+                }
             }
+            finally
+            {
+                if (generation == Volatile.Read(ref _dubLookupGeneration)) IsDubChecking = false;
+                if (ReferenceEquals(_dubLookupCts, operation)) _dubLookupCts = null;
+            }
+        }
+
+        private static void ApplyDubResult(MediaResult media, DubAvailabilityResult result, bool clearSummary = false)
+        {
+            if (media.IsDubAvailabilityVerified && !result.Verified) return;
+            if (!result.Checked && !clearSummary) return;
+            media.AvailableDubEpisodes = result.Checked ? Math.Max(0, result.DubEpisodes) : 0;
+            media.HighestContiguousDubEpisode = result.Verified ? Math.Max(0, result.HighestContiguousDubEpisode) : 0;
+            media.DubbedEpisodeNumbers = result.Verified ? result.DubbedEpisodeNumbers : Array.Empty<decimal>();
+            media.DubAvailabilityState = result.Verified ? MediaDubAvailabilityState.Verified
+                : result.Checked ? MediaDubAvailabilityState.Summary : MediaDubAvailabilityState.Unknown;
+            media.DubAvailabilityChecked = result.Checked;
         }
 
         internal static bool ShouldResolveDubAvailability(MediaResult? media)
@@ -1030,7 +1081,6 @@ namespace UniversalMediaOS.WPF.ViewModels
             _routingCts = null;
             _temporaryWatchCts?.Dispose();
             _temporaryWatchCts = null;
-            _dubLookupCts?.Dispose();
             _dubLookupCts = null;
             _lifecycleCts.Dispose();
             if (_downloadJob != null)

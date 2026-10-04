@@ -178,6 +178,13 @@
                                        Margin="6,0,0,0"/>
                         </Grid>
 
+                        <TextBlock Text="{Binding DubCheckStatus}" TextWrapping="Wrap"
+                                   Style="{StaticResource CaptionText}" Margin="0,0,0,8"/>
+                        <Button Content="Cancel Dub check" Command="{Binding CancelDubCheckCommand}"
+                                Style="{StaticResource SecondaryButton}" HorizontalAlignment="Left"
+                                AutomationProperties.Name="Cancel Dub Availability Check"
+                                Visibility="{Binding IsDubChecking, Converter={StaticResource BoolToVisibility}}"
+                                Margin="0,0,0,12"/>
                         <TextBlock Text="Sources are found automatically. Choose an episode and Sub or Dub, then watch."
                                    Style="{StaticResource CaptionText}" TextWrapping="Wrap" Margin="0,0,0,12"/>
                         <WrapPanel Margin="0,0,0,8">
