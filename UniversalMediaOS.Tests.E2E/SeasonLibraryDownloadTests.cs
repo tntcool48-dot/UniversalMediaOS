@@ -319,12 +319,153 @@ public sealed class SeasonLibraryDownloadTests
         Assert.False(fixture.ViewModel.IsDownloading);
     }
 
+    [Theory]
+    [InlineData("http")]
+    [InlineData("truncated")]
+    [InlineData("invalid")]
+    [InlineData("timeout")]
+    public async Task FailedEpisodeSourceUsesAnotherVerifiedSourceAndKeepsUnitsAndProgress(string failure)
+    {
+        using var fixture = new Fixture();
+        fixture.Catalog.Items = [Episode(1), Episode(2)];
+        fixture.Catalog.Candidates = request => [Source(request.Unit!), Alternate(request.Unit!)];
+        fixture.Handler.Respond = (request, _) => request.RequestUri!.AbsolutePath == "/episode-1.mp4"
+            ? Task.FromException<HttpResponseMessage>(failure switch
+            {
+                "truncated" => new EndOfStreamException("Remote body ended early."),
+                "invalid" => new InvalidDataException("Remote media was invalid."),
+                "timeout" => new TimeoutException("Remote body stalled."),
+                _ => new HttpRequestException("Remote source is unavailable.", null, HttpStatusCode.NotFound)
+            }) : Task.FromResult(Handler.MediaResponse(request));
+        await fixture.ViewModel.OpenItemAsync(new() { Title = "Series", Identity = Identity });
+        var key = AudiovisualLibraryKey.Create(Identity);
+        await fixture.Library.RecordProgressAsync(key, "Series", "", 2, 1, 371, 2800);
+        await fixture.ViewModel.DownloadSeasonCommand.ExecuteAsync(null);
+        Assert.Equal(new[] { "/episode-1.mp4", "/alternate-episode-1.mp4", "/episode-2.mp4" },
+            fixture.Handler.Locations.Select(location => location.AbsolutePath));
+        var saved = fixture.Published().Select(path => AuthorizedMediaDownloadService.ReadLibraryPlayback(
+            Path.Combine(Path.GetDirectoryName(path)!, "media.mp4"))).ToArray();
+        Assert.Equal(2, saved.Length);
+        Assert.Contains(saved, value => value!.Context.UnitKey == "season:1:episode:1" && value.Context.ProviderId == "alternate");
+        Assert.Contains(saved, value => value!.Context.UnitKey == "season:1:episode:2" && value.Context.ProviderId == "fixture");
+        Assert.Contains("Saved 2 episodes", fixture.ViewModel.DownloadStatusText);
+        Assert.Equal(371, (await fixture.Library.GetAsync(key))!.PositionSeconds);
+        Assert.Empty(Directory.GetDirectories(fixture.Temporary));
+        Assert.Empty(Directory.GetDirectories(fixture.Permanent, ".partial-*", SearchOption.AllDirectories));
+    }
+
+    [Fact]
+    public async Task RotatedUrlsAndConflictingOrUnknownAlternativesCannotBypassTheRequestedUnitAndAudio()
+    {
+        using var fixture = new Fixture();
+        static AudiovisualSource English(AudiovisualSource source) => source with
+        { Evidence = source.Evidence! with { Audio = new() { Origin = SourceEvidenceOrigin.ObservedStream, Languages = ["en"] } } };
+        fixture.Catalog.Candidates = request =>
+        {
+            var original = English(Source(request.Unit!));
+            return [original with { Location = new(original.Location.GetLeftPart(UriPartial.Path) + "?token=rotated-" + fixture.Catalog.Requests.Count) },
+                English(Alternate(Unit(2))) with { ProviderId = "wrong-unit" },
+                English(Alternate(request.Unit!)) with { ProviderId = "request-echo", Evidence = original.Evidence! with { Origin = SourceEvidenceOrigin.RequestEcho } },
+                Alternate(request.Unit!) with { ProviderId = "unknown-audio" },
+                English(Alternate(request.Unit!)) with { ProviderId = "website", AccessMode = AudiovisualSourceAccessMode.WebPage },
+                English(Alternate(request.Unit!))];
+        };
+        fixture.Handler.Respond = (request, _) => request.RequestUri!.AbsolutePath == "/episode-1.mp4"
+            ? Task.FromException<HttpResponseMessage>(new HttpRequestException("Unavailable."))
+            : Task.FromResult(Handler.MediaResponse(request));
+        await fixture.ViewModel.OpenItemAsync(new() { Title = "Series", Identity = Identity });
+        fixture.ViewModel.PreferredLanguage = "English";
+        await fixture.ViewModel.DownloadSeasonCommand.ExecuteAsync(null);
+        Assert.Equal(2, fixture.Handler.Requests);
+        Assert.Equal(2, fixture.Catalog.Requests.Count);
+        string metadata = Assert.Single(fixture.Published());
+        using var json = JsonDocument.Parse(File.ReadAllText(metadata));
+        Assert.Equal("alternate", json.RootElement.GetProperty("SourceProvider").GetString());
+        Assert.Equal("season:1:episode:1", json.RootElement.GetProperty("UnitKey").GetString());
+        Assert.DoesNotContain("token=", File.ReadAllText(metadata));
+    }
+
+    [Fact]
+    public async Task ThreeUnavailableSourcesStopAtTheFailedEpisodeAndRetainEarlierCompletedFiles()
+    {
+        using var fixture = new Fixture();
+        fixture.Catalog.Items = [Episode(1), Episode(2), Episode(3)];
+        fixture.Catalog.Candidates = request => Enumerable.Range(0, 4).Select(index => Source(request.Unit!) with
+        { ProviderId = "source-" + index, Location = new($"https://93.184.216.34/source-{index}/episode-{request.Unit!.EpisodeNumber}.mp4") }).ToArray();
+        fixture.Handler.Respond = (request, _) => request.RequestUri!.AbsolutePath.EndsWith("episode-2.mp4")
+            ? Task.FromException<HttpResponseMessage>(new EndOfStreamException("Remote resource is empty."))
+            : Task.FromResult(Handler.MediaResponse(request));
+        await fixture.ViewModel.OpenItemAsync(new() { Title = "Series", Identity = Identity });
+        await fixture.ViewModel.DownloadSeasonCommand.ExecuteAsync(null);
+        Assert.Single(fixture.Published());
+        Assert.Equal(4, fixture.Handler.Requests);
+        Assert.Equal(new int?[] { 1, 2, 2, 2 }, fixture.Catalog.Requests.Select(request => request.Unit!.EpisodeNumber));
+        Assert.Contains("Stopped at S01E02", fixture.ViewModel.DownloadStatusText);
+        Assert.Contains("1/3 completed", fixture.ViewModel.DownloadStatusText);
+        Assert.Empty(Directory.GetDirectories(fixture.Temporary));
+        Assert.Empty(Directory.GetDirectories(fixture.Permanent, ".partial-*", SearchOption.AllDirectories));
+    }
+
+    [Theory]
+    [InlineData("disk")]
+    [InlineData("access")]
+    [InlineData("service")]
+    public async Task LocalStorageOrServiceFailureDoesNotDownloadFromMoreProviders(string failure)
+    {
+        using var fixture = new Fixture((_, _) => Task.FromException<string>(failure switch
+        {
+            "access" => new UnauthorizedAccessException("Local file cannot be opened."),
+            "service" => new InvalidOperationException("Repair FFmpeg services."),
+            _ => new IOException("Not enough free space.")
+        }));
+        fixture.Catalog.Candidates = request => [Source(request.Unit!), Alternate(request.Unit!)];
+        await fixture.ViewModel.OpenItemAsync(new() { Title = "Series", Identity = Identity });
+        await fixture.ViewModel.DownloadSeasonCommand.ExecuteAsync(null);
+        Assert.Equal(1, fixture.Handler.Requests);
+        Assert.Single(fixture.Catalog.Requests);
+        Assert.Empty(fixture.Published());
+        Assert.Empty(Directory.GetDirectories(fixture.Temporary));
+    }
+
+    [Theory]
+    [InlineData("cancel")]
+    [InlineData("season")]
+    [InlineData("title")]
+    [InlineData("language")]
+    public async Task CancellationOrSelectionChangeDuringSourceFailureCannotStartAnAlternative(string change)
+    {
+        using var fixture = new Fixture();
+        fixture.Catalog.Candidates = request => [Source(request.Unit!), Alternate(request.Unit!)];
+        fixture.Handler.Respond = (_, _) =>
+        {
+            switch (change)
+            {
+                case "season": fixture.ViewModel.SelectedSeason = new(2); break;
+                case "title": fixture.ViewModel.SelectedItem = new(new() { Title = "Other", Identity = Identity with { ImdbId = "tt0944947" } }); break;
+                case "language": fixture.ViewModel.PreferredLanguage = "English"; break;
+                default: fixture.ViewModel.CancelDownloadCommand.Execute(null); break;
+            }
+            return Task.FromException<HttpResponseMessage>(new HttpRequestException("Source failed during cancellation."));
+        };
+        await fixture.ViewModel.OpenItemAsync(new() { Title = "Series", Identity = Identity });
+        await fixture.ViewModel.DownloadSeasonCommand.ExecuteAsync(null);
+        Assert.Single(fixture.Catalog.Requests);
+        Assert.Equal(1, fixture.Handler.Requests);
+        Assert.Empty(fixture.Published());
+        Assert.False(fixture.ViewModel.IsDownloading);
+        Assert.Empty(Directory.GetDirectories(fixture.Temporary));
+    }
+
+    private static AudiovisualSource Alternate(AudiovisualUnit unit) => Source(unit) with
+    { ProviderId = "alternate", Location = new($"https://93.184.216.34/alternate-episode-{unit.EpisodeNumber}.mp4") };
+
     private sealed class Catalog : IAudiovisualCatalogService, IAudiovisualEpisodeMetadataClient, IAudiovisualSourceUpdates
     {
         public AudiovisualMediaKind Kind => AudiovisualMediaKind.Television;
         public IReadOnlyList<AudiovisualEpisodeMetadata> Items { get; set; } = [Episode(1)];
         public bool Partial { get; set; }
         public Func<SourceSearchRequest, AudiovisualSource> Resolve { get; set; } = request => Source(request.Unit!);
+        public Func<SourceSearchRequest, IReadOnlyList<AudiovisualSource>>? Candidates { get; set; }
         public Func<SourceSearchRequest, Task<AudiovisualSource>>? Pending { get; set; }
         public List<SourceSearchRequest> Requests { get; } = [];
         public Task<IReadOnlyList<AudiovisualMediaItem>> SearchAsync(string query, CancellationToken token = default) => Task.FromResult<IReadOnlyList<AudiovisualMediaItem>>([]);
@@ -335,9 +476,10 @@ public sealed class SeasonLibraryDownloadTests
         {
             Requests.Add(request);
             // Deliberately ignore cancellation to test the consumer's late-result guard.
-            var source = Pending == null ? Resolve(request) : await Pending(request);
-            yield return new(request.OperationId, "fixture", AudiovisualSourceUpdateKind.SourceReady, source,
-                new(SourceVerificationStatus.Verified, "fixture"));
+            var sources = Candidates?.Invoke(request) ?? [Pending == null ? Resolve(request) : await Pending(request)];
+            foreach (var source in sources)
+                yield return new(request.OperationId, "fixture", AudiovisualSourceUpdateKind.SourceReady, source,
+                    new(SourceVerificationStatus.Verified, "fixture"));
         }
     }
 
@@ -372,11 +514,18 @@ public sealed class SeasonLibraryDownloadTests
     private sealed class Handler : HttpMessageHandler
     {
         public int Requests { get; private set; }
+        public List<Uri> Locations { get; } = [];
+        public Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>? Respond { get; set; }
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
         {
             Requests++;
+            Locations.Add(request.RequestUri!);
+            return Respond?.Invoke(request, token) ?? Task.FromResult(MediaResponse(request));
+        }
+        public static HttpResponseMessage MediaResponse(HttpRequestMessage request)
+        {
             var content = new ByteArrayContent([1, 2, 3]); content.Headers.ContentType = new("video/mp4");
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { RequestMessage = request, Content = content });
+            return new HttpResponseMessage(HttpStatusCode.OK) { RequestMessage = request, Content = content };
         }
     }
     private sealed class TestViewModel(IAudiovisualCatalogService catalog, AudiovisualLibraryService library,

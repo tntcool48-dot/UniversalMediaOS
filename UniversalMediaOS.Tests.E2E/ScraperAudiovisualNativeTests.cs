@@ -10,6 +10,53 @@ namespace UniversalMediaOS.Tests.E2E;
 public sealed class ScraperAudiovisualNativeTests
 {
     [Fact]
+    public async Task ExcludedFailedMediaDoesNotCancelAnotherIndependentlyVerifiedProvider()
+    {
+        using var fixture = new Fixture(async (url, token) =>
+        {
+            if (url.EndsWith("slow")) await Task.Delay(30, token);
+            return Native() with { Url = url.EndsWith("slow") ? "https://cdn.example/replacement.mpd" : "https://cdn.example/video.m3u8?token=rotated",
+                Evidence = new() { Origin = SourceEvidenceOrigin.ProviderItem, Identity = Film, Unit = AudiovisualUnit.Feature } };
+        });
+        var sources = new List<AudiovisualSource>();
+        await foreach (var source in fixture.Provider.FindSourceCandidatesAsync(new()
+        { Identity = Film, RequireVerifiedSource = true, ExcludedMediaPaths = ["https://cdn.example/video.m3u8"] }))
+            sources.Add(source);
+        var selected = Assert.Single(sources);
+        Assert.Equal("scraper-slow", selected.ProviderId);
+        Assert.Equal("/replacement.mpd", selected.Location.AbsolutePath);
+    }
+
+    [Fact]
+    public async Task StrictDownloadRequestKeepsLookingWhenTheFirstNativeHasUnknownAudio()
+    {
+        using var fixture = new Fixture(async (url, token) =>
+        {
+            if (url.EndsWith("slow")) await Task.Delay(30, token);
+            return Native() with { Evidence = new() { Origin = SourceEvidenceOrigin.ProviderItem, Identity = Film,
+                Unit = AudiovisualUnit.Feature, Audio = url.EndsWith("slow")
+                    ? new() { Origin = SourceEvidenceOrigin.ObservedStream, Languages = ["en"] } : null } };
+        });
+        var request = new SourceSearchRequest { Identity = Film, AudioLanguage = "en", RequireVerifiedSource = true };
+        var sources = new List<AudiovisualSource>();
+        await foreach (var source in fixture.Provider.FindSourceCandidatesAsync(request)) sources.Add(source);
+        var selected = Assert.Single(sources);
+        Assert.Equal("scraper-slow", selected.ProviderId);
+        Assert.Equal(SourceVerificationStatus.Verified, ExactAudiovisualMatcher.VerifyEvidence(request, selected.Evidence).Status);
+    }
+
+    [Fact]
+    public async Task AllExcludedMediaFinishWithoutPublishingOrRetryingTheSameFile()
+    {
+        using var fixture = new Fixture((_, _) => Task.FromResult<AudiovisualScraperStreamResult?>(Native() with
+        { Evidence = new() { Origin = SourceEvidenceOrigin.ProviderItem, Identity = Film, Unit = AudiovisualUnit.Feature } }));
+        int sources = 0;
+        await foreach (var _ in fixture.Provider.FindSourceCandidatesAsync(new()
+        { Identity = Film, RequireVerifiedSource = true, ExcludedMediaPaths = ["https://cdn.example/master.m3u8"] })) sources++;
+        Assert.Equal(0, sources);
+    }
+
+    [Fact]
     public async Task IndependentlyMatchedNativeCancelsSlowAlternativeAndDoesNotInventEnglishAudio()
     {
         var identity = Film;

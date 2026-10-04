@@ -35,6 +35,10 @@ public sealed record SourceSearchRequest
     public string? ProviderId { get; init; }
     public Guid OperationId { get; init; } = Guid.NewGuid();
     public bool RequireArabicCartoonVerification { get; init; }
+    public bool RequireVerifiedSource { get; init; }
+    // Failed media origins/paths for this operation; rotating query credentials
+    // must not turn the same failed resource into another download attempt.
+    public IReadOnlyList<string> ExcludedMediaPaths { get; init; } = Array.Empty<string>();
 }
 
 public enum AudiovisualSourceUpdateKind { CandidateDiscovered, VerificationChanged, SourceReady, ProviderFailed, Completed }

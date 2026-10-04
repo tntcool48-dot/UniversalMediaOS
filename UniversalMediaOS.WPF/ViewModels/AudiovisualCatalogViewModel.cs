@@ -1202,20 +1202,36 @@ public abstract partial class AudiovisualCatalogViewModel : ObservableObject, ID
                     continue;
                 }
                 DownloadStatusText = $"Finding a verified source for S{season:00}E{unit.EpisodeNumber:00} · {completed}/{units.Length} saved";
-                var request = new SourceSearchRequest { Identity = item.Identity, Unit = unit, AudioLanguage = language };
-                var source = await ResolveSeasonDownloadSourceAsync(request, operation.Token);
-                if (!Current()) return;
-                var context = new AudiovisualPlaybackContext(item.WorkKey, item.Identity, unit, item.Title, item.PosterUrl, source);
-                bool reporting = true;
-                var progress = new Progress<AuthorizedMediaDownloadProgress>(value =>
+                var request = new SourceSearchRequest { Identity = item.Identity, Unit = unit, AudioLanguage = language,
+                    RequireVerifiedSource = true };
+                var attemptedSources = new HashSet<string>(StringComparer.Ordinal);
+                LibraryMediaDownloadResult? result = null;
+                for (int attempt = 0; attempt < 3 && result == null; attempt++)
                 {
-                    if (!reporting || !Current()) return;
-                    DownloadPercentage = 100d * (completed + (value.Percentage ?? 0) / 100) / units.Length;
-                    DownloadStatusText = $"Saving S{season:00}E{unit.EpisodeNumber:00} · {value.DisplayText} · {completed}/{units.Length} saved";
-                });
-                LibraryMediaDownloadResult result;
-                try { result = await _downloadService.DownloadLibraryAsync(source, context, language, progress, operation.Token); }
-                finally { reporting = false; }
+                    operation.Token.ThrowIfCancellationRequested();
+                    if (!Current()) return;
+                    var source = await ResolveSeasonDownloadSourceAsync(request, attemptedSources, operation.Token);
+                    if (!Current()) return;
+                    attemptedSources.Add(SeasonDownloadSourceKey(source));
+                    var context = new AudiovisualPlaybackContext(item.WorkKey, item.Identity, unit, item.Title, item.PosterUrl, source);
+                    bool reporting = true;
+                    var progress = new Progress<AuthorizedMediaDownloadProgress>(value =>
+                    {
+                        if (!reporting || !Current()) return;
+                        DownloadPercentage = 100d * (completed + (value.Percentage ?? 0) / 100) / units.Length;
+                        DownloadStatusText = $"Saving S{season:00}E{unit.EpisodeNumber:00} · {value.DisplayText} · {completed}/{units.Length} saved";
+                    });
+                    try { result = await _downloadService.DownloadLibraryAsync(source, context, language, progress, operation.Token); }
+                    catch (Exception ex) when (attempt < 2 && Current() &&
+                        ex is HttpRequestException or EndOfStreamException or InvalidDataException or TimeoutException)
+                    {
+                        AppLogger.Log($"TV season source failed at S{season:00}E{unit.EpisodeNumber:00}; trying another verified source ({ex.GetType().Name}).", "WARNING");
+                        DownloadPercentage = completed * 100d / units.Length;
+                        DownloadStatusText = $"Source unavailable for S{season:00}E{unit.EpisodeNumber:00}; checking another verified source · {completed}/{units.Length} saved";
+                    }
+                    finally { reporting = false; }
+                }
+                if (result == null) throw new InvalidOperationException("No usable verified source remained for this episode.");
                 completed++;
                 lastPath = result.FilePath;
                 if (!Current()) return;
@@ -1246,11 +1262,18 @@ public abstract partial class AudiovisualCatalogViewModel : ObservableObject, ID
         }
     }
 
-    private async Task<AudiovisualSource> ResolveSeasonDownloadSourceAsync(SourceSearchRequest request, CancellationToken token)
+    private static string SeasonDownloadSourceKey(AudiovisualSource source) =>
+        source.Location.GetLeftPart(UriPartial.Path);
+
+    private async Task<AudiovisualSource> ResolveSeasonDownloadSourceAsync(SourceSearchRequest request,
+        ISet<string> attemptedSources, CancellationToken token)
     {
         using var lookup = CancellationTokenSource.CreateLinkedTokenSource(token);
         lookup.CancelAfter(TimeSpan.FromMinutes(2));
+        request = request with { ExcludedMediaPaths = attemptedSources.ToArray() };
         bool Usable(AudiovisualSource source) => source.AccessMode == AudiovisualSourceAccessMode.DirectMedia &&
+            source.Location.IsAbsoluteUri && source.Location.Scheme is "http" or "https" && source.Location.UserInfo.Length == 0 &&
+            !attemptedSources.Contains(SeasonDownloadSourceKey(source)) &&
             ExactAudiovisualMatcher.VerifyEvidence(request, source.Evidence).Status == SourceVerificationStatus.Verified;
         try
         {
@@ -1269,7 +1292,7 @@ public abstract partial class AudiovisualCatalogViewModel : ObservableObject, ID
                 lookup.Token.ThrowIfCancellationRequested();
                 if (sources.FirstOrDefault(Usable) is { } source) return source;
             }
-            throw new InvalidOperationException("No independently verified native source with the requested audio was found. Retry this season or choose Stream for the episode.");
+            throw new InvalidOperationException("No remaining independently verified native source with the requested audio was found. Retry this season or choose Stream for the episode.");
         }
         catch (OperationCanceledException) when (!token.IsCancellationRequested)
         { throw new TimeoutException("Episode source search exceeded two minutes."); }

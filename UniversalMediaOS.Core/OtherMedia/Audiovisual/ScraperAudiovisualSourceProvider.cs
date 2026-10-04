@@ -154,6 +154,11 @@ namespace UniversalMediaOS.Core.OtherMedia
                         Unit = unit ?? AudiovisualUnit.Feature,
                         Lane = arabicCartoonLane ? "arabic-cartoon" : string.Empty
                     };
+                    if (request.ExcludedMediaPaths.Contains(source.Location.GetLeftPart(UriPartial.Path), StringComparer.Ordinal))
+                        continue;
+                    if (request.RequireVerifiedSource &&
+                        ExactAudiovisualMatcher.VerifyEvidence(request, evidence).Status != SourceVerificationStatus.Verified)
+                        continue;
                     bool confirmedNative = !stream.RequiresWebView && stream.MediaValidated &&
                         ExactAudiovisualMatcher.VerifyEvidence(identityRequest, evidence).Status == SourceVerificationStatus.Verified;
                     // Playable bytes alone do not establish which film/episode they contain.
