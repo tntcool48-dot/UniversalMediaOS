@@ -28,11 +28,18 @@ public sealed class InternetArchiveBookService
         BookRecord book,
         CancellationToken cancellationToken = default)
     {
+        return (await FindAssetsWithOutcomeAsync(book, cancellationToken).ConfigureAwait(false)).Assets;
+    }
+
+    public async Task<BookAssetSearchResult> FindAssetsWithOutcomeAsync(
+        BookRecord book,
+        CancellationToken cancellationToken = default)
+    {
         ArgumentNullException.ThrowIfNull(book);
         string identityQuery = BuildIdentityQuery(book);
         if (string.IsNullOrWhiteSpace(identityQuery))
         {
-            return Array.Empty<BookAsset>();
+            return new([]);
         }
 
         string query =
@@ -49,52 +56,62 @@ public sealed class InternetArchiveBookService
 
         try
         {
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            deadline.CancelAfter(_httpClient.Timeout);
+            CancellationToken requestToken = deadline.Token;
             using HttpRequestMessage request = CreateRequest(requestUri);
             using HttpResponseMessage response = await _httpClient
-                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, requestToken)
                 .ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
-                return Array.Empty<BookAsset>();
+                return new([], BookSearchOutcome.Unavailable);
             }
 
             await using Stream stream = await response.Content
-                .ReadAsStreamAsync(cancellationToken)
+                .ReadAsStreamAsync(requestToken)
                 .ConfigureAwait(false);
             using JsonDocument document = await JsonDocument
-                .ParseAsync(stream, cancellationToken: cancellationToken)
+                .ParseAsync(stream, cancellationToken: requestToken)
                 .ConfigureAwait(false);
             IReadOnlyList<string> identifiers = ParseCandidateIdentifiers(document.RootElement);
             if (identifiers.Count == 0)
             {
-                return Array.Empty<BookAsset>();
+                return new([]);
             }
 
-            Task<IReadOnlyList<BookAsset>>[] tasks = identifiers
+            Task<BookAssetSearchResult>[] tasks = identifiers
                 .Select(identifier => InspectItemAsync(
                     identifier,
                     book.Id,
                     cancellationToken))
                 .ToArray();
-            IReadOnlyList<BookAsset>[] results = await Task.WhenAll(tasks).ConfigureAwait(false);
-            return results
-                .SelectMany(result => result)
+            BookAssetSearchResult[] results = await Task.WhenAll(tasks).ConfigureAwait(false);
+            return new(results
+                .SelectMany(result => result.Assets)
                 .DistinctBy(asset => asset.Id, StringComparer.OrdinalIgnoreCase)
                 .OrderBy(asset => asset.Format == BookFileFormat.Epub ? 0 : 1)
                 .ThenBy(asset => asset.SizeBytes ?? long.MaxValue)
-                .ToArray();
+                .ToArray(), results.Any(result => result.Outcome == BookSearchOutcome.Unavailable)
+                    ? BookSearchOutcome.Unavailable
+                    : results.Any(result => result.Outcome == BookSearchOutcome.TimedOut)
+                        ? BookSearchOutcome.TimedOut : BookSearchOutcome.Completed);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
         }
-        catch (HttpRequestException)
+        catch (Exception ex) when (ex is HttpRequestException or IOException)
         {
-            return Array.Empty<BookAsset>();
+            return new([], BookSearchOutcome.Unavailable);
         }
         catch (JsonException)
         {
-            return Array.Empty<BookAsset>();
+            return new([], BookSearchOutcome.Unavailable);
+        }
+        catch (OperationCanceledException)
+        {
+            return new([], BookSearchOutcome.TimedOut);
         }
     }
 
@@ -125,40 +142,46 @@ public sealed class InternetArchiveBookService
             collection.Equals("publicdomain", StringComparison.OrdinalIgnoreCase)) == true;
     }
 
-    private async Task<IReadOnlyList<BookAsset>> InspectItemAsync(
+    private async Task<BookAssetSearchResult> InspectItemAsync(
         string identifier,
         string bookId,
         CancellationToken cancellationToken)
     {
         if (!IsSafeIdentifier(identifier))
         {
-            return Array.Empty<BookAsset>();
+            return new([]);
         }
 
         Uri uri = new(_metadataBaseUri, Uri.EscapeDataString(identifier));
         try
         {
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            deadline.CancelAfter(_httpClient.Timeout);
+            CancellationToken requestToken = deadline.Token;
             using HttpRequestMessage request = CreateRequest(uri);
             using HttpResponseMessage response = await _httpClient
-                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, requestToken)
                 .ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
-                return Array.Empty<BookAsset>();
+                return new([], BookSearchOutcome.Unavailable);
             }
 
             await using Stream stream = await response.Content
-                .ReadAsStreamAsync(cancellationToken)
+                .ReadAsStreamAsync(requestToken)
                 .ConfigureAwait(false);
             using JsonDocument document = await JsonDocument
-                .ParseAsync(stream, cancellationToken: cancellationToken)
+                .ParseAsync(stream, cancellationToken: requestToken)
                 .ConfigureAwait(false);
             JsonElement root = document.RootElement;
             if (!root.TryGetProperty("metadata", out JsonElement metadata) ||
-                metadata.ValueKind != JsonValueKind.Object ||
-                IsRestricted(metadata))
+                metadata.ValueKind != JsonValueKind.Object)
             {
-                return Array.Empty<BookAsset>();
+                return new([], BookSearchOutcome.Unavailable);
+            }
+            if (IsRestricted(metadata))
+            {
+                return new([]);
             }
 
             string licenseUrl = GetFlexibleString(metadata, "licenseurl");
@@ -168,7 +191,7 @@ public sealed class InternetArchiveBookService
             IReadOnlyList<string> collections = GetFlexibleStringArray(metadata, "collection");
             if (!HasExplicitOpenRights(licenseUrl, rights, collections))
             {
-                return Array.Empty<BookAsset>();
+                return new([]);
             }
 
             BookAccessKind access = IsPublicDomain(licenseUrl, rights, collections)
@@ -183,7 +206,7 @@ public sealed class InternetArchiveBookService
             if (!root.TryGetProperty("files", out JsonElement files) ||
                 files.ValueKind != JsonValueKind.Array)
             {
-                return Array.Empty<BookAsset>();
+                return new([], BookSearchOutcome.Unavailable);
             }
 
             var assets = new List<BookAsset>();
@@ -224,19 +247,23 @@ public sealed class InternetArchiveBookService
                 });
             }
 
-            return assets;
+            return new(assets);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
         }
-        catch (HttpRequestException)
+        catch (Exception ex) when (ex is HttpRequestException or IOException)
         {
-            return Array.Empty<BookAsset>();
+            return new([], BookSearchOutcome.Unavailable);
         }
         catch (JsonException)
         {
-            return Array.Empty<BookAsset>();
+            return new([], BookSearchOutcome.Unavailable);
+        }
+        catch (OperationCanceledException)
+        {
+            return new([], BookSearchOutcome.TimedOut);
         }
     }
 
@@ -276,7 +303,7 @@ public sealed class InternetArchiveBookService
             !response.TryGetProperty("docs", out JsonElement docs) ||
             docs.ValueKind != JsonValueKind.Array)
         {
-            return Array.Empty<string>();
+            throw new JsonException("Archive search response did not contain its results array.");
         }
 
         return docs.EnumerateArray()

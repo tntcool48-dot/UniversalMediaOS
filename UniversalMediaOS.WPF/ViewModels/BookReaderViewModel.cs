@@ -94,11 +94,11 @@ public sealed partial class BookReaderViewModel : ObservableObject, IDisposable
         }
 
         _loadCts?.Cancel();
-        _loadCts?.Dispose();
-        _loadCts = CancellationTokenSource.CreateLinkedTokenSource(
+        using var operation = CancellationTokenSource.CreateLinkedTokenSource(
             _lifecycleCts.Token,
             cancellationToken);
-        CancellationToken token = _loadCts.Token;
+        _loadCts = operation;
+        CancellationToken token = operation.Token;
         Book = book;
         Asset = asset;
         Document = null;
@@ -113,8 +113,9 @@ public sealed partial class BookReaderViewModel : ObservableObject, IDisposable
         {
             BookReaderDocument document = await _readerService.PrepareAsync(asset, token);
             BookReadingProgress? progress = await _progressStore
-                .GetAsync(book.Id, asset.Id, token);
+                .GetAsync(book.Id, asset.Id, token).WaitAsync(token);
             token.ThrowIfCancellationRequested();
+            if (_isDisposed || !ReferenceEquals(_loadCts, operation)) return;
 
             Document = document;
             foreach (BookReaderChapter chapter in document.Chapters)
@@ -145,19 +146,28 @@ public sealed partial class BookReaderViewModel : ObservableObject, IDisposable
         }
         catch (OperationCanceledException)
         {
+            if (!_isDisposed && ReferenceEquals(_loadCts, operation))
+                StatusMessage = "Reader preparation canceled.";
         }
         catch (Exception ex) when (
             ex is IOException or InvalidDataException or
             HttpRequestException or UnauthorizedAccessException or
             NotSupportedException or InvalidOperationException)
         {
-            ErrorMessage = ex.Message;
-            StatusMessage = "This edition could not be opened.";
+            if (!_isDisposed && ReferenceEquals(_loadCts, operation))
+            {
+                ErrorMessage = ex.Message;
+                StatusMessage = "This edition could not be opened.";
+            }
             AppLogger.Log($"Book reader preparation failed: {ex.Message}", "ERROR");
         }
         finally
         {
-            IsLoading = false;
+            if (ReferenceEquals(_loadCts, operation))
+            {
+                _loadCts = null;
+                IsLoading = false;
+            }
         }
     }
 
@@ -262,7 +272,8 @@ public sealed partial class BookReaderViewModel : ObservableObject, IDisposable
         CurrentPage = CurrentChapterIndex + 1;
         if (updateProgress)
         {
-            ProgressPercent = ((CurrentChapterIndex + 1d) / Chapters.Count) * 100d;
+            // Navigation opens the start of a chapter; it does not finish it.
+            ProgressPercent = ((double)CurrentChapterIndex / Chapters.Count) * 100d;
         }
 
         NotifyReaderStateChanged();
@@ -396,7 +407,6 @@ public sealed partial class BookReaderViewModel : ObservableObject, IDisposable
         _isDisposed = true;
         _lifecycleCts.Cancel();
         _loadCts?.Cancel();
-        _loadCts?.Dispose();
         _lifecycleCts.Dispose();
     }
 }

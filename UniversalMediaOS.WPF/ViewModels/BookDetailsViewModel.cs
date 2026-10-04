@@ -46,6 +46,7 @@ public sealed partial class BookDetailsViewModel : ObservableObject, IDisposable
     private BookReadingProgress? _readingProgress;
 
     [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(CancelLookupCommand))]
     private bool _isLoading;
 
     [ObservableProperty]
@@ -85,7 +86,9 @@ public sealed partial class BookDetailsViewModel : ObservableObject, IDisposable
         try
         {
             IReadOnlyList<BookReadingProgress> savedProgress = await _progressStore
-                .GetAllAsync(operation.Token);
+                .GetAllAsync(operation.Token).WaitAsync(operation.Token);
+            operation.Token.ThrowIfCancellationRequested();
+            if (!IsCurrent(generation)) return;
             ReadingProgress = savedProgress
                 .Where(progress => progress.BookId.Equals(
                     book.Id,
@@ -94,7 +97,7 @@ public sealed partial class BookDetailsViewModel : ObservableObject, IDisposable
                 .FirstOrDefault();
 
             BookRecord enrichedBook = await _catalogService
-                .GetDetailsAsync(book, operation.Token) ?? book;
+                .GetDetailsAsync(book, operation.Token).WaitAsync(operation.Token) ?? book;
             operation.Token.ThrowIfCancellationRequested();
             if (!IsCurrent(generation))
             {
@@ -106,34 +109,44 @@ public sealed partial class BookDetailsViewModel : ObservableObject, IDisposable
 
             if (book.Source != BookCatalogSource.Local)
             {
-                Task<IReadOnlyList<BookAsset>> archiveTask = FindAssetsSafelyAsync(
-                    () => _archiveService.FindAssetsAsync(enrichedBook, operation.Token),
-                    "Internet Archive",
-                    operation.Token);
-                Task<IReadOnlyList<BookAsset>> annasTask = FindAssetsSafelyAsync(
-                    () => _annasService.FindAssetsAsync(enrichedBook, operation.Token),
-                    "Anna's Archive",
-                    operation.Token);
-
-                await Task.WhenAll(archiveTask, annasTask);
-
-                operation.Token.ThrowIfCancellationRequested();
-                if (!IsCurrent(generation))
+                var lookups = new[]
                 {
-                    return;
+                    (Name: "Internet Archive", Task: FindAssetsSafelyAsync(
+                        () => _archiveService.FindAssetsWithOutcomeAsync(enrichedBook, operation.Token), operation.Token)),
+                    (Name: "Anna's Archive", Task: FindAssetsSafelyAsync(
+                        () => _annasService.FindAssetsWithOutcomeAsync(enrichedBook, operation.Token), operation.Token))
+                };
+                var pending = lookups.Select(lookup => lookup.Task).ToList();
+                var outcomes = new List<(string Name, BookSearchOutcome Outcome)>();
+                while (pending.Count > 0)
+                {
+                    Task<BookAssetSearchResult> completed = await Task.WhenAny(pending).WaitAsync(operation.Token);
+                    BookAssetSearchResult result = await completed;
+                    operation.Token.ThrowIfCancellationRequested();
+                    if (!IsCurrent(generation)) return;
+                    pending.Remove(completed);
+                    outcomes.Add((lookups.First(lookup => ReferenceEquals(lookup.Task, completed)).Name, result.Outcome));
+                    ReplaceAssets(Assets.Concat(result.Assets).ToArray());
+                    ErrorMessage = string.Join("; ", outcomes.Where(item => item.Outcome != BookSearchOutcome.Completed)
+                        .Select(item => $"{item.Name} {(item.Outcome == BookSearchOutcome.TimedOut ? "timed out" : "unavailable")}"));
+                    bool incomplete = outcomes.Any(item => item.Outcome != BookSearchOutcome.Completed);
+                    AvailabilityMessage = pending.Count > 0
+                        ? $"{Assets.Count} edition link{(Assets.Count == 1 ? "" : "s")} available; checking another catalog\u2026"
+                        : incomplete ? Assets.Count == 0
+                            ? "Edition lookup incomplete. No verified download is available yet."
+                            : $"{Assets.Count} edition link{(Assets.Count == 1 ? "" : "s")} available. Lookup incomplete."
+                        : EditionSummary();
                 }
-
-                ReplaceAssets(
-                    book.Assets
-                        .Concat(enrichedBook.Assets)
-                        .Concat(archiveTask.Result)
-                        .Concat(annasTask.Result));
             }
+            else AvailabilityMessage = EditionSummary();
 
             if (ReadingProgress == null && GetPreferredAsset() is { } preferred)
             {
-                ReadingProgress = await _progressStore
-                    .GetAsync(book.Id, preferred.Id, operation.Token);
+                BookReadingProgress? preferredProgress = await _progressStore
+                    .GetAsync(book.Id, preferred.Id, operation.Token).WaitAsync(operation.Token);
+                operation.Token.ThrowIfCancellationRequested();
+                if (!IsCurrent(generation)) return;
+                ReadingProgress = preferredProgress;
             }
 
             if (!IsCurrent(generation))
@@ -141,20 +154,16 @@ public sealed partial class BookDetailsViewModel : ObservableObject, IDisposable
                 return;
             }
 
-            AvailabilityMessage = Assets.Count switch
-            {
-                0 => "No EPUB or PDF edition was found. Catalog metadata remains available.",
-                1 => "1 readable edition available.",
-                _ => $"{Assets.Count} readable editions available."
-            };
             OnPropertyChanged(nameof(ProgressText));
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (operation.IsCancellationRequested)
         {
+            if (IsCurrent(generation)) AvailabilityMessage = "Edition lookup canceled. Existing edition links retained.";
         }
         catch (Exception ex) when (
-            ex is HttpRequestException or InvalidOperationException)
+            ex is HttpRequestException or InvalidOperationException or IOException or System.Text.Json.JsonException or TimeoutException or OperationCanceledException)
         {
+            if (!IsCurrent(generation)) return;
             ErrorMessage = "Edition availability could not be checked.";
             AvailabilityMessage = Assets.Count == 0
                 ? "Catalog metadata is still available."
@@ -171,6 +180,13 @@ public sealed partial class BookDetailsViewModel : ObservableObject, IDisposable
             ClearLoad(operation);
         }
     }
+
+    private string EditionSummary() => Assets.Count == 0
+        ? "No verified EPUB or PDF edition is available for this record. Catalog metadata remains available."
+        : $"{Assets.Count} edition link{(Assets.Count == 1 ? "" : "s")} available. Files are checked when opened.";
+
+    [RelayCommand(CanExecute = nameof(IsLoading))]
+    private void CancelLookup() => _loadCts?.Cancel();
 
     private bool CanReadPreferred => HasAssets;
 
@@ -214,8 +230,9 @@ public sealed partial class BookDetailsViewModel : ObservableObject, IDisposable
         }
 
         return Assets
-            .OrderBy(asset => asset.Format == BookFileFormat.Epub ? 0 : 1)
-            .ThenBy(asset => asset.Access == BookAccessKind.Local ? 0 : 1)
+            .OrderBy(asset => asset.IsLocal ? 0 : 1)
+            .ThenBy(asset => asset.SourceLabel.Equals("Anna's Archive", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .ThenBy(asset => asset.Format == BookFileFormat.Epub ? 0 : 1)
             .FirstOrDefault();
     }
 
@@ -243,9 +260,8 @@ public sealed partial class BookDetailsViewModel : ObservableObject, IDisposable
         return asset.Access == BookAccessKind.Local || asset.IsDownloadAllowed;
     }
 
-    private static async Task<IReadOnlyList<BookAsset>> FindAssetsSafelyAsync(
-        Func<Task<IReadOnlyList<BookAsset>>> loader,
-        string providerName,
+    private static async Task<BookAssetSearchResult> FindAssetsSafelyAsync(
+        Func<Task<BookAssetSearchResult>> loader,
         CancellationToken cancellationToken)
     {
         try
@@ -257,10 +273,13 @@ public sealed partial class BookDetailsViewModel : ObservableObject, IDisposable
             throw;
         }
         catch (Exception ex) when (
-            ex is HttpRequestException or InvalidOperationException or IOException or TimeoutException)
+            ex is TimeoutException or OperationCanceledException)
         {
-            AppLogger.Log($"{providerName} book edition lookup failed: {ex.Message}", "WARNING");
-            return Array.Empty<BookAsset>();
+            return new([], BookSearchOutcome.TimedOut);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or IOException)
+        {
+            return new([], BookSearchOutcome.Unavailable);
         }
     }
 
@@ -269,7 +288,6 @@ public sealed partial class BookDetailsViewModel : ObservableObject, IDisposable
         out int generation)
     {
         _loadCts?.Cancel();
-        _loadCts?.Dispose();
         _loadCts = CancellationTokenSource.CreateLinkedTokenSource(
             _lifecycleCts.Token,
             cancellationToken);
@@ -308,7 +326,7 @@ public sealed partial class BookDetailsViewModel : ObservableObject, IDisposable
         _isDisposed = true;
         _lifecycleCts.Cancel();
         _loadCts?.Cancel();
-        _loadCts?.Dispose();
+        _loadCts = null;
         _lifecycleCts.Dispose();
     }
 }

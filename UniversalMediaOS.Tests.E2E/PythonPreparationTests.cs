@@ -126,7 +126,8 @@ public sealed class PythonPreparationTests
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         Task task = new PreparationProcessRunner().RunAsync(shell,
             ["-NoProfile", "-NonInteractive", "-Command",
-             "[IO.File]::WriteAllText('" + pidFile.Replace("'", "''") + "', [string]$PID); Start-Sleep -Seconds 30"], cancellation.Token);
+             "[IO.File]::WriteAllText('" + pidFile.Replace("'", "''") + ".part', [string]$PID); " +
+             "[IO.File]::Move('" + pidFile.Replace("'", "''") + ".part', '" + pidFile.Replace("'", "''") + "'); Start-Sleep -Seconds 30"], cancellation.Token);
         try
         {
             while (!File.Exists(pidFile)) await Task.Delay(20, cancellation.Token);

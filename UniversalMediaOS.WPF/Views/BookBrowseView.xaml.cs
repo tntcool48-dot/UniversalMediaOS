@@ -39,7 +39,7 @@ public partial class BookBrowseView : UserControl
             CheckFileExists = true,
             Multiselect = false
         };
-        if (dialog.ShowDialog() == true)
+        if (dialog.ShowDialog(System.Windows.Window.GetWindow(this)) == true)
         {
             await viewModel.ImportLocalFileAsync(dialog.FileName);
         }

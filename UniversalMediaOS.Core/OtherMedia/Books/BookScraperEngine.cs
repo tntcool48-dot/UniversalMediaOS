@@ -86,7 +86,14 @@ namespace UniversalMediaOS.Core.OtherMedia.Books
             try
             {
                 string stdout = await RunScraperAsync(token, 25000, "resolve", md5, mirrorUrl);
-                if (string.IsNullOrWhiteSpace(stdout)) return Array.Empty<BookScraperResolveResult>();
+                if (string.IsNullOrWhiteSpace(stdout)) throw new HttpRequestException("Anna's Archive returned no resolution response.");
+                using JsonDocument document = JsonDocument.Parse(stdout);
+                if (document.RootElement.ValueKind == JsonValueKind.Object)
+                {
+                    if (document.RootElement.TryGetProperty("status", out JsonElement status) &&
+                        status.GetString() == "timed_out") throw new TimeoutException("Anna's Archive resolution timed out.");
+                    throw new HttpRequestException("Anna's Archive resolution was unavailable.");
+                }
 
                 var results = JsonSerializer.Deserialize<BookScraperResolveResult[]>(stdout);
                 return results ?? Array.Empty<BookScraperResolveResult>();
@@ -95,10 +102,11 @@ namespace UniversalMediaOS.Core.OtherMedia.Books
             {
                 throw;
             }
+            catch (TimeoutException) { throw; }
             catch (Exception ex)
             {
                 AppLogger.Log($"[BookScraperEngine] Resolve failed: {ex.Message}", "WARNING");
-                return Array.Empty<BookScraperResolveResult>();
+                throw new HttpRequestException("Anna's Archive resolution was unavailable.", ex);
             }
         }
 

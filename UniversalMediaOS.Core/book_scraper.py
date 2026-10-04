@@ -267,8 +267,12 @@ def mirror_roots(mirror_url):
     parsed = urllib.parse.urlparse(mirror_url)
     roots = [mirror_url.rstrip("/")]
     host = (parsed.hostname or "").lower()
-    if host.startswith("annas-archive."):
-        for suffix in ("cc", "li", "se", "org"):
+    # Current first-party FAQ lists these alternatives. Retired domains must not
+    # silently return a different catalog or route users to book-request channels.
+    if host in {f"annas-archive.{suffix}" for suffix in ("gl", "pk", "gd", "cc", "li", "se", "org", "gs")}:
+        if host not in ("annas-archive.gl", "annas-archive.pk", "annas-archive.gd"):
+            roots = []
+        for suffix in ("gl", "pk", "gd"):
             candidate_host = f"annas-archive.{suffix}"
             candidate = urllib.parse.urlunparse((
                 parsed.scheme or "https",
@@ -293,7 +297,7 @@ def search_urls(query, mirror_url):
     ]
 
 
-def do_search(query, mirror_url="https://annas-archive.org"):
+def do_search(query, mirror_url="https://annas-archive.gl"):
     deadline = time.monotonic() + 20
     saw_empty_results = False
     saw_timeout = False
@@ -455,15 +459,19 @@ def crawl_downloads(start_urls, deadline):
     return unique
 
 
-def do_resolve(identifier, mirror_url="https://annas-archive.org"):
+def do_resolve(identifier, mirror_url="https://annas-archive.gl"):
     deadline = time.monotonic() + 20
     candidates = []
+    saw_timeout = False
     for root in mirror_roots(mirror_url):
         for detail_url in detail_urls(identifier, root):
             if time.monotonic() >= deadline:
-                return crawl_downloads(candidates, deadline)
+                raise TimeoutError("book resolution deadline exceeded")
             try:
                 response = fetch(detail_url, deadline)
+            except TimeoutError:
+                saw_timeout = True
+                continue
             except Exception:
                 continue
             if response.status >= 400:
@@ -479,7 +487,12 @@ def do_resolve(identifier, mirror_url="https://annas-archive.org"):
                 min(deadline, time.monotonic() + 5))
             if resolved:
                 return resolved
-    return crawl_downloads(candidates, deadline)
+    resolved = crawl_downloads(candidates, deadline)
+    if resolved:
+        return resolved
+    if saw_timeout or time.monotonic() >= deadline:
+        raise TimeoutError("book resolution deadline exceeded")
+    raise RuntimeError("book resolution returned no usable download")
 
 
 def main(argv):
@@ -488,7 +501,7 @@ def main(argv):
         return 1
     mode = argv[1].lower()
     argument = argv[2]
-    mirror = argv[3] if len(argv) > 3 else "https://annas-archive.org"
+    mirror = argv[3] if len(argv) > 3 else "https://annas-archive.gl"
     if mode == "search":
         try:
             output = do_search(argument, mirror)
@@ -497,7 +510,12 @@ def main(argv):
         except Exception:
             output = {"status": "unavailable", "error": "Book search unavailable"}
     elif mode == "resolve":
-        output = do_resolve(argument, mirror)
+        try:
+            output = do_resolve(argument, mirror)
+        except TimeoutError:
+            output = {"status": "timed_out", "error": "Book resolution timed out"}
+        except Exception:
+            output = {"status": "unavailable", "error": "Book resolution unavailable"}
     else:
         output = {"error": f"unknown mode: {mode}"}
     print(json.dumps(output, ensure_ascii=True))

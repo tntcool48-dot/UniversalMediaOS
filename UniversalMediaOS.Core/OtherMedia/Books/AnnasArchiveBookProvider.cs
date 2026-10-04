@@ -27,7 +27,12 @@ namespace UniversalMediaOS.Core.OtherMedia.Books
         private string GetMirrorUrl()
         {
             string url = _config.GetSetting("AnnasArchiveUrl");
-            return string.IsNullOrWhiteSpace(url) ? "https://annas-archive.org" : url.Trim();
+            if (string.IsNullOrWhiteSpace(url)) return "https://annas-archive.gl";
+            if (Uri.TryCreate(url.Trim(), UriKind.Absolute, out Uri? configured) &&
+                new[] { "org", "cc", "li", "se", "gs" }.Any(suffix =>
+                    configured.Host.Equals("annas-archive." + suffix, StringComparison.OrdinalIgnoreCase)))
+                return "https://annas-archive.gl";
+            return url.Trim();
         }
 
         public async Task<BookSearchPage> SearchAsync(
@@ -174,6 +179,17 @@ namespace UniversalMediaOS.Core.OtherMedia.Books
             }
 
             return assets;
+        }
+
+        public async Task<BookAssetSearchResult> FindAssetsWithOutcomeAsync(
+            BookRecord book, CancellationToken cancellationToken = default)
+        {
+            try { return new(await FindAssetsAsync(book, cancellationToken)); }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (Exception ex) when (ex is OperationCanceledException or TimeoutException)
+            { return new([], BookSearchOutcome.TimedOut); }
+            catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException)
+            { return new([], BookSearchOutcome.Unavailable); }
         }
 
         private static IReadOnlyList<BookIdentifier> BuildIdentifiers(

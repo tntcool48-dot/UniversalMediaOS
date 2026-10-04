@@ -55,6 +55,45 @@ class BookSearchOutcomeTests(unittest.TestCase):
                     self.assertEqual(0, books.main(['book_scraper.py', 'search', 'query']))
                 self.assertEqual(expected, json.loads(stdout.getvalue())['status'])
 
+    def test_retired_domains_route_only_to_current_first_party_mirrors(self):
+        expected = ['https://annas-archive.gl', 'https://annas-archive.pk', 'https://annas-archive.gd']
+        for suffix in ('org', 'cc', 'li', 'se', 'gs'):
+            with self.subTest(suffix=suffix):
+                self.assertEqual(expected, books.mirror_roots('https://annas-archive.' + suffix))
+
+    def test_current_mirror_keeps_configured_priority(self):
+        self.assertEqual(['https://annas-archive.gd', 'https://annas-archive.gl', 'https://annas-archive.pk'],
+                         books.mirror_roots('https://annas-archive.gd/'))
+
+    def test_custom_provider_is_preserved_without_invented_alternatives(self):
+        self.assertEqual(['https://books.test/custom'], books.mirror_roots('https://books.test/custom/'))
+
+    def test_resolution_challenge_or_request_channel_is_unavailable(self):
+        for html, status in [('<h2>DDoS-Guard</h2>', 403),
+                             ('<a href="https://t.me/book_requests">Request this book</a>', 200)]:
+            with self.subTest(status=status), patch.object(books, 'fetch', return_value=self.response(html, status)):
+                with self.assertRaises(RuntimeError):
+                    books.do_resolve('exact')
+
+    def test_resolution_timeout_does_not_become_empty_editions(self):
+        with patch.object(books, 'fetch', side_effect=TimeoutError('stalled')):
+            with self.assertRaises(TimeoutError):
+                books.do_resolve('exact')
+
+    def test_resolution_deadline_stops_before_fetch(self):
+        with patch.object(books.time, 'monotonic', side_effect=[0, 21]), patch.object(books, 'fetch') as fetch:
+            with self.assertRaises(TimeoutError):
+                books.do_resolve('exact')
+            fetch.assert_not_called()
+
+    def test_resolve_cli_reports_provider_failure_and_timeout(self):
+        for error, expected in [(TimeoutError(), 'timed_out'), (RuntimeError(), 'unavailable')]:
+            with self.subTest(status=expected), patch.object(books, 'do_resolve', side_effect=error):
+                stdout = io.StringIO()
+                with contextlib.redirect_stdout(stdout):
+                    self.assertEqual(0, books.main(['book_scraper.py', 'resolve', 'exact']))
+                self.assertEqual(expected, json.loads(stdout.getvalue())['status'])
+
 
 if __name__ == '__main__':
     unittest.main()

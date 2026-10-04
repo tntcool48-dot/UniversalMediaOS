@@ -156,6 +156,10 @@ public sealed record BookSearchUpdate(
     IReadOnlyList<BookProviderSearchOutcome> Outcomes,
     int PendingProviders);
 
+public sealed record BookAssetSearchResult(
+    IReadOnlyList<BookAsset> Assets,
+    BookSearchOutcome Outcome = BookSearchOutcome.Completed);
+
 public sealed record LocalBookImportResult
 {
     public BookRecord Book { get; init; } = new();

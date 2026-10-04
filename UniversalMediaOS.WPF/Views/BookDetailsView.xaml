@@ -160,17 +160,20 @@
 
                 <Border Style="{DynamicResource SurfaceCard}">
                     <StackPanel>
-                        <DockPanel>
-                            <TextBlock Text="Readable editions"
-                                       Style="{DynamicResource SubtitleText}"
-                                       FontSize="17"
-                                       FontWeight="Bold"/>
-                            <ProgressBar DockPanel.Dock="Right"
-                                         Width="56"
-                                         Height="4"
-                                         IsIndeterminate="True"
-                                         Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibility}}"/>
-                        </DockPanel>
+                        <TextBlock Text="Available editions"
+                                   Style="{DynamicResource SubtitleText}"
+                                   FontSize="17"
+                                   FontWeight="Bold"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0"
+                                    Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibility}}">
+                            <Button Content="Cancel"
+                                    Command="{Binding CancelLookupCommand}"
+                                    Style="{DynamicResource SecondaryButton}"
+                                    MinWidth="88" Margin="0,0,12,0"
+                                    AutomationProperties.Name="Cancel Book Edition Lookup"/>
+                            <ProgressBar Width="72" Height="4" VerticalAlignment="Center"
+                                         IsIndeterminate="True"/>
+                        </StackPanel>
                         <TextBlock Text="{Binding AvailabilityMessage}"
                                    Style="{DynamicResource CaptionText}"
                                    Foreground="{DynamicResource TextMuted}"

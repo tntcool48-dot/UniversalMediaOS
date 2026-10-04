@@ -553,7 +553,7 @@ namespace UniversalMediaOS.Core.Configuration
                 { "GoogleBooksApiKey", "" },
                 { "GoogleBooksApiUrl", "https://www.googleapis.com/books/v1/" },
                 { "OpenLibraryApiUrl", "https://openlibrary.org/" },
-                { "AnnasArchiveUrl", "https://annas-archive.org" },
+                { "AnnasArchiveUrl", "https://annas-archive.gl" },
                 { "OtherMediaScraperUrl", "https://vidsrc.to" },
                 { "OtherMediaCustomSources", "[]" },
                 { "BookCacheDirectory", "" },
