@@ -438,7 +438,10 @@ namespace UniversalMediaOS.WPF.Views
             {
                 _controlsHideTimer.Stop();
                 NativeOverlay.Cursor = Cursors.Arrow;
-                if (_isFullscreen || _isPictureInPicture)
+                // Window chrome changes briefly hide the view while its tab
+                // remains active. Only a real tab change ends presentation.
+                if ((_isFullscreen || _isPictureInPicture) &&
+                    DataContext is ViewModels.PlaybackViewModel { IsTabActive: false })
                     RestorePresentationMode("[PlaybackView] Restored the app window because its player tab became inactive.");
             }
         }
@@ -1070,8 +1073,8 @@ namespace UniversalMediaOS.WPF.Views
                 return;
             }
 
-            RestorePresentationWindow(window);
             _isFullscreen = false;
+            RestorePresentationWindow(window);
             AppLogger.Log(logMessage);
         }
 
@@ -1119,12 +1122,12 @@ namespace UniversalMediaOS.WPF.Views
                 return;
             }
 
-            RestorePresentationWindow(window);
             _isPictureInPicture = false;
             if (DataContext is ViewModels.PlaybackViewModel vm)
             {
                 vm.IsPictureInPictureMode = false;
             }
+            RestorePresentationWindow(window);
             ShowControlsTemporarily();
             AppLogger.Log(logMessage);
         }

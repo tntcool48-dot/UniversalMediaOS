@@ -67,6 +67,7 @@ public sealed class PlaybackPresentationTests : IDisposable
             Thread.Sleep(300);
             Assert.False(FindButton("Player")!.IsOffscreen);
             Assert.DoesNotContain("disposed on unload", ReadLog(logPath)[logOffset..]);
+            Assert.DoesNotContain("its player tab became inactive", ReadLog(logPath)[logOffset..]);
         }
         finally
         {
