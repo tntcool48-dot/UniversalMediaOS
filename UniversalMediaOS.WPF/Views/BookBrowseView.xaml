@@ -254,7 +254,7 @@
                            FontSize="28"
                            FontWeight="Black"
                            TextAlignment="Center"/>
-                <TextBlock Text="Search public metadata catalogs, then read an explicitly open edition or a local EPUB/PDF."
+                <TextBlock Text="Search book catalogs, then read an available edition or a local EPUB/PDF."
                            Style="{DynamicResource BodyText}"
                            Foreground="{DynamicResource TextMuted}"
                            TextAlignment="Center"

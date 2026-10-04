@@ -295,6 +295,7 @@ public sealed partial class BookReaderViewModel : ObservableObject, IDisposable
             AssetFormat = Asset.Format,
             AssetAccess = Asset.Access,
             AssetDownloadAllowed = Asset.IsDownloadAllowed,
+            AssetExpectedMd5 = Asset.ExpectedMd5,
             ChapterIndex = Math.Max(0, CurrentChapterIndex),
             PageNumber = Math.Max(1, CurrentPage),
             Location = CurrentLocation,

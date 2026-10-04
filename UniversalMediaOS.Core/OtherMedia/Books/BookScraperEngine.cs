@@ -19,11 +19,21 @@ namespace UniversalMediaOS.Core.OtherMedia.Books
         [property: JsonPropertyName("size")] string Size,
         [property: JsonPropertyName("language")] string Language,
         [property: JsonPropertyName("year")] int? Year,
-        [property: JsonPropertyName("md5")] string Md5);
+        [property: JsonPropertyName("md5")] string Md5)
+    {
+        [JsonPropertyName("isbns")]
+        public IReadOnlyList<string> Isbns { get; init; } = Array.Empty<string>();
+        [JsonPropertyName("publisher")]
+        public string Publisher { get; init; } = string.Empty;
+    }
 
     public record BookScraperResolveResult(
         [property: JsonPropertyName("name")] string Name,
-        [property: JsonPropertyName("url")] string Url);
+        [property: JsonPropertyName("url")] string Url)
+    {
+        [JsonPropertyName("format")]
+        public string Format { get; init; } = string.Empty;
+    }
 
     public class BookScraperEngine
     {

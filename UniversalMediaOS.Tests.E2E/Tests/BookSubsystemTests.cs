@@ -473,6 +473,87 @@ public sealed class BookSubsystemTests
         await Assert.ThrowsAsync<InvalidOperationException>(() => reader.PrepareAsync(asset));
     }
 
+    [Theory]
+    [InlineData("html")]
+    [InlineData("truncated")]
+    [InlineData("hash")]
+    [InlineData("zip")]
+    [InlineData("xml")]
+    public async Task Reader_RejectsInvalidRemoteBookBeforePublishingCache(string fault)
+    {
+        string root = CreateTempDirectory();
+        try
+        {
+            byte[] bytes = Encoding.ASCII.GetBytes(fault == "html"
+                ? "<html>download failed, expected %PDF-1.7</html>" : "%PDF-1.7\nfixture\n%%EOF");
+            if (fault is "zip" or "xml")
+            {
+                string zip = Path.Combine(root, "invalid.zip");
+                using (var archive = ZipFile.Open(zip, ZipArchiveMode.Create))
+                {
+                    WriteEntry(archive, "content.opf", "<package/>");
+                    if (fault == "xml") WriteEntry(archive, "META-INF/container.xml", "<broken");
+                }
+                bytes = await File.ReadAllBytesAsync(zip);
+            }
+            using var client = new HttpClient(new StubHttpMessageHandler(_ =>
+            {
+                var content = new ByteArrayContent(bytes);
+                content.Headers.ContentType = new("application/pdf");
+                if (fault == "truncated") content.Headers.ContentLength = bytes.Length + 9;
+                return new(HttpStatusCode.OK) { Content = content };
+            }));
+            string cache = Path.Combine(root, "cache");
+            await Assert.ThrowsAsync<InvalidDataException>(() => new BookReaderService(client, cache).PrepareAsync(new BookAsset
+            {
+                Id = "annas:fixture", BookId = "book", Format = fault is "zip" or "xml" ? BookFileFormat.Epub : BookFileFormat.Pdf,
+                Access = BookAccessKind.RightsUnverified, Location = "https://books.test/download", IsDownloadAllowed = true,
+                ExpectedMd5 = fault == "hash" ? new string('a', 32) : ""
+            }));
+            Assert.Empty(Directory.GetFiles(cache, "*", SearchOption.AllDirectories));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Theory]
+    [InlineData(BookFileFormat.Pdf)]
+    [InlineData(BookFileFormat.Epub)]
+    public async Task Reader_AvailableRightsUnverifiedFile_VerifiesHashAndReusesOnlyValidCache(BookFileFormat format)
+    {
+        string root = CreateTempDirectory();
+        try
+        {
+            byte[] bytes;
+            if (format == BookFileFormat.Epub)
+            {
+                string source = Path.Combine(root, "source.epub");
+                CreateEpub(source, "Hash fixture", ["Author"], [("one", "chapter.xhtml")], ["one"]);
+                bytes = await File.ReadAllBytesAsync(source);
+            }
+            else bytes = Encoding.ASCII.GetBytes("%PDF-1.7\nfixture\n%%EOF");
+            int requests = 0;
+            using var client = new HttpClient(new StubHttpMessageHandler(_ =>
+            { requests++; return new(HttpStatusCode.OK) { Content = new ByteArrayContent(bytes) }; }));
+            string cache = Path.Combine(root, "cache");
+            var reader = new BookReaderService(client, cache);
+            var asset = new BookAsset
+            {
+                Id = "annas:fixture", BookId = "book", Format = format, Access = BookAccessKind.RightsUnverified,
+                Location = "https://books.test/download", IsDownloadAllowed = true,
+                ExpectedMd5 = Convert.ToHexString(System.Security.Cryptography.MD5.HashData(bytes))
+            };
+            BookReaderDocument first = await reader.PrepareAsync(asset);
+            Assert.Equal(first.StartLocation, (await reader.PrepareAsync(asset)).StartLocation);
+            Assert.Equal(1, requests);
+            string downloaded = Assert.Single(Directory.GetFiles(Path.Combine(cache, "downloads")));
+            await File.WriteAllTextAsync(downloaded, "<html>old poisoned cache</html>");
+            await reader.PrepareAsync(asset);
+            Assert.Equal(2, requests);
+            Assert.Equal(bytes, await File.ReadAllBytesAsync(downloaded));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
     private static HttpResponseMessage JsonResponse(string json)
     {
         return new HttpResponseMessage(HttpStatusCode.OK)

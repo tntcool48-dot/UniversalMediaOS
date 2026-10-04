@@ -377,7 +377,8 @@ namespace UniversalMediaOS.WPF
                     config.GetSetting("GoogleBooksApiKey"),
                     ParseOptionalHttpUri(config.GetSetting("GoogleBooksApiUrl")));
             });
-            services.AddTransient<IBookCatalogProvider, AnnasArchiveBookProvider>();
+            services.AddTransient<AnnasArchiveBookProvider>();
+            services.AddTransient<IBookCatalogProvider>(provider => provider.GetRequiredService<AnnasArchiveBookProvider>());
             services.AddTransient<BookCatalogService>();
             services.AddTransient<InternetArchiveBookService>(provider =>
             {

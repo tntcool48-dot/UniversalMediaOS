@@ -60,9 +60,7 @@ public sealed class BookReaderService
 
         string epubPath = await ResolveEpubPathAsync(asset, cancellationToken)
             .ConfigureAwait(false);
-        string sourceVersion = asset.IsLocal
-            ? GetLocalFileVersion(epubPath)
-            : string.Empty;
+        string sourceVersion = GetLocalFileVersion(epubPath);
         string extractionKey = BuildCacheKey(
             $"{asset.Id}|{asset.Location}|{sourceVersion}");
         string extractionRoot = Path.Combine(_cacheRoot, "epub", extractionKey);
@@ -171,7 +169,7 @@ public sealed class BookReaderService
             return path;
         }
 
-        EnsureAuthorizedRemoteAsset(asset);
+        EnsureAvailableRemoteAsset(asset);
         return await DownloadRemoteAssetAsync(
                 asset,
                 ".pdf",
@@ -194,7 +192,7 @@ public sealed class BookReaderService
             return path;
         }
 
-        EnsureAuthorizedRemoteAsset(asset);
+        EnsureAvailableRemoteAsset(asset);
         return await DownloadRemoteAssetAsync(
                 asset,
                 ".epub",
@@ -221,7 +219,15 @@ public sealed class BookReaderService
         if (File.Exists(target) &&
             new FileInfo(target).Length is > 0 and <= MaxRemoteBookBytes)
         {
-            return target;
+            try
+            {
+                await ValidateDownloadedBookAsync(target, asset, cancellationToken).ConfigureAwait(false);
+                return target;
+            }
+            catch (InvalidDataException)
+            {
+                // Replace this owned invalid cache only after a valid new download.
+            }
         }
 
         string temporary = target + "." + Guid.NewGuid().ToString("N") + ".tmp";
@@ -247,20 +253,25 @@ public sealed class BookReaderService
             await using Stream input = await response.Content
                 .ReadAsStreamAsync(cancellationToken)
                 .ConfigureAwait(false);
-            await using var output = new FileStream(
+            await using (var output = new FileStream(
                 temporary,
                 FileMode.CreateNew,
                 FileAccess.Write,
                 FileShare.None,
                 bufferSize: 81920,
-                useAsync: true);
-            await CopyBoundedAsync(
+                useAsync: true))
+            {
+                await CopyBoundedAsync(
                     input,
                     output,
                     MaxRemoteBookBytes,
                     cancellationToken)
                 .ConfigureAwait(false);
-            await output.FlushAsync(cancellationToken).ConfigureAwait(false);
+                await output.FlushAsync(cancellationToken).ConfigureAwait(false);
+                if (response.Content.Headers.ContentLength is long advertised && output.Length != advertised)
+                    throw new InvalidDataException("The remote book response was truncated.");
+            }
+            await ValidateDownloadedBookAsync(temporary, asset, cancellationToken).ConfigureAwait(false);
             File.Move(temporary, target, overwrite: true);
             return target;
         }
@@ -270,13 +281,59 @@ public sealed class BookReaderService
         }
     }
 
-    private static void EnsureAuthorizedRemoteAsset(BookAsset asset)
+    private static void EnsureAvailableRemoteAsset(BookAsset asset)
     {
         if (!asset.IsDownloadAllowed ||
-            asset.Access is not (BookAccessKind.PublicDomain or BookAccessKind.OpenLicense))
+            asset.Access is not (BookAccessKind.PublicDomain or BookAccessKind.OpenLicense or BookAccessKind.RightsUnverified))
         {
             throw new InvalidOperationException(
-                "Remote reading is limited to assets explicitly marked public domain or openly licensed.");
+                "This book asset has no available download.");
+        }
+    }
+
+    private static async Task ValidateDownloadedBookAsync(string path, BookAsset asset, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        if (!string.IsNullOrEmpty(asset.ExpectedMd5))
+        {
+            await using var hashInput = File.OpenRead(path);
+            byte[] hash = await MD5.HashDataAsync(hashInput, token).ConfigureAwait(false);
+            if (!Convert.ToHexString(hash).Equals(asset.ExpectedMd5, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("The downloaded file does not match the selected book hash.");
+        }
+        if (asset.Format == BookFileFormat.Pdf)
+        {
+            await using var input = File.OpenRead(path);
+            var prefix = new byte[Math.Min(1024, input.Length)];
+            await input.ReadExactlyAsync(prefix, token).ConfigureAwait(false);
+            string header = Encoding.ASCII.GetString(prefix);
+            if (!System.Text.RegularExpressions.Regex.IsMatch(header.TrimStart(), @"\A%PDF-(?:1\.[0-9]|2\.0)"))
+                throw new InvalidDataException("The download is not a PDF file.");
+            return;
+        }
+
+        // ZIP bytes alone do not establish an EPUB. Existing extraction still
+        // validates paths, expanded sizes, XML/package/spine and actual chapters.
+        using var archive = ZipFile.OpenRead(path);
+        if (archive.Entries.Count > MaxArchiveEntries ||
+            archive.GetEntry("META-INF/container.xml") is not { Length: > 0 and <= MaxXmlBytes } container)
+            throw new InvalidDataException("The download has no EPUB container/package.");
+        try
+        {
+            using var containerInput = container.Open();
+            XDocument containerXml = LoadBoundedXml(containerInput);
+            string packagePath = containerXml.Descendants().FirstOrDefault(e => e.Name.LocalName == "rootfile")
+                ?.Attribute("full-path")?.Value ?? "";
+            if (containerXml.Root?.Name.LocalName != "container" ||
+                archive.GetEntry(packagePath) is not { Length: > 0 and <= MaxXmlBytes } package)
+                throw new InvalidDataException("The EPUB package document is missing.");
+            using var packageInput = package.Open();
+            if (LoadBoundedXml(packageInput).Root?.Name.LocalName != "package")
+                throw new InvalidDataException("The EPUB package document is invalid.");
+        }
+        catch (XmlException error)
+        {
+            throw new InvalidDataException("The EPUB metadata is invalid.", error);
         }
     }
 
@@ -490,6 +547,12 @@ public sealed class BookReaderService
             throw new InvalidDataException("An EPUB XML document exceeds the size limit.");
         }
 
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        return LoadBoundedXml(stream);
+    }
+
+    private static XDocument LoadBoundedXml(Stream stream)
+    {
         var settings = new XmlReaderSettings
         {
             DtdProcessing = DtdProcessing.Prohibit,
@@ -497,7 +560,6 @@ public sealed class BookReaderService
             MaxCharactersInDocument = MaxXmlBytes,
             MaxCharactersFromEntities = 0
         };
-        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
         using XmlReader reader = XmlReader.Create(stream, settings);
         return XDocument.Load(reader, LoadOptions.None);
     }

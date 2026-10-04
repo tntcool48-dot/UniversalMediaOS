@@ -174,7 +174,7 @@ def metadata_value(card, itemprop, property_class, label):
     if element:
         return clean_text(element.get_text(" ", strip=True))
     text = clean_text(card.get_text(" ", strip=True))
-    match = re.search(rf"\b{re.escape(label)}\s*:\s*(.+?)(?=\s+(?:Year|Language|File|Format|Size)\s*:|$)", text, re.I)
+    match = re.search(rf"\b{re.escape(label)}\s*:\s*(.+?)(?=\s+(?:Year|Language|File|Format|Size|ISBN(?:-1[03])?|Publisher)\s*:|$)", text, re.I)
     return clean_text(match.group(1)) if match else ""
 
 
@@ -241,6 +241,13 @@ def parse_search_html(page_html):
         year_match = YEAR_RE.search(year_text or card_text)
         size_match = SIZE_RE.search(card_text)
 
+        isbn_fields = [element.get('content') or element.get_text(' ', strip=True)
+                       for element in card.select('[itemprop="isbn"], .property_isbn .property_value, '
+                                                  '.property_isbn13 .property_value, .property_isbn10 .property_value')]
+        isbn_fields.extend(metadata_value(card, 'isbn', 'property_isbn', label)
+                           for label in ('ISBN', 'ISBN-10', 'ISBN-13'))
+        isbns = list(dict.fromkeys(clean_text(match.group(0)) for field in isbn_fields
+                    for match in re.finditer(r'(?<!\d)(?:97[89][ -]*)?(?:\d[ -]*){9}[\dXx](?!\d)', field)))
         results.append({
             "id": identifier,
             "title": title or "Unknown Title",
@@ -249,7 +256,9 @@ def parse_search_html(page_html):
             "size": size_match.group(0) if size_match else "",
             "language": language,
             "year": int(year_match.group(0)) if year_match else None,
-            "md5": identifier,
+            "md5": identifier if re.fullmatch(r'[a-f0-9]{32}', identifier, re.I) else '',
+            "isbns": isbns,
+            "publisher": metadata_value(card, 'publisher', 'property_publisher', 'Publisher'),
         })
     return results
 

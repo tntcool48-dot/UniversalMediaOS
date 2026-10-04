@@ -24,7 +24,9 @@ public enum BookAccessKind
     Preview,
     PublicDomain,
     OpenLicense,
-    Local
+    Local,
+    // Append to retain the numeric values in existing reading-progress files.
+    RightsUnverified
 }
 
 public sealed record BookIdentifier
@@ -45,6 +47,7 @@ public sealed record BookAsset
     public string RightsStatement { get; init; } = string.Empty;
     public long? SizeBytes { get; init; }
     public bool IsDownloadAllowed { get; init; }
+    public string ExpectedMd5 { get; init; } = string.Empty;
 
     public bool IsLocal => Access == BookAccessKind.Local;
 
@@ -65,6 +68,7 @@ public sealed record BookAsset
         BookAccessKind.OpenLicense => "Open license",
         BookAccessKind.Local => "Local file",
         BookAccessKind.Preview => "Preview",
+        BookAccessKind.RightsUnverified => "Rights unverified",
         _ => "Metadata only"
     };
 
@@ -179,6 +183,7 @@ public sealed record BookReadingProgress
     public BookFileFormat AssetFormat { get; init; }
     public BookAccessKind AssetAccess { get; init; }
     public bool AssetDownloadAllowed { get; init; }
+    public string AssetExpectedMd5 { get; init; } = string.Empty;
     public int ChapterIndex { get; init; }
     public int PageNumber { get; init; }
     public string Location { get; init; } = string.Empty;

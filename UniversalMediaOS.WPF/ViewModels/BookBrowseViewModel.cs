@@ -326,6 +326,8 @@ public sealed partial class BookBrowseViewModel : ObservableObject, IDisposable
 
     private static BookRecord ToRecentBook(BookReadingProgress progress)
     {
+        bool legacyAnnaRights = progress.AssetId.StartsWith("annas:", StringComparison.Ordinal) &&
+            progress.AssetAccess == BookAccessKind.PublicDomain;
         var asset = new BookAsset
         {
             Id = progress.AssetId,
@@ -334,11 +336,12 @@ public sealed partial class BookBrowseViewModel : ObservableObject, IDisposable
                 ? progress.BookTitle
                 : progress.AssetDisplayName,
             Format = progress.AssetFormat,
-            Access = progress.AssetAccess,
+            Access = legacyAnnaRights ? BookAccessKind.RightsUnverified : progress.AssetAccess,
             Location = progress.AssetLocation,
             SourceLabel = progress.AssetSourceLabel,
-            RightsStatement = progress.AssetRightsStatement,
-            IsDownloadAllowed = progress.AssetDownloadAllowed
+            RightsStatement = legacyAnnaRights ? "Rights have not been verified for this indexed file." : progress.AssetRightsStatement,
+            IsDownloadAllowed = progress.AssetDownloadAllowed,
+            ExpectedMd5 = progress.AssetExpectedMd5
         };
         return new BookRecord
         {
