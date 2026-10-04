@@ -54,7 +54,14 @@ namespace UniversalMediaOS.Core.OtherMedia.Books
             try
             {
                 string stdout = await RunScraperAsync(token, 25000, "search", query, mirrorUrl);
-                if (string.IsNullOrWhiteSpace(stdout)) return Array.Empty<BookScraperSearchResult>();
+                if (string.IsNullOrWhiteSpace(stdout)) throw new HttpRequestException("Anna's Archive returned no response.");
+                using JsonDocument document = JsonDocument.Parse(stdout);
+                if (document.RootElement.ValueKind == JsonValueKind.Object)
+                {
+                    if (document.RootElement.TryGetProperty("status", out JsonElement status) &&
+                        status.GetString() == "timed_out") throw new TimeoutException("Anna's Archive search timed out.");
+                    throw new HttpRequestException("Anna's Archive search was unavailable.");
+                }
 
                 var results = JsonSerializer.Deserialize<BookScraperSearchResult[]>(stdout);
                 return results ?? Array.Empty<BookScraperSearchResult>();
@@ -63,10 +70,11 @@ namespace UniversalMediaOS.Core.OtherMedia.Books
             {
                 throw;
             }
+            catch (TimeoutException) { throw; }
             catch (Exception ex)
             {
                 AppLogger.Log($"[BookScraperEngine] Search failed: {ex.Message}", "WARNING");
-                return Array.Empty<BookScraperSearchResult>();
+                throw new HttpRequestException("Anna's Archive search was unavailable.", ex);
             }
         }
 
@@ -151,13 +159,17 @@ namespace UniversalMediaOS.Core.OtherMedia.Books
             catch (OperationCanceledException)
             {
                 try { proc.Kill(entireProcessTree: true); } catch { }
+                try { await stdoutTask; } catch { }
+                try { await stderrTask; } catch { }
                 if (externalToken.IsCancellationRequested)
                     throw new OperationCanceledException(externalToken);
-                return string.Empty;
+                throw new TimeoutException("Book provider exceeded its operation deadline.");
             }
 
             string stdout = await stdoutTask;
             try { await stderrTask; } catch { }
+            if (proc.ExitCode != 0 && string.IsNullOrWhiteSpace(stdout))
+                throw new HttpRequestException("Book provider exited without a response.");
 
             return stdout.Trim();
         }

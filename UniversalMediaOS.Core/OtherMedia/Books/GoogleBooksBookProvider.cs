@@ -101,22 +101,25 @@ public sealed class GoogleBooksBookProvider : IBookCatalogProvider
         Uri uri,
         CancellationToken cancellationToken)
     {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(_httpClient.Timeout);
+        CancellationToken requestToken = deadline.Token;
         try
         {
             using HttpRequestMessage request = CreateRequest(uri);
             using HttpResponseMessage response = await _httpClient
-                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, requestToken)
                 .ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
-                return new BookSearchPage();
+                return new BookSearchPage { Outcome = BookSearchOutcome.Unavailable };
             }
 
             await using Stream stream = await response.Content
-                .ReadAsStreamAsync(cancellationToken)
+                .ReadAsStreamAsync(requestToken)
                 .ConfigureAwait(false);
             using JsonDocument document = await JsonDocument
-                .ParseAsync(stream, cancellationToken: cancellationToken)
+                .ParseAsync(stream, cancellationToken: requestToken)
                 .ConfigureAwait(false);
             JsonElement root = document.RootElement;
             int total = TryGetInt32(root, "totalItems") ?? 0;
@@ -124,7 +127,8 @@ public sealed class GoogleBooksBookProvider : IBookCatalogProvider
             if (!root.TryGetProperty("items", out JsonElement itemsElement) ||
                 itemsElement.ValueKind != JsonValueKind.Array)
             {
-                return new BookSearchPage { Total = total };
+                return new BookSearchPage { Total = total, Outcome = total > 0
+                    ? BookSearchOutcome.Unavailable : BookSearchOutcome.Completed };
             }
 
             var items = new List<BookRecord>();
@@ -147,13 +151,17 @@ public sealed class GoogleBooksBookProvider : IBookCatalogProvider
         {
             throw;
         }
+        catch (OperationCanceledException)
+        {
+            return new BookSearchPage { Outcome = BookSearchOutcome.TimedOut };
+        }
         catch (HttpRequestException)
         {
-            return new BookSearchPage();
+            return new BookSearchPage { Outcome = BookSearchOutcome.Unavailable };
         }
         catch (JsonException)
         {
-            return new BookSearchPage();
+            return new BookSearchPage { Outcome = BookSearchOutcome.Unavailable };
         }
     }
 

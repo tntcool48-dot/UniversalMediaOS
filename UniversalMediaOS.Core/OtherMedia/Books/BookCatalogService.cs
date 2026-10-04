@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using System.Text.Json;
+using System.Runtime.CompilerServices;
 
 namespace UniversalMediaOS.Core.OtherMedia.Books;
 
@@ -27,10 +28,23 @@ public sealed partial class BookCatalogService
         int limit = 100,
         CancellationToken cancellationToken = default)
     {
+        BookSearchPage result = new();
+        await foreach (BookSearchUpdate update in SearchUpdatesAsync(query, limit, cancellationToken))
+        {
+            result = update.Page;
+        }
+        return result;
+    }
+
+    public async IAsyncEnumerable<BookSearchUpdate> SearchUpdatesAsync(
+        string query,
+        int limit = 100,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
         string normalizedQuery = (query ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(normalizedQuery))
         {
-            return new BookSearchPage();
+            yield break;
         }
 
         limit = Math.Clamp(limit, 1, 100);
@@ -38,27 +52,50 @@ public sealed partial class BookCatalogService
             (int)Math.Ceiling(limit / (double)_providers.Count) + 4,
             1,
             50);
+        using var operation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         Task<BookSearchPage>[] tasks = _providers
             .Select(provider => SearchProviderAsync(
                 provider,
                 normalizedQuery,
                 perProvider,
-                cancellationToken))
+                operation.Token))
             .ToArray();
-        BookSearchPage[] pages = await Task.WhenAll(tasks).ConfigureAwait(false);
-        cancellationToken.ThrowIfCancellationRequested();
-
-        List<BookRecord> merged = MergeDuplicates(pages.SelectMany(page => page.Items))
-            .OrderByDescending(book => Score(book, normalizedQuery))
-            .ThenBy(book => book.Title, StringComparer.CurrentCultureIgnoreCase)
-            .Take(limit)
-            .ToList();
-
-        return new BookSearchPage
+        var pending = tasks.ToList();
+        var pages = new BookSearchPage?[_providers.Count];
+        try
         {
-            Items = merged,
-            Total = pages.Sum(page => page.Total)
-        };
+            while (pending.Count > 0)
+            {
+                Task<BookSearchPage> completed = await Task.WhenAny(pending)
+                    .WaitAsync(operation.Token).ConfigureAwait(false);
+                int index = Array.IndexOf(tasks, completed);
+                pages[index] = await completed.ConfigureAwait(false);
+                pending.Remove(completed);
+                operation.Token.ThrowIfCancellationRequested();
+
+                // Merge in configured provider order so arrival timing cannot change the final match.
+                var available = pages.OfType<BookSearchPage>().ToArray();
+                yield return new BookSearchUpdate(new BookSearchPage
+                {
+                    Items = MergeDuplicates(available.SelectMany(page => page.Items))
+                        .OrderByDescending(book => Score(book, normalizedQuery))
+                        .ThenBy(book => book.Title, StringComparer.CurrentCultureIgnoreCase)
+                        .Take(limit).ToArray(),
+                    Total = available.Sum(page => page.Total),
+                    Outcome = available.Any(page => page.Outcome == BookSearchOutcome.Unavailable)
+                        ? BookSearchOutcome.Unavailable
+                        : available.Any(page => page.Outcome == BookSearchOutcome.TimedOut)
+                            ? BookSearchOutcome.TimedOut : BookSearchOutcome.Completed
+                }, pages.Select((page, i) => page == null ? null :
+                    new BookProviderSearchOutcome(_providers[i].Source, page.Outcome))
+                    .OfType<BookProviderSearchOutcome>().ToArray(), pending.Count);
+            }
+        }
+        finally
+        {
+            // Disposing a consumer cancels only this search, including providers still preparing.
+            operation.Cancel();
+        }
     }
 
     public async Task<BookRecord?> GetDetailsAsync(
@@ -89,6 +126,10 @@ public sealed partial class BookCatalogService
             return book;
         }
         catch (InvalidOperationException)
+        {
+            return book;
+        }
+        catch (Exception ex) when (ex is TimeoutException or OperationCanceledException or JsonException or IOException)
         {
             return book;
         }
@@ -124,29 +165,27 @@ public sealed partial class BookCatalogService
     {
         try
         {
-            return await provider
+            BookSearchPage page = await provider
                 .SearchAsync(query, limit: limit, cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            return page;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
         }
-        catch (HttpRequestException)
+        catch (Exception ex) when (ex is OperationCanceledException or TimeoutException)
         {
-            return new BookSearchPage();
+            return new BookSearchPage { Outcome = BookSearchOutcome.TimedOut };
         }
-        catch (JsonException)
+        catch (Exception)
         {
-            return new BookSearchPage();
-        }
-        catch (InvalidOperationException)
-        {
-            return new BookSearchPage();
+            return new BookSearchPage { Outcome = BookSearchOutcome.Unavailable };
         }
     }
 
-    private static string GetDeduplicationKey(BookRecord book)
+    public static string GetDeduplicationKey(BookRecord book)
     {
         string? isbn13 = book.Identifiers.FirstOrDefault(identifier =>
             identifier.Scheme.Equals("ISBN-13", StringComparison.OrdinalIgnoreCase) &&

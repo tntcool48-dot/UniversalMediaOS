@@ -257,7 +257,7 @@ public sealed partial class BookDetailsViewModel : ObservableObject, IDisposable
             throw;
         }
         catch (Exception ex) when (
-            ex is HttpRequestException or InvalidOperationException or IOException)
+            ex is HttpRequestException or InvalidOperationException or IOException or TimeoutException)
         {
             AppLogger.Log($"{providerName} book edition lookup failed: {ex.Message}", "WARNING");
             return Array.Empty<BookAsset>();

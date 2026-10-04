@@ -50,11 +50,11 @@
 
                 <Button Grid.Column="3"
                         Content="Cancel"
-                        Command="{Binding SearchBooksCancelCommand}"
+                        Command="{Binding CancelSearchCommand}"
                         Style="{DynamicResource DangerButton}"
                         MinWidth="84"
                         Margin="8,0,0,0"
-                        Visibility="{Binding SearchBooksCommand.IsRunning, Converter={StaticResource BoolToVisibility}}"
+                        Visibility="{Binding IsBusy, Converter={StaticResource BoolToVisibility}}"
                         AutomationProperties.Name="Cancel Book Search"
                         ToolTip="Cancel the current book search."/>
 

@@ -295,6 +295,8 @@ def search_urls(query, mirror_url):
 
 def do_search(query, mirror_url="https://annas-archive.org"):
     deadline = time.monotonic() + 20
+    saw_empty_results = False
+    saw_timeout = False
     roots = mirror_roots(mirror_url)
     routed_urls = [search_urls(query, root) for root in roots]
     for route_index in range(max(len(urls) for urls in routed_urls)):
@@ -303,17 +305,30 @@ def do_search(query, mirror_url="https://annas-archive.org"):
                 continue
             url = urls[route_index]
             if time.monotonic() >= deadline:
-                return []
+                if saw_empty_results:
+                    return []
+                raise TimeoutError("book search deadline exceeded")
             try:
                 response = fetch(url, deadline)
+            except TimeoutError:
+                saw_timeout = True
+                continue
             except Exception:
                 continue
             if response.status >= 400:
                 continue
-            results = parse_search_html(decode_html(response))
+            page = decode_html(response)
+            results = parse_search_html(page)
             if results:
                 return results
-    return []
+            text = BeautifulSoup(page, "html.parser").get_text(" ", strip=True)
+            if re.search(r"\b(?:no (?:results|files|matches) found|nothing found|0 results)\b", text, re.I):
+                saw_empty_results = True
+    if saw_empty_results:
+        return []
+    if saw_timeout or time.monotonic() >= deadline:
+        raise TimeoutError("book search deadline exceeded")
+    raise RuntimeError("book search returned no usable results page")
 
 
 def is_file_url(url):
@@ -475,7 +490,12 @@ def main(argv):
     argument = argv[2]
     mirror = argv[3] if len(argv) > 3 else "https://annas-archive.org"
     if mode == "search":
-        output = do_search(argument, mirror)
+        try:
+            output = do_search(argument, mirror)
+        except TimeoutError:
+            output = {"status": "timed_out", "error": "Book search timed out"}
+        except Exception:
+            output = {"status": "unavailable", "error": "Book search unavailable"}
     elif mode == "resolve":
         output = do_resolve(argument, mirror)
     else:

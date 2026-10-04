@@ -144,7 +144,17 @@ public sealed record BookSearchPage
 {
     public IReadOnlyList<BookRecord> Items { get; init; } = Array.Empty<BookRecord>();
     public int Total { get; init; }
+    public BookSearchOutcome Outcome { get; init; }
 }
+
+public enum BookSearchOutcome { Completed, TimedOut, Unavailable }
+
+public sealed record BookProviderSearchOutcome(BookCatalogSource Source, BookSearchOutcome Outcome);
+
+public sealed record BookSearchUpdate(
+    BookSearchPage Page,
+    IReadOnlyList<BookProviderSearchOutcome> Outcomes,
+    int PendingProviders);
 
 public sealed record LocalBookImportResult
 {

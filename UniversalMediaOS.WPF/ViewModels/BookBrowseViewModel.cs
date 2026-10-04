@@ -41,6 +41,7 @@ public sealed partial class BookBrowseViewModel : ObservableObject, IDisposable
     private string _searchQuery = string.Empty;
 
     [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(CancelSearchCommand))]
     private bool _isBusy;
 
     [ObservableProperty]
@@ -82,7 +83,7 @@ public sealed partial class BookBrowseViewModel : ObservableObject, IDisposable
         await LoadDefaultBrowseAsync(linked.Token);
     }
 
-    [RelayCommand(IncludeCancelCommand = true, AllowConcurrentExecutions = false)]
+    [RelayCommand(AllowConcurrentExecutions = true)]
     private async Task SearchBooksAsync(CancellationToken cancellationToken)
     {
         string query = SearchQuery.Trim();
@@ -97,6 +98,9 @@ public sealed partial class BookBrowseViewModel : ObservableObject, IDisposable
             $"Results for \u201C{query}\u201D",
             cancellationToken);
     }
+
+    [RelayCommand(CanExecute = nameof(IsBusy))]
+    private void CancelSearch() => _searchCts?.Cancel();
 
     [RelayCommand]
     private static void OpenDetails(BookRecord? book)
@@ -146,9 +150,11 @@ public sealed partial class BookBrowseViewModel : ObservableObject, IDisposable
         }
         catch (OperationCanceledException)
         {
+            if (IsCurrent(generation)) StatusMessage = "Loading canceled. Existing results retained.";
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
+            if (!IsCurrent(generation)) return;
             ErrorMessage = "Recent reading history could not be loaded.";
             StatusMessage = "Book catalogs are still available.";
             AppLogger.Log($"Recent book history load failed: {ex.Message}", "WARNING");
@@ -173,16 +179,16 @@ public sealed partial class BookBrowseViewModel : ObservableObject, IDisposable
             return null;
         }
 
+        CancellationTokenSource operation = BeginSearch(cancellationToken, out int generation);
         IsBusy = true;
         ErrorMessage = string.Empty;
         StatusMessage = "Reading local book metadata\u2026";
         try
         {
-            using CancellationTokenSource linked = CancellationTokenSource.CreateLinkedTokenSource(
-                _lifecycleCts.Token,
-                cancellationToken);
             LocalBookImportResult imported = await _localImportService
-                .ImportAsync(filePath, linked.Token);
+                .ImportAsync(filePath, operation.Token);
+            operation.Token.ThrowIfCancellationRequested();
+            if (!IsCurrent(generation)) return null;
             BookRecord? existing = Books.FirstOrDefault(book =>
                 book.Id.Equals(imported.Book.Id, StringComparison.OrdinalIgnoreCase));
             if (existing != null)
@@ -198,16 +204,16 @@ public sealed partial class BookBrowseViewModel : ObservableObject, IDisposable
                 new NavigateToBookDetailsMessage(imported.Book));
             return imported.Book;
         }
-        catch (OperationCanceledException) when (
-            cancellationToken.IsCancellationRequested ||
-            _lifecycleCts.IsCancellationRequested)
+        catch (OperationCanceledException) when (operation.IsCancellationRequested)
         {
+            if (IsCurrent(generation)) StatusMessage = "Import canceled. Existing results retained.";
             return null;
         }
         catch (Exception ex) when (
             ex is IOException or InvalidDataException or
             NotSupportedException or UnauthorizedAccessException)
         {
+            if (!IsCurrent(generation)) return null;
             ErrorMessage = ex.Message;
             StatusMessage = "The local book could not be imported.";
             AppLogger.Log($"Local book import failed: {ex.Message}", "WARNING");
@@ -215,7 +221,8 @@ public sealed partial class BookBrowseViewModel : ObservableObject, IDisposable
         }
         finally
         {
-            IsBusy = false;
+            if (IsCurrent(generation)) IsBusy = false;
+            ClearSearch(operation);
         }
     }
 
@@ -235,37 +242,52 @@ public sealed partial class BookBrowseViewModel : ObservableObject, IDisposable
         CancellationTokenSource operation = BeginSearch(cancellationToken, out int generation);
         IsBusy = true;
         ErrorMessage = string.Empty;
-        StatusMessage = "Searching book catalogs\u2026";
+        string searching = Books.Count > 0
+            ? "Searching book catalogs; previous results shown"
+            : "Searching book catalogs";
+        StatusMessage = searching + "\u2026";
+        bool published = false;
         try
         {
-            BookSearchPage page = await _catalogService
-                .SearchAsync(query, cancellationToken: operation.Token);
-            operation.Token.ThrowIfCancellationRequested();
-            if (!IsCurrent(generation))
+            await foreach (BookSearchUpdate update in _catalogService
+                .SearchUpdatesAsync(query, cancellationToken: operation.Token))
             {
-                return;
-            }
+                operation.Token.ThrowIfCancellationRequested();
+                if (!IsCurrent(generation)) return;
+                bool incomplete = update.Outcomes.Any(item => item.Outcome != BookSearchOutcome.Completed);
+                if (update.Page.Items.Count > 0 || (update.PendingProviders == 0 && !incomplete))
+                {
+                    if (!published) Books.Clear();
+                    ReconcileResults(update.Page.Items);
+                    published = true;
+                    TotalAvailable = update.Page.Total;
+                    NotifyCollectionStateChanged();
+                }
 
-            Books.Clear();
-            foreach (BookRecord book in page.Items)
-            {
-                Books.Add(book);
+                ErrorMessage = string.Join("; ", update.Outcomes
+                    .Where(item => item.Outcome != BookSearchOutcome.Completed)
+                    .Select(item => $"{ProviderName(item.Source)} {(item.Outcome == BookSearchOutcome.TimedOut ? "timed out" : "unavailable")}"));
+                StatusMessage = update.PendingProviders > 0
+                    ? $"{(published ? description : searching)} · Checking {update.PendingProviders} more catalog{(update.PendingProviders == 1 ? "" : "s")}\u2026"
+                    : incomplete
+                        ? published ? $"{description} · Partial results retained."
+                            : Books.Count > 0 ? "Search incomplete. Previous results retained."
+                                : "Search incomplete. No results available."
+                        : Books.Count == 0 ? "No matching books were found." : description;
             }
-
-            TotalAvailable = page.Total;
-            StatusMessage = Books.Count == 0
-                ? "No matching books were found."
-                : description;
-            NotifyCollectionStateChanged();
         }
         catch (OperationCanceledException)
         {
+            if (IsCurrent(generation))
+                StatusMessage = published ? $"{description} · Search canceled; results retained."
+                    : Books.Count > 0 ? "Search canceled. Previous results retained." : "Search canceled.";
         }
         catch (Exception ex) when (
             ex is HttpRequestException or InvalidOperationException)
         {
+            if (!IsCurrent(generation)) return;
             ErrorMessage = "Book catalogs are unavailable right now.";
-            StatusMessage = "Your existing results were left unchanged.";
+            StatusMessage = "Search incomplete. Available results retained.";
             AppLogger.Log($"Book catalog search failed: {ex.Message}", "WARNING");
         }
         finally
@@ -279,12 +301,43 @@ public sealed partial class BookBrowseViewModel : ObservableObject, IDisposable
         }
     }
 
+    private void ReconcileResults(IReadOnlyList<BookRecord> items)
+    {
+        var keys = items.Select(BookCatalogService.GetDeduplicationKey)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        for (int index = Books.Count - 1; index >= 0; index--)
+            if (!keys.Contains(BookCatalogService.GetDeduplicationKey(Books[index]))) Books.RemoveAt(index);
+        // Keep existing card positions while enriching duplicates and appending new matches.
+        var positions = Books.Select((book, index) => (Key: BookCatalogService.GetDeduplicationKey(book), index))
+            .ToDictionary(item => item.Key, item => item.index, StringComparer.OrdinalIgnoreCase);
+        foreach (BookRecord book in items)
+        {
+            string key = BookCatalogService.GetDeduplicationKey(book);
+            if (positions.TryGetValue(key, out int index))
+            {
+                if (Books[index] != book) Books[index] = book;
+            }
+            else if (Books.Count < 100)
+            {
+                positions[key] = Books.Count;
+                Books.Add(book);
+            }
+        }
+    }
+
+    private static string ProviderName(BookCatalogSource source) => source switch
+    {
+        BookCatalogSource.OpenLibrary => "Open Library",
+        BookCatalogSource.GoogleBooks => "Google Books",
+        BookCatalogSource.AnnasArchive => "Anna's Archive",
+        _ => source.ToString()
+    };
+
     private CancellationTokenSource BeginSearch(
         CancellationToken cancellationToken,
         out int generation)
     {
         _searchCts?.Cancel();
-        _searchCts?.Dispose();
         _searchCts = CancellationTokenSource.CreateLinkedTokenSource(
             _lifecycleCts.Token,
             cancellationToken);
@@ -367,7 +420,7 @@ public sealed partial class BookBrowseViewModel : ObservableObject, IDisposable
         _isDisposed = true;
         _lifecycleCts.Cancel();
         _searchCts?.Cancel();
-        _searchCts?.Dispose();
+        _searchCts = null;
         _lifecycleCts.Dispose();
     }
 }

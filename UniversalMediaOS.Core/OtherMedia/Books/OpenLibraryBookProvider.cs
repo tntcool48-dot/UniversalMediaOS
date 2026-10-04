@@ -49,22 +49,25 @@ public sealed class OpenLibraryBookProvider : IBookCatalogProvider
             $"search.json?q={Uri.EscapeDataString(query.Trim())}" +
             $"&page={page}&limit={limit}&fields={Uri.EscapeDataString(fields)}";
 
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(_httpClient.Timeout);
+        CancellationToken requestToken = deadline.Token;
         try
         {
             using HttpRequestMessage request = CreateRequest(new Uri(_baseUri, relative));
             using HttpResponseMessage response = await _httpClient
-                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, requestToken)
                 .ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
-                return new BookSearchPage();
+                return new BookSearchPage { Outcome = BookSearchOutcome.Unavailable };
             }
 
             await using Stream stream = await response.Content
-                .ReadAsStreamAsync(cancellationToken)
+                .ReadAsStreamAsync(requestToken)
                 .ConfigureAwait(false);
             using JsonDocument document = await JsonDocument
-                .ParseAsync(stream, cancellationToken: cancellationToken)
+                .ParseAsync(stream, cancellationToken: requestToken)
                 .ConfigureAwait(false);
 
             JsonElement root = document.RootElement;
@@ -72,7 +75,7 @@ public sealed class OpenLibraryBookProvider : IBookCatalogProvider
             if (!root.TryGetProperty("docs", out JsonElement docs) ||
                 docs.ValueKind != JsonValueKind.Array)
             {
-                return new BookSearchPage { Total = total };
+                return new BookSearchPage { Outcome = BookSearchOutcome.Unavailable };
             }
 
             var items = new List<BookRecord>();
@@ -95,13 +98,17 @@ public sealed class OpenLibraryBookProvider : IBookCatalogProvider
         {
             throw;
         }
+        catch (OperationCanceledException)
+        {
+            return new BookSearchPage { Outcome = BookSearchOutcome.TimedOut };
+        }
         catch (HttpRequestException)
         {
-            return new BookSearchPage();
+            return new BookSearchPage { Outcome = BookSearchOutcome.Unavailable };
         }
         catch (JsonException)
         {
-            return new BookSearchPage();
+            return new BookSearchPage { Outcome = BookSearchOutcome.Unavailable };
         }
     }
 
