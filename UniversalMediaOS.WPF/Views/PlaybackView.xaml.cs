@@ -610,9 +610,22 @@ namespace UniversalMediaOS.WPF.Views
             Focus();
         }
 
-        private bool IsControlsInput(DependencyObject? source) =>
-            source is Visual visual && new[] { TitlePanel, OptionsPanel, TransportPanel }
-                .Any(panel => ReferenceEquals(visual, panel) || panel.IsAncestorOf(visual));
+        private bool IsControlsInput(DependencyObject? source)
+        {
+            while (source != null)
+            {
+                if (ReferenceEquals(source, TitlePanel) || ReferenceEquals(source, OptionsPanel) ||
+                    ReferenceEquals(source, TransportPanel)) return true;
+                // A ComboBox Popup has its own visual tree. Rejoin its owning
+                // selector before deciding this is a video click: focusing the
+                // player here dismisses the menu before its choice is committed.
+                source = source is ComboBoxItem item
+                    ? ItemsControl.ItemsControlFromItemContainer(item)
+                    : source is Visual visual ? VisualTreeHelper.GetParent(visual)
+                    : LogicalTreeHelper.GetParent(source);
+            }
+            return false;
+        }
 
         private bool IsBrowserInput(DependencyObject? source) =>
             source is Visual visual &&
