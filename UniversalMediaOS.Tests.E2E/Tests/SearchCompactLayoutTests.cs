@@ -46,6 +46,17 @@ public sealed class SearchCompactLayoutTests
         Assert.True(SpinWait.SpinUntil(() => Window().FindAllDescendants(cf => cf.ByAutomationId("SelectTab"))
             .Any(element => element.Name.Contains("Mock English", StringComparison.Ordinal)), TimeSpan.FromSeconds(5)),
             "Opening the compact card must select the same item's Details tab.");
+        var heading = Window().FindAllDescendants(cf => cf.ByText("Mock English")
+            .And(cf.ByControlType(ControlType.Text))).Last();
+        Assert.True(heading.BoundingRectangle.Width >= 350,
+            $"Details must give the title and watch controls usable width; actual {heading.BoundingRectangle.Width}.");
+        var details = Window().FindFirstDescendant(cf => cf.ByAutomationId("DetailsScroller"))!;
+        details.Patterns.Scroll.Pattern.SetScrollPercent(-1, 100);
+        Assert.True(SpinWait.SpinUntil(() =>
+        {
+            var voice = Window().FindFirstDescendant(cf => cf.ByName("Open VA Detect"));
+            return voice != null && !voice.IsOffscreen && voice.BoundingRectangle.Bottom <= details.BoundingRectangle.Bottom;
+        }, TimeSpan.FromSeconds(3)), "The last Details action must remain reachable by scrolling.");
         Assert.False(fixture.App.HasExited);
     }
 }

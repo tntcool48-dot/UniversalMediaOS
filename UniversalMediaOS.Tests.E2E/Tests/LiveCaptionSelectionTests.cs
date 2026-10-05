@@ -1,6 +1,7 @@
 using System.IO;
 using System.Text.Json;
 using FlaUI.Core.AutomationElements;
+using FlaUI.Core.Definitions;
 using UniversalMediaOS.Core.OtherMedia;
 using UniversalMediaOS.Core.Services;
 using UniversalMediaOS.Tests.E2E.Infrastructure;
@@ -11,9 +12,11 @@ namespace UniversalMediaOS.Tests.E2E.Tests;
 public sealed class LiveCaptionSelectionTests
 {
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task DownloadedCaptionOffAndOnRetainPositionAndPauseInNativeOverlay(bool paused)
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task DownloadedCaptionOffAndOnRetainPositionAndPauseInNativeOverlay(bool paused, bool dropdown)
     {
         using var fixture = new AppFixture();
         string directory = Path.Combine(fixture.SandboxPath, "caption-media");
@@ -41,6 +44,20 @@ public sealed class LiveCaptionSelectionTests
         double Position() => Window().FindFirstDescendant(cf => cf.ByAutomationId("PlaybackSlider"))?
             .Patterns.RangeValue.Pattern.Value.Value ?? 0;
         bool IsPaused() => Button("Play or pause")?.FindFirstDescendant(cf => cf.ByText("Play")) != null;
+        void SelectCaption(string label)
+        {
+            if (!dropdown)
+            {
+                Button("Toggle subtitles")!.Click();
+                return;
+            }
+            // Mouse input exercises the Popup's routed events and focus handling;
+            // a Selection pattern alone bypasses the reported failure.
+            Captions()!.Click();
+            Assert.True(SpinWait.SpinUntil(() => Captions()!.Patterns.ExpandCollapse.Pattern
+                .ExpandCollapseState.Value == ExpandCollapseState.Expanded, TimeSpan.FromSeconds(2)));
+            Captions()!.Items.Single(item => item.Text == label).Click();
+        }
         string logPath = Path.Combine(fixture.SandboxPath, "Roaming", "UniversalMediaOS", "app.log");
 
         Button("Player")!.Invoke();
@@ -56,13 +73,13 @@ public sealed class LiveCaptionSelectionTests
             Assert.True(SpinWait.SpinUntil(IsPaused, TimeSpan.FromSeconds(3)));
         }
         double position = Position();
-        Button("Toggle subtitles")!.Click();
+        SelectCaption("CC Off");
         Assert.True(SpinWait.SpinUntil(() => Captions()?.SelectedItem?.Text == "CC Off", TimeSpan.FromSeconds(3)), ReadLog(logPath));
         Thread.Sleep(600); // Includes another decoder time/track refresh.
         Assert.Equal("CC Off", Captions()!.SelectedItem?.Text);
         Assert.InRange(Position(), position - 750, position + 6000);
         Assert.Equal(paused, IsPaused());
-        Button("Toggle subtitles")!.Click();
+        SelectCaption("English (downloaded)");
         Assert.True(SpinWait.SpinUntil(() => Captions()?.SelectedItem?.Text == "English (downloaded)", TimeSpan.FromSeconds(3)), ReadLog(logPath));
         Thread.Sleep(600);
         Assert.Equal("English (downloaded)", Captions()!.SelectedItem?.Text);

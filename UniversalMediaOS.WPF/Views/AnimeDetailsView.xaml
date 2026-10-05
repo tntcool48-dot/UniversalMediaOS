@@ -14,7 +14,7 @@
             <Setter Property="MinWidth" Value="96"/>
             <Setter Property="Padding" Value="14,0"/>
             <Setter Property="Margin" Value="0,0,8,0"/>
-            <Setter Property="Background" Value="#171A24"/>
+            <Setter Property="Background" Value="{DynamicResource BgElevated}"/>
             <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
             <Setter Property="BorderBrush" Value="{StaticResource BorderSubtle}"/>
             <Setter Property="BorderThickness" Value="1"/>
@@ -52,29 +52,37 @@
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
-        <DockPanel Grid.Row="0" Margin="0,0,0,18">
+        <Grid Grid.Row="0" Margin="0,0,0,18">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
             <Button Content="Back to search"
                     AutomationProperties.Name="&#x25C0; Back to Search"
                     Command="{Binding GoBackCommand}"
                     Style="{StaticResource SecondaryButton}"
-                    DockPanel.Dock="Left"
                     ToolTip="Return to the anime search tab."/>
 
-            <Border DockPanel.Dock="Right"
+            <Border Grid.Column="1" Margin="12,0,0,0"
                     Background="{StaticResource AccentSoft}"
                     BorderBrush="{StaticResource BorderStrong}"
                     BorderThickness="1"
                     CornerRadius="8"
                     Padding="12,8">
-                <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="{Binding EpisodeProgressText}" Style="{StaticResource ChipText}"/>
-                    <TextBlock Text=" / " Foreground="{StaticResource TextMuted}" Margin="6,0"/>
-                    <TextBlock Text="{Binding MalProgressText}" Style="{StaticResource ChipText}"/>
+                <StackPanel>
+                    <TextBlock Text="{Binding EpisodeProgressText}" Style="{StaticResource ChipText}" TextWrapping="Wrap"/>
+                    <TextBlock Text="{Binding MalProgressText}" Style="{StaticResource ChipText}" TextWrapping="Wrap"/>
                 </StackPanel>
             </Border>
-        </DockPanel>
+        </Grid>
 
-        <Grid Grid.Row="1">
+        <ScrollViewer x:Name="DetailsScroller" Grid.Row="1"
+                      VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <Grid x:Name="DetailsLayoutGrid" SizeChanged="DetailsLayoutGrid_SizeChanged">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="230"/>
                 <ColumnDefinition Width="16"/>
@@ -83,7 +91,7 @@
                 <ColumnDefinition Width="230"/>
             </Grid.ColumnDefinitions>
 
-            <Border Grid.Column="0" Background="Transparent">
+            <Border x:Name="PosterPanel" Grid.Column="0" Background="Transparent" Height="340" VerticalAlignment="Top">
                 <Border.Effect>
                     <StaticResource ResourceKey="ElevatedPlane"/>
                 </Border.Effect>
@@ -101,10 +109,11 @@
                             </Border.Background>
                         </Border>
                         <StackPanel VerticalAlignment="Bottom" Margin="18">
-                            <TextBlock Text="Now selected" Style="{StaticResource CaptionText}" FontWeight="Bold"/>
+                            <TextBlock Text="Now selected" Style="{StaticResource CaptionText}" Foreground="#CBD5E1" FontWeight="Bold"/>
                             <TextBlock Text="{Binding Media.OfficialTitle}"
                                        Style="{StaticResource SubtitleText}"
                                        FontSize="18"
+                                       Foreground="#F8FAFC"
                                        TextWrapping="Wrap"
                                        MaxHeight="72"/>
                         </StackPanel>
@@ -128,10 +137,10 @@
                                TextWrapping="Wrap"/>
 
                     <WrapPanel Margin="0,14,0,0">
-                        <Border Background="#1E293B" BorderBrush="{StaticResource BorderStrong}" BorderThickness="1" CornerRadius="8" Padding="10,5" Margin="0,0,8,8">
+                        <Border Background="{DynamicResource BgElevated}" BorderBrush="{StaticResource BorderStrong}" BorderThickness="1" CornerRadius="8" Padding="10,5" Margin="0,0,8,8">
                             <TextBlock Text="{Binding Media.Id, StringFormat='AniList {0}'}" Style="{StaticResource ChipText}"/>
                         </Border>
-                        <Border Background="#1E293B" BorderBrush="{StaticResource BorderStrong}" BorderThickness="1" CornerRadius="8" Padding="10,5" Margin="0,0,8,8">
+                        <Border Background="{DynamicResource BgElevated}" BorderBrush="{StaticResource BorderStrong}" BorderThickness="1" CornerRadius="8" Padding="10,5" Margin="0,0,8,8">
                             <Border.Style>
                                 <Style TargetType="Border">
                                     <Setter Property="Visibility" Value="Visible"/>
@@ -289,13 +298,11 @@
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
                         <TextBlock Text="Synopsis" Style="{StaticResource SubtitleText}" FontWeight="Bold" Margin="0,0,0,10"/>
-                        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-                            <TextBlock Text="{Binding Media.Synopsis}"
+                            <TextBlock Grid.Row="1" Text="{Binding Media.Synopsis}"
                                        Style="{StaticResource BodyText}"
                                        Foreground="{StaticResource TextSecondary}"
                                        TextWrapping="Wrap"
                                        LineHeight="22"/>
-                        </ScrollViewer>
                     </Grid>
                 </Border>
 
@@ -309,7 +316,7 @@
                              Visibility="{Binding IsRouting, Converter={StaticResource BoolToVisibility}}"/>
             </Grid>
 
-            <StackPanel Grid.Column="4">
+            <StackPanel x:Name="MetadataPanel" Grid.Column="4">
                 <Border Style="{StaticResource SurfaceCard}" Margin="0,0,0,14">
                     <StackPanel>
                         <DockPanel Margin="0,0,0,10">
@@ -380,5 +387,6 @@
                 </Border>
             </StackPanel>
         </Grid>
+        </ScrollViewer>
     </Grid>
 </UserControl>
