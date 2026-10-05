@@ -21,6 +21,7 @@
   <ItemGroup>
     <EmbeddedResource Include="Fixtures\Metadata\*.json" />
     <EmbeddedResource Include="..\UniversalMediaOS.WPF\Views\AudiovisualCatalogView.xaml" LogicalName="CatalogView.xaml" />
+    <EmbeddedResource Include="..\UniversalMediaOS.WPF\Views\SearchView.xaml" LogicalName="SearchView.xaml" />
     <EmbeddedResource Include="..\UniversalMediaOS.WPF\Views\PlaybackView.xaml" LogicalName="PlaybackView.xaml" />
     <ProjectReference Include="..\UniversalMediaOS.Core\UniversalMediaOS.Core.csproj" />
     <ProjectReference Include="..\UniversalMediaOS.WPF\UniversalMediaOS.WPF.csproj" />

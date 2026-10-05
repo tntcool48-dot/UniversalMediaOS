@@ -10,9 +10,9 @@
 
     <UserControl.Resources>
         <Style x:Key="TagToggleButtonStyle" TargetType="ToggleButton">
-            <Setter Property="Background" Value="#171B29"/>
-            <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
-            <Setter Property="BorderBrush" Value="{StaticResource BorderSubtle}"/>
+            <Setter Property="Background" Value="{DynamicResource BgElevated}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderSubtle}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Padding" Value="9,5"/>
             <Setter Property="Margin" Value="0,0,6,6"/>
@@ -33,13 +33,13 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Chrome" Property="Background" Value="#202A3E"/>
-                                <Setter TargetName="Chrome" Property="BorderBrush" Value="{StaticResource BorderStrong}"/>
+                                <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource ControlHoverBackground}"/>
+                                <Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource BorderStrong}"/>
                             </Trigger>
                             <Trigger Property="IsChecked" Value="True">
-                                <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
-                                <Setter TargetName="Chrome" Property="Background" Value="#332DD4BF"/>
-                                <Setter TargetName="Chrome" Property="BorderBrush" Value="{StaticResource AccentPrimary}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+                                <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource AccentSoft}"/>
+                                <Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource AccentPrimary}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -178,7 +178,7 @@
                                     <StackPanel Orientation="Horizontal">
                                         <TextBlock Text="{Binding Name}" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}"/>
                                         <TextBlock Text="{Binding KindLabel}"
-                                                   Foreground="{StaticResource TextMuted}"
+                                                   Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ToggleButton}}"
                                                    FontSize="10"
                                                    Margin="6,1,0,0"/>
                                     </StackPanel>

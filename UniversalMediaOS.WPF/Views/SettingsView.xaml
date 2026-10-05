@@ -162,7 +162,7 @@
                         </Style>
                     </Button.Style>
                 </Button>
-                <Button Content="Providers &amp; Scrapers" Tag="&#xE8A5;" Command="{Binding SelectSectionCommand}" CommandParameter="Media Providers" ToolTip="Configure every scraper, metadata catalog, and fallback provider in one place.">
+                <Button Content="{helpers:Loc Key=Providers &amp; Scrapers}" Tag="&#xE8A5;" Command="{Binding SelectSectionCommand}" CommandParameter="Media Providers" ToolTip="Configure every scraper, metadata catalog, and fallback provider in one place.">
                     <Button.Style>
                         <Style TargetType="Button" BasedOn="{StaticResource SettingsNavButton}">
                             <Style.Triggers>

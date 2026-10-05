@@ -37,6 +37,7 @@ namespace UniversalMediaOS.WPF.Helpers
             ["SETTINGS"] = "الإعدادات",
             ["Appearance"] = "المظهر",
             ["Services"] = "الخدمات",
+            ["Providers & Scrapers"] = "المزودون والكاشطات",
             ["Torrent Engine"] = "محرك التورنت",
             ["qBittorrent"] = "qBittorrent",
             ["MAL"] = "MyAnimeList",

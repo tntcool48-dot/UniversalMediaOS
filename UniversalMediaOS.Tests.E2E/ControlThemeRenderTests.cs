@@ -1,8 +1,11 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Markup;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Xml.Linq;
 using UniversalMediaOS.WPF.Helpers;
 using Xunit;
 
@@ -10,6 +13,68 @@ namespace UniversalMediaOS.Tests.E2E;
 
 public sealed class ControlThemeRenderTests
 {
+    [Theory]
+    [InlineData(FlowDirection.LeftToRight)]
+    [InlineData(FlowDirection.RightToLeft)]
+    public void SettingsNavigationShowsTheWholeProviderLabelWithinItsButton(FlowDirection direction)
+    {
+        RecoveryLayoutTests.RunSta(() =>
+        {
+            var resources = LoadResources(false);
+            var button = new Button { Resources = resources, Style = (Style)resources["PremiumNavButton"],
+                Content = "Providers & Scrapers", Tag = "\uE8A5", Width = 180, FlowDirection = direction };
+            button.Measure(new Size(180, 200));
+            button.Arrange(new Rect(button.DesiredSize));
+            button.UpdateLayout();
+            var text = Descendants(button).OfType<TextBlock>().Single(element => element.Text == "Providers & Scrapers");
+            Assert.True(text.ActualHeight >= text.FontSize * 1.75, "The long provider label must fit as complete wrapped lines.");
+            Point start = text.TranslatePoint(new Point(), button);
+            Assert.InRange(start.X, 0, button.ActualWidth - text.ActualWidth);
+            Assert.InRange(start.Y, 0, button.ActualHeight - text.ActualHeight);
+        });
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void AnimeTagChipsHaveReadableTextAfterPaletteSwitch(bool dark)
+    {
+        RecoveryLayoutTests.RunSta(() =>
+        {
+            using var stream = typeof(ControlThemeRenderTests).Assembly.GetManifestResourceStream("SearchView.xaml")!;
+            var view = XDocument.Load(stream);
+            XNamespace ui = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
+            XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
+            var style = view.Root!.Element(ui + "UserControl.Resources")!.Elements(ui + "Style")
+                .Single(element => (string?)element.Attribute(x + "Key") == "TagToggleButtonStyle");
+            var dictionary = new XElement(ui + "ResourceDictionary",
+                new XElement(ui + "ResourceDictionary.MergedDictionaries", new[] { "Tokens", "Controls" }.Select(name =>
+                    new XElement(ui + "ResourceDictionary", new XAttribute("Source", $"/UniversalMediaOS.WPF;component/Themes/{name}.xaml")))),
+                new XElement(style));
+            var resources = (ResourceDictionary)XamlReader.Parse(dictionary.ToString());
+            ThemeRuntime.ApplyPalette(resources, !dark, "Teal");
+            var chip = new ToggleButton { Resources = resources, Style = (Style)resources["TagToggleButtonStyle"], Content = "Adventure" };
+            chip.Measure(new Size(180, 60));
+            chip.Arrange(new Rect(chip.DesiredSize));
+            chip.UpdateLayout();
+            ThemeRuntime.ApplyPalette(resources, dark, "Teal");
+            foreach (bool selected in new[] { false, true })
+            {
+                chip.IsChecked = selected;
+                chip.UpdateLayout();
+                var chrome = (Border)chip.Template.FindName("Chrome", chip);
+                Color surface = ((SolidColorBrush)chrome.Background).Color;
+                Color baseColor = ColorOf(resources, "BgApp");
+                double alpha = surface.A / 255d;
+                Color composite = Color.FromRgb((byte)(surface.R * alpha + baseColor.R * (1 - alpha)),
+                    (byte)(surface.G * alpha + baseColor.G * (1 - alpha)),
+                    (byte)(surface.B * alpha + baseColor.B * (1 - alpha)));
+                Assert.True(Contrast(((SolidColorBrush)chip.Foreground).Color, composite) >= 4.5,
+                    $"Unreadable anime tag: dark={dark}, selected={selected}");
+            }
+        });
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
