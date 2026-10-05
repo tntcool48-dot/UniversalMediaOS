@@ -101,6 +101,7 @@ namespace UniversalMediaOS.WPF.ViewModels
         private readonly HashSet<string> _mediaProxySessions = [];
         private string? _preferredCaptionKey;
         private PlaybackTrackOption? _attachedCaption;
+        private string? _lastEnabledCaptionKey;
         private bool _suppressTrackSelection;
         private bool _restoringCurrentPosition;
         private string? _preferredAudioKey;
@@ -583,9 +584,17 @@ namespace UniversalMediaOS.WPF.ViewModels
             ReloadNativeSelection(value);
         }
 
+        partial void OnSelectedCaptionChanging(PlaybackTrackOption? oldValue, PlaybackTrackOption? newValue)
+        {
+            if (!_suppressTrackSelection && !IsWebViewActive && !IsDisposed &&
+                newValue?.Key == "off" && oldValue is { Key: not "off" })
+                _lastEnabledCaptionKey = oldValue.Key;
+        }
+
         partial void OnSelectedCaptionChanged(PlaybackTrackOption? value)
         {
             if (_suppressTrackSelection || value == null || IsWebViewActive || IsDisposed) return;
+            if (value.Key != "off") _lastEnabledCaptionKey = value.Key;
             _preferredCaptionKey = value.Key.StartsWith("unverified:", StringComparison.Ordinal) ? null : value.Key;
             _restoreCaptionSelection = true;
             if (value.Subtitle != null || _attachedCaption != null)
@@ -720,6 +729,9 @@ namespace UniversalMediaOS.WPF.ViewModels
             {
                 _lastLocalCaptionPaths = [];
             }
+            if (!string.Equals(urlOrPath, _lastMediaSource, StringComparison.Ordinal) &&
+                _lastEnabledCaptionKey?.StartsWith("unverified:", StringComparison.Ordinal) == true)
+                _lastEnabledCaptionKey = null;
             SourceInput = urlOrPath;
             IReadOnlyDictionary<string, string> capturedHeaders = CopyRequestHeaders(requestHeaders);
             string effectiveContentType = contentType ?? string.Empty;
@@ -1469,6 +1481,25 @@ namespace UniversalMediaOS.WPF.ViewModels
         private Task NextEpisodeAsync()
         {
             return NavigateToEpisodeAsync(ResolveEpisodeNumber(_currentEpisodeNumber, MediaTitle) + 1);
+        }
+
+        [RelayCommand]
+        private void ToggleCaptions()
+        {
+            if (_isDisposing || IsDisposed || IsWebViewActive) return;
+            RefreshCaptionState();
+            if (CaptionOptions.Count <= 1) return;
+            if (SelectedCaption is { Key: not "off" })
+                SelectedCaption = CaptionOptions.First(option => option.Key == "off");
+            else
+            {
+                // Off/on restores the requested language, rather than cycling
+                // to the next language or guessing when that file is absent.
+                var requested = _lastEnabledCaptionKey == null
+                    ? CaptionOptions.FirstOrDefault(option => option.Key != "off")
+                    : UniqueTrack(CaptionOptions, _lastEnabledCaptionKey);
+                if (requested != null) SelectedCaption = requested;
+            }
         }
 
         [RelayCommand]

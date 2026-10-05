@@ -192,6 +192,75 @@ public sealed class SubtitleHandoffTests
     }
 
     [Fact]
+    public void CaptionToggleRestoresNamedLanguageAndDoesNotSubstituteAMissingChoice()
+    {
+        using var profile = new CaptionTestDataScope();
+        using var database = new DatabaseContext();
+        using var player = new PlaybackViewModel(database);
+        player.SetTabActive(false);
+        player.LoadMedia("https://video.example/1.mp4", "Fixture", subtitles: [
+            new("https://captions.example/1/en.vtt", "English", "en"),
+            new("https://captions.example/1/ar.vtt", "Arabic", "ar")]);
+        player.SelectedCaption = player.CaptionOptions.Single(option => option.Label == "Arabic");
+        player.ToggleCaptionsCommand.Execute(null);
+        Assert.Equal("off", player.SelectedCaption!.Key);
+        Assert.Empty(CurrentMedia(player).Slaves);
+        player.ToggleCaptionsCommand.Execute(null);
+        Assert.Equal("Arabic", player.SelectedCaption!.Label);
+        Assert.Contains("ar.vtt", Assert.Single(CurrentMedia(player).Slaves).Uri);
+        player.ToggleCaptionsCommand.Execute(null);
+        player.LoadMedia("https://video.example/2.mp4", "Fixture", subtitles:
+            [new("https://captions.example/2/en.vtt", "English", "en")]);
+        player.ToggleCaptionsCommand.Execute(null);
+        Assert.Equal("off", player.SelectedCaption!.Key);
+        Assert.Empty(CurrentMedia(player).Slaves);
+        player.LoadMedia("https://video.example/3.mp4", "Fixture", subtitles: [
+            new("https://captions.example/3/ar.vtt", "Arabic", "ara"),
+            new("https://captions.example/3/en.vtt", "English", "eng")]);
+        player.ToggleCaptionsCommand.Execute(null);
+        Assert.Equal("Arabic", player.SelectedCaption!.Label);
+        Assert.Contains("ar.vtt", Assert.Single(CurrentMedia(player).Slaves).Uri);
+    }
+
+    [Fact]
+    public void BoundDownloadedCaptionSelectorRetainsOffAndEnglishAcrossRefreshAndRetry()
+    {
+        RecoveryLayoutTests.RunSta(() =>
+        {
+            using var profile = new CaptionTestDataScope();
+            string directory = Path.Combine(Path.GetTempPath(), "UniversalMediaOS.Tests", "CaptionSelector-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            string video = Path.Combine(directory, "episode.mp4");
+            string caption = Path.Combine(directory, "episode.en.srt");
+            File.WriteAllBytes(video, []);
+            File.WriteAllText(caption, "1\n00:00:00,000 --> 00:00:10,000\nFirst line\nSecond line\n");
+            try
+            {
+                using var database = new DatabaseContext();
+                using var player = new PlaybackViewModel(database);
+                player.SetTabActive(false);
+                player.LoadMedia(video, "Episode", localCaptionPaths: [caption]);
+                var selector = new System.Windows.Controls.ComboBox { DataContext = player, DisplayMemberPath = "Label" };
+                selector.SetBinding(System.Windows.Controls.ItemsControl.ItemsSourceProperty, new System.Windows.Data.Binding(nameof(player.CaptionOptions)));
+                selector.SetBinding(System.Windows.Controls.Primitives.Selector.SelectedItemProperty,
+                    new System.Windows.Data.Binding(nameof(player.SelectedCaption)) { Mode = System.Windows.Data.BindingMode.TwoWay });
+                Assert.Contains("English", ((PlaybackTrackOption)selector.SelectedItem).Label);
+                selector.SelectedItem = player.CaptionOptions.Single(option => option.Key == "off");
+                Assert.Equal("off", player.SelectedCaption!.Key);
+                Assert.Empty(CurrentMedia(player).Slaves);
+                Assert.Equal("off", ((PlaybackTrackOption)selector.SelectedItem).Key);
+                player.RetryPlaybackCommand.Execute(null);
+                Assert.Equal("off", ((PlaybackTrackOption)selector.SelectedItem).Key);
+                selector.SelectedItem = player.CaptionOptions.Single(option => option.Label.Contains("English"));
+                Assert.Contains("English", player.SelectedCaption!.Label);
+                Assert.Single(CurrentMedia(player).Slaves);
+                Assert.Contains("English", ((PlaybackTrackOption)selector.SelectedItem).Label);
+            }
+            finally { Directory.Delete(directory, true); }
+        });
+    }
+
+    [Fact]
     public void AmbiguousAndUnlabelledCaptionsUseFileIdentityInsteadOfGuessingByOrder()
     {
         var first = PlaybackTrackOption.ExternalCaptions([
