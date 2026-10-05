@@ -17,6 +17,25 @@ namespace UniversalMediaOS.Tests.E2E;
 
 public sealed class SeasonLibraryDownloadTests
 {
+    [Fact]
+    public async Task CapacityFailureBeforePermanentCopyKeepsPublishedEpisodesAndRemovesOnlyCurrentStaging()
+    {
+        bool rejectPublication = false;
+        using var fixture = new Fixture(capacity: directory => rejectPublication && Path.GetFileName(directory).StartsWith(".partial-") ? 0 : long.MaxValue);
+        var first = Source(Unit(1));
+        var saved = await fixture.Download.DownloadLibraryAsync(first, Context(first));
+        byte[] original = File.ReadAllBytes(saved.FilePath);
+        string metadata = File.ReadAllText(saved.MetadataPath);
+        rejectPublication = true;
+        var second = Source(Unit(2));
+        await Assert.ThrowsAsync<InsufficientDownloadSpaceException>(() => fixture.Download.DownloadLibraryAsync(second, Context(second)));
+        Assert.Equal(original, File.ReadAllBytes(saved.FilePath));
+        Assert.Equal(metadata, File.ReadAllText(saved.MetadataPath));
+        Assert.Single(fixture.Published());
+        Assert.Empty(Directory.GetDirectories(fixture.Temporary));
+        Assert.Empty(Directory.GetDirectories(fixture.Permanent, ".partial-*", SearchOption.AllDirectories));
+    }
+
     private static AudiovisualIdentity Identity => new()
     { Kind = AudiovisualMediaKind.Television, ContentForm = AudiovisualContentForm.Series, Title = "Series", Year = 2008,
         PrimaryId = new("tvmaze", "show", "169"), ImdbId = "tt0903747" };
@@ -495,11 +514,11 @@ public sealed class SeasonLibraryDownloadTests
         public AuthorizedMediaDownloadService Download { get; }
         public AudiovisualLibraryService Library { get; }
         public TestViewModel ViewModel { get; }
-        public Fixture(Func<string, CancellationToken, Task<string>>? probe = null)
+        public Fixture(Func<string, CancellationToken, Task<string>>? probe = null, Func<string, long>? capacity = null)
         {
             Directory.CreateDirectory(_root); _http = new(Handler);
             Config = new(Path.Combine(_root, "config.json")); Config.SetSetting("DownloadDirectory", Permanent);
-            Download = new(_http, Config, Temporary, probe ?? ((_, _) => Task.FromResult("Audio language unverified")));
+            Download = new(_http, Config, Temporary, probe ?? ((_, _) => Task.FromResult("Audio language unverified")), availableSpace: capacity);
             Library = new(Path.Combine(_root, "library.json"));
             ViewModel = new(Catalog, Library, Download, new(_http), new Dialog(), new Launcher());
         }

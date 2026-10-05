@@ -157,11 +157,12 @@ public sealed partial class AuthorizedMediaDownloadService
         { AppLogger.Log($"Temporary video cleanup will retry on restart: {ex.Message}", "WARNING"); }
     }
 
-    internal static void CheckTemporarySpace(string directory, long remainingBytes)
+    internal static void CheckTemporarySpace(string directory, long remainingBytes,
+        Func<string, long>? availableSpace = null)
     {
-        var drive = new DriveInfo(Path.GetPathRoot(directory)!);
-        if (drive.AvailableFreeSpace - remainingBytes < TemporaryReserveBytes)
-            throw new IOException("Not enough free space for temporary playback. Free space or use Stream.");
+        long free = availableSpace?.Invoke(directory) ?? new DriveInfo(Path.GetPathRoot(directory)!).AvailableFreeSpace;
+        if (free - remainingBytes < TemporaryReserveBytes)
+            throw new InsufficientDownloadSpaceException("Not enough free space for temporary playback. Free space or use Stream.");
     }
 
     internal static async Task<string> ProbeDownloadedMediaAsync(string path, CancellationToken token)

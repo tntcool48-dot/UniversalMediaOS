@@ -23,6 +23,7 @@ public sealed class TemporaryEpisodeWatchService
     private const string EpisodeMarkerPattern = @"\bS\d{1,2}E(\d{1,4})(?!\d)|(?<![A-Za-z0-9])(?:episode|ep|e|#)\s*0*(\d{1,4})(?!\d)|\s[-–—]\s*0*(\d{1,4})(?!\d)";
     private readonly Func<string, Action<string>?, CancellationToken, Task<List<TorrentResult>>> _search;
     private readonly string _root;
+    private readonly Func<string, long> _availableSpace;
     private readonly SemaphoreSlim _transferGate = new(1, 1);
     private readonly object _sync = new();
     private readonly Dictionary<string, CacheEntry> _completed = new(StringComparer.Ordinal);
@@ -39,9 +40,11 @@ public sealed class TemporaryEpisodeWatchService
     }
 
     internal TemporaryEpisodeWatchService(
-        Func<string, Action<string>?, CancellationToken, Task<List<TorrentResult>>> search, string root)
+        Func<string, Action<string>?, CancellationToken, Task<List<TorrentResult>>> search, string root,
+        Func<string, long>? availableSpace = null)
     {
         _search = search;
+        _availableSpace = availableSpace ?? (directory => new DriveInfo(Path.GetPathRoot(directory)!).AvailableFreeSpace);
         _root = Path.GetFullPath(root);
         Directory.CreateDirectory(_root);
         CleanupOrphans();
@@ -59,6 +62,7 @@ public sealed class TemporaryEpisodeWatchService
         await _transferGate.WaitAsync(token);
         try
         {
+            token.ThrowIfCancellationRequested();
             lock (_sync)
             {
                 if (_completed.TryGetValue(key, out var cached))
@@ -93,6 +97,7 @@ public sealed class TemporaryEpisodeWatchService
                     lockHandle = new FileStream(Path.Combine(directory, ".active"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
                     var selection = await TransferCandidateAsync(candidate, title, episode, audio, directory, log, token);
                     if (selection == null) continue;
+                    token.ThrowIfCancellationRequested();
                     var entry = new CacheEntry(directory, selection.Value.Path, selection.Value.AudioNotice,
                         selection.Value.CaptionPaths, lockHandle);
                     lock (_sync) _completed.Add(key, entry);
@@ -102,6 +107,7 @@ public sealed class TemporaryEpisodeWatchService
                         entry.AudioNotice, entry.CaptionPaths);
                 }
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+                catch (InsufficientDownloadSpaceException) { throw; }
                 catch (Exception ex)
                 {
                     log($"Torrent candidate failed: {ex.Message}");
@@ -212,15 +218,12 @@ public sealed class TemporaryEpisodeWatchService
                 log("Episode file is outside the supported size range.");
                 return null;
             }
-            long free = new DriveInfo(Path.GetPathRoot(directory)!).AvailableFreeSpace;
-            if (free < video.Length + ReservedFreeBytes)
-                throw new IOException("Not enough free disk space for a temporary episode and safety reserve.");
-
             string stem = Path.GetFileNameWithoutExtension(video.FullPath);
             var sidecars = manager.Files.Where(file => CaptionExtensions.Contains(Path.GetExtension(file.FullPath), StringComparer.OrdinalIgnoreCase) &&
                 Path.GetDirectoryName(file.FullPath)?.Equals(Path.GetDirectoryName(video.FullPath), StringComparison.OrdinalIgnoreCase) == true &&
                 Path.GetFileNameWithoutExtension(file.FullPath).StartsWith(stem, StringComparison.OrdinalIgnoreCase) &&
                 file.Length <= 20 * 1024 * 1024 && IsInside(directory, file.FullPath)).ToArray();
+            CheckAvailableSpace(directory, video.Length + sidecars.Sum(file => file.Length));
             foreach (ITorrentManagerFile file in manager.Files)
                 await manager.SetFilePriorityAsync(file, ReferenceEquals(file, video) || sidecars.Contains(file)
                     ? Priority.Normal : Priority.DoNotDownload);
@@ -234,6 +237,7 @@ public sealed class TemporaryEpisodeWatchService
             while (manager.PartialProgress < 99.999 || !video.BitField.AllTrue)
             {
                 token.ThrowIfCancellationRequested();
+                CheckAvailableSpace(directory, 0);
                 if (DateTime.UtcNow >= deadline || DateTime.UtcNow - lastProgressAt >= StallTimeout)
                     throw new TimeoutException("Temporary episode transfer stalled or exceeded two hours.");
                 if (manager.PartialProgress > lastProgress + 0.05)
@@ -246,6 +250,8 @@ public sealed class TemporaryEpisodeWatchService
             }
 
             await manager.StopAsync(TimeSpan.FromSeconds(2));
+            token.ThrowIfCancellationRequested();
+            CheckAvailableSpace(directory, 0);
             string path = File.Exists(video.DownloadCompleteFullPath) ? video.DownloadCompleteFullPath : video.FullPath;
             if (!File.Exists(path) || new FileInfo(path).Length != video.Length)
                 throw new IOException("Torrent reported completion without a complete episode file.");
@@ -259,6 +265,12 @@ public sealed class TemporaryEpisodeWatchService
         {
             if (manager.State != TorrentState.Stopped) await manager.StopAsync(TimeSpan.FromSeconds(2));
         }
+    }
+
+    private void CheckAvailableSpace(string directory, long remainingBytes)
+    {
+        if (_availableSpace(directory) - remainingBytes < ReservedFreeBytes)
+            throw new InsufficientDownloadSpaceException("Not enough free disk space for a temporary episode and safety reserve.");
     }
 
     internal static (string Path, string[] Captions) PublishEpisodeFiles(

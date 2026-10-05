@@ -29,6 +29,7 @@ public sealed partial class AuthorizedMediaDownloadService
     private readonly HttpClient _httpClient;
     private readonly DomainHotSwapper _config;
     private readonly PlaylistMediaDownload _playlistDownload;
+    private readonly Func<string, long> _availableSpace;
 
     public AuthorizedMediaDownloadService(HttpClient httpClient, DomainHotSwapper config)
         : this(httpClient, config,
@@ -39,13 +40,16 @@ public sealed partial class AuthorizedMediaDownloadService
 
     internal AuthorizedMediaDownloadService(HttpClient httpClient, DomainHotSwapper config,
         string temporaryRoot, Func<string, CancellationToken, Task<string>> probe,
-        HttpClient? playlistClient = null, UniversalMediaOS.Core.Services.IPreparationProcessRunner? processRunner = null)
+        HttpClient? playlistClient = null, UniversalMediaOS.Core.Services.IPreparationProcessRunner? processRunner = null,
+        Func<string, long>? availableSpace = null)
     {
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _config = config ?? throw new ArgumentNullException(nameof(config));
         _temporaryRoot = Path.GetFullPath(temporaryRoot);
         _probe = probe;
-        _playlistDownload = new PlaylistMediaDownload(playlistClient, processRunner);
+        _availableSpace = availableSpace ?? (directory => new DriveInfo(Path.GetPathRoot(directory)!).AvailableFreeSpace);
+        _playlistDownload = new PlaylistMediaDownload(playlistClient, processRunner,
+            (directory, remaining) => CheckTemporarySpace(directory, remaining, _availableSpace));
         Directory.CreateDirectory(_temporaryRoot);
         CleanupTemporaryOrphans();
     }
@@ -155,7 +159,7 @@ public sealed partial class AuthorizedMediaDownloadService
         {
             throw new InvalidOperationException("The media file is larger than the configured download limit.");
         }
-        if (temporaryDirectory != null) CheckTemporarySpace(destinationDirectory, declaredLength ?? 0);
+        if (temporaryDirectory != null) CheckTemporarySpace(destinationDirectory, declaredLength ?? 0, _availableSpace);
 
         string extension = ResolveExtension(source, suggestedFileName, response.Content.Headers.ContentType);
         string baseName = SanitizeFileName(string.IsNullOrWhiteSpace(title) ? "media" : title);
@@ -202,7 +206,7 @@ public sealed partial class AuthorizedMediaDownloadService
                     }
                     if (temporaryDirectory != null && totalReceived >= nextSpaceCheck)
                     {
-                        CheckTemporarySpace(destinationDirectory, 0);
+                        CheckTemporarySpace(destinationDirectory, 0, _availableSpace);
                         nextSpaceCheck = totalReceived + 64L * 1024 * 1024;
                     }
 

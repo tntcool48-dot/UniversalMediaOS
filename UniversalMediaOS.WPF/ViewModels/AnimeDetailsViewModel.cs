@@ -234,6 +234,7 @@ namespace UniversalMediaOS.WPF.ViewModels
 
         partial void OnMediaChanged(MediaResult? value)
         {
+            _temporaryWatchCts?.Cancel();
             int generation = Interlocked.Increment(ref _dubLookupGeneration);
             _dubLookupCts?.Cancel();
             _dubLookupCts = null;
@@ -314,6 +315,7 @@ namespace UniversalMediaOS.WPF.ViewModels
 
         partial void OnSelectedEpisodeChanged(string value)
         {
+            _temporaryWatchCts?.Cancel();
             OnPropertyChanged(nameof(EpisodeProgressText));
             OnPropertyChanged(nameof(CanWatchSelectedEpisode));
             OnPropertyChanged(nameof(CanDownloadSelectedEpisode));
@@ -324,6 +326,7 @@ namespace UniversalMediaOS.WPF.ViewModels
 
         partial void OnSelectedAudioModeChanged(string value)
         {
+            _temporaryWatchCts?.Cancel();
             OnPropertyChanged(nameof(IsSubSelected));
             OnPropertyChanged(nameof(IsDubSelected));
             OnPropertyChanged(nameof(AudioAvailabilityText));

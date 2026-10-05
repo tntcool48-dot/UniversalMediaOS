@@ -111,7 +111,7 @@ public sealed partial class AuthorizedMediaDownloadService
             var watch = await DownloadTemporaryAsync(source, context, progress, token).ConfigureAwait(false);
             using var lease = watch.Lease;
             long requiredBytes = new FileInfo(watch.FilePath).Length + watch.CaptionPaths.Sum(path => new FileInfo(path).Length);
-            CheckTemporarySpace(staging, requiredBytes);
+            CheckTemporarySpace(staging, requiredBytes, _availableSpace);
             string mediaName = "media" + Path.GetExtension(watch.FilePath);
             await CopyLibraryFileAsync(watch.FilePath, Path.Combine(staging, mediaName), token).ConfigureAwait(false);
             var captions = new List<string>();

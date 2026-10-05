@@ -22,9 +22,15 @@ internal sealed partial class PlaylistMediaDownload
         RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
     private readonly HttpClient _http;
     private readonly IPreparationProcessRunner _runner;
+    private readonly Action<string, long> _checkSpace;
 
-    public PlaylistMediaDownload(HttpClient? http = null, IPreparationProcessRunner? runner = null)
-    { _http = http ?? PublicClient; _runner = runner ?? new PreparationProcessRunner(); }
+    public PlaylistMediaDownload(HttpClient? http = null, IPreparationProcessRunner? runner = null,
+        Action<string, long>? checkSpace = null)
+    {
+        _http = http ?? PublicClient;
+        _runner = runner ?? new PreparationProcessRunner();
+        _checkSpace = checkSpace ?? ((directory, remaining) => AuthorizedMediaDownloadService.CheckTemporarySpace(directory, remaining));
+    }
 
     internal static bool IsDash(AudiovisualSource source) =>
         Path.GetExtension(source.Location.AbsolutePath).Equals(".mpd", StringComparison.OrdinalIgnoreCase) ||
@@ -62,7 +68,7 @@ internal sealed partial class PlaylistMediaDownload
                 selectedSource = source with { ValidatedHlsVariant = next };
             }
         }
-        AuthorizedMediaDownloadService.CheckTemporarySpace(directory, job.BytesReceived);
+        _checkSpace(directory, job.BytesReceived);
         string partial = Path.Combine(directory, "media.partial");
         string output = Path.Combine(directory, "media.mkv");
         string managed = Path.Combine(AppDataPaths.LocalBaseDirectory, "UniversalMediaOS", "Services", "ffmpeg.exe");
@@ -91,7 +97,7 @@ internal sealed partial class PlaylistMediaDownload
                 token.ThrowIfCancellationRequested();
                 long size = File.Exists(partial) ? new FileInfo(partial).Length : 0;
                 if (size > maximumBytes) throw new IOException("The assembled video exceeded the configured download limit.");
-                AuthorizedMediaDownloadService.CheckTemporarySpace(directory, 0);
+                _checkSpace(directory, 0);
                 if (size != lastSize) { lastSize = size; lastChange = clock.Elapsed; }
                 if (clock.Elapsed - lastChange > TimeSpan.FromMinutes(2))
                     throw new TimeoutException("Video assembly stopped making progress. Retry or use Stream.");
@@ -163,7 +169,7 @@ internal sealed partial class PlaylistMediaDownload
                 string language = track.Language.ToLowerInvariant() switch
                 { "en" or "eng" => ".en", "ar" or "ara" => ".ar", _ => "" };
                 string path = Path.Combine(directory, $"caption-{paths.Count + 1:00}{language}{extension}");
-                AuthorizedMediaDownloadService.CheckTemporarySpace(directory, bytes.Length);
+                _checkSpace(directory, bytes.Length);
                 await File.WriteAllBytesAsync(path, bytes, token).ConfigureAwait(false);
                 paths.Add(path);
             }
@@ -423,7 +429,7 @@ internal sealed partial class PlaylistMediaDownload
             long? expected = response.Content.Headers.ContentLength;
             if (expected > maximumBytes - BytesReceived || key && expected > 16)
                 throw new IOException("A playlist resource exceeds the download limit.");
-            AuthorizedMediaDownloadService.CheckTemporarySpace(directory, expected ?? 0);
+            downloader._checkSpace(directory, expected ?? 0);
             await using var input = await response.Content.ReadAsStreamAsync(token).ConfigureAwait(false);
             await using var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read,
                 128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
@@ -454,7 +460,7 @@ internal sealed partial class PlaylistMediaDownload
                 received += read; BytesReceived += read;
                 if (BytesReceived > maximumBytes || key && received > 16)
                     throw new IOException("The playlist exceeded the configured download limit.");
-                AuthorizedMediaDownloadService.CheckTemporarySpace(directory, 0);
+                downloader._checkSpace(directory, 0);
                 await output.WriteAsync(buffer.AsMemory(0, read), token).ConfigureAwait(false);
                 if (_reportClock.ElapsedMilliseconds >= 200)
                 { progress?.Report(new(BytesReceived, null, null)); _reportClock.Restart(); }

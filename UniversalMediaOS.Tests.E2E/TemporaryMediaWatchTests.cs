@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
+using UniversalMediaOS.Core.Archiving;
 using UniversalMediaOS.Core.Configuration;
 using UniversalMediaOS.Core.OtherMedia;
 using Xunit;
@@ -11,6 +12,33 @@ namespace UniversalMediaOS.Tests.E2E;
 
 public sealed class TemporaryMediaWatchTests
 {
+    [Fact]
+    public async Task CapacityRejectionBeforeTheBodyKeepsPermanentFilesAndDoesNotProbeOrPublish()
+    {
+        using var fixture = new Fixture(capacity: _ => 0);
+        Directory.CreateDirectory(fixture.Library);
+        string permanent = Path.Combine(fixture.Library, "retained.mkv");
+        File.WriteAllText(permanent, "retained");
+        await Assert.ThrowsAsync<InsufficientDownloadSpaceException>(() =>
+            fixture.Service.DownloadTemporaryAsync(Source(), Context(Source())));
+        Assert.Equal(0, fixture.Probes);
+        Assert.Empty(Directory.GetDirectories(fixture.Temporary));
+        Assert.Equal("retained", File.ReadAllText(permanent));
+    }
+
+    [Fact]
+    public async Task CapacityLossDuringAnUnknownLengthBodyRemovesOnlyItsPartial()
+    {
+        int checks = 0;
+        using var fixture = new Fixture(capacity: _ => ++checks == 1 ? long.MaxValue : 0);
+        fixture.Handler.Body = new RepeatedBody(65L * 1024 * 1024);
+        await Assert.ThrowsAsync<InsufficientDownloadSpaceException>(() =>
+            fixture.Service.DownloadTemporaryAsync(Source(), Context(Source())));
+        Assert.Equal(2, checks);
+        Assert.Equal(0, fixture.Probes);
+        Assert.Empty(Directory.GetDirectories(fixture.Temporary));
+    }
+
     [Fact]
     public async Task CompletedFileIsSharedUntilLastLeaseAndLibraryCopySurvives()
     {
@@ -159,7 +187,7 @@ public sealed class TemporaryMediaWatchTests
         public DomainHotSwapper Config { get; }
         public AuthorizedMediaDownloadService Service { get; }
         public int Probes { get; private set; }
-        public Fixture(Func<string, CancellationToken, Task<string>>? probe = null)
+        public Fixture(Func<string, CancellationToken, Task<string>>? probe = null, Func<string, long>? capacity = null)
         {
             Directory.CreateDirectory(_root);
             Http = new(Handler);
@@ -170,7 +198,7 @@ public sealed class TemporaryMediaWatchTests
                 Probes++;
                 Assert.True(File.Exists(path));
                 return probe == null ? "Audio language unverified" : await probe(path, token);
-            });
+            }, availableSpace: capacity);
         }
         public void Dispose()
         {
@@ -213,6 +241,28 @@ public sealed class TemporaryMediaWatchTests
             Waiting.TrySetResult();
             await Task.Delay(Timeout.InfiniteTimeSpan, token);
             return 0;
+        }
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() => throw new NotSupportedException();
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    private sealed class RepeatedBody(long remaining) : Stream
+    {
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken token = default)
+        {
+            token.ThrowIfCancellationRequested();
+            int count = (int)Math.Min(buffer.Length, remaining);
+            buffer.Span[..count].Fill(1);
+            remaining -= count;
+            return ValueTask.FromResult(count);
         }
         public override bool CanRead => true;
         public override bool CanSeek => false;

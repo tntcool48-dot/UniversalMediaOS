@@ -12,6 +12,34 @@ namespace UniversalMediaOS.Tests.E2E;
 
 public sealed class PlaylistMediaDownloadTests
 {
+    [Theory]
+    [InlineData("headers")]
+    [InlineData("body")]
+    [InlineData("assembly")]
+    public async Task CapacityFailureBeforeOrDuringSegmentsOrBeforeAssemblyCannotPublish(string phase)
+    {
+        int checks = 0;
+        using var fixture = new Fixture(capacity: _ =>
+        {
+            checks++;
+            return phase switch
+            {
+                "headers" => 0,
+                "body" => checks == 1 ? long.MaxValue : 0,
+                _ => 1024L * 1024 * 1024 + 1500
+            };
+        });
+        fixture.Handler.Text("video.m3u8", Leaf());
+        fixture.Handler.Bytes("one.ts", new byte[1000]);
+        fixture.Handler.Bytes("two.ts", new byte[1000]);
+        await Assert.ThrowsAsync<UniversalMediaOS.Core.Archiving.InsufficientDownloadSpaceException>(() =>
+            fixture.Service.DownloadTemporaryAsync(Source(), Context(Source())));
+        Assert.Null(fixture.Runner.Arguments);
+        Assert.Equal(0, fixture.Probes);
+        Assert.Empty(Directory.GetDirectories(fixture.Temporary));
+        Assert.Equal(phase == "assembly" ? 3 : 2, fixture.Handler.Requests.Count);
+    }
+
     [Fact]
     public async Task FiniteDashLocalizesNumberAndTimeTemplatesAndRetainsBothAudioLanguages()
     {
@@ -428,14 +456,14 @@ public sealed class PlaylistMediaDownloadTests
         public AuthorizedMediaDownloadService Service { get; }
         private readonly HttpClient _http;
         public int Probes { get; private set; }
-        public Fixture(bool realMedia = false)
+        public Fixture(bool realMedia = false, Func<string, long>? capacity = null)
         {
             Directory.CreateDirectory(_root); _http = new(Handler);
             Config = new(Path.Combine(_root, "config.json"));
             Config.SetSetting("DownloadDirectory", Path.Combine(_root, "permanent"));
             Service = new(_http, Config, Temporary, (path, token) =>
             { Probes++; return realMedia ? AuthorizedMediaDownloadService.ProbeDownloadedMediaAsync(path, token) : Task.FromResult("Audio unverified"); },
-                _http, realMedia ? new PreparationProcessRunner() : Runner);
+                _http, realMedia ? new PreparationProcessRunner() : Runner, capacity);
         }
         public void Dispose()
         {
