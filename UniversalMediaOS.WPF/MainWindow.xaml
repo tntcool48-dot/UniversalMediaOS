@@ -316,10 +316,8 @@
         </Border>
 
         <Grid Grid.Row="3">
-            <controls:PlaybackTabContentHost Tabs="{Binding Tabs}" ActiveTab="{Binding ActiveTab}">
-                <controls:PlaybackTabContentHost.LayoutTransform>
-                    <ScaleTransform ScaleX="{Binding ActiveContentScale}" ScaleY="{Binding ActiveContentScale}"/>
-                </controls:PlaybackTabContentHost.LayoutTransform>
+            <controls:PlaybackTabContentHost Tabs="{Binding Tabs}" ActiveTab="{Binding ActiveTab}"
+                                             ContentScale="{Binding ActiveContentScale}">
                 <controls:PlaybackTabContentHost.Style>
                     <Style TargetType="controls:PlaybackTabContentHost">
                         <Setter Property="Visibility" Value="Visible"/>

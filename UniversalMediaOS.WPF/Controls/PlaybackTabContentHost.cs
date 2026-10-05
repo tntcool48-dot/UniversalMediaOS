@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using UniversalMediaOS.WPF.ViewModels;
 using UniversalMediaOS.WPF.Views;
 
@@ -21,10 +22,31 @@ public sealed class PlaybackTabContentHost : Grid
         nameof(ActiveTab), typeof(MediaTabViewModel), typeof(PlaybackTabContentHost),
         new PropertyMetadata(null, (owner, _) => ((PlaybackTabContentHost)owner).UpdateContent()));
 
+    public static readonly DependencyProperty ContentScaleProperty = DependencyProperty.Register(
+        nameof(ContentScale), typeof(double), typeof(PlaybackTabContentHost),
+        new PropertyMetadata(1.0, (owner, args) =>
+        {
+            var scale = ((PlaybackTabContentHost)owner)._otherContentScale;
+            scale.ScaleX = scale.ScaleY = (double)args.NewValue;
+        }));
+
     private readonly ContentControl _otherContent = new();
+    private readonly ScaleTransform _otherContentScale = new();
     private readonly Dictionary<MediaTabViewModel, PlaybackView> _players = new();
 
-    public PlaybackTabContentHost() => Children.Add(_otherContent);
+    public PlaybackTabContentHost()
+    {
+        // Scaling an ancestor also reaches hidden retained VideoViews. Their
+        // separate foreground HWND can retain that scale after tab return.
+        _otherContent.LayoutTransform = _otherContentScale;
+        Children.Add(_otherContent);
+    }
+
+    public double ContentScale
+    {
+        get => (double)GetValue(ContentScaleProperty);
+        set => SetValue(ContentScaleProperty, value);
+    }
 
     public ObservableCollection<MediaTabViewModel>? Tabs
     {
