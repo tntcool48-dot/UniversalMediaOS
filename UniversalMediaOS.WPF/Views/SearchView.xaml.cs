@@ -103,6 +103,16 @@ namespace UniversalMediaOS.WPF.Views
             }
         }
 
+        private void SearchLayoutRoot_SizeChanged(object sender, SizeChangedEventArgs e)
+        {
+            // At minimum window size and maximum workspace zoom, the wrapped
+            // filters must scroll instead of consuming the result viewport.
+            double fixedRows = SearchLayoutRoot.RowDefinitions[0].Height.Value
+                + SearchLayoutRoot.RowDefinitions[2].Height.Value;
+            FiltersScroller.MaxHeight = System.Math.Min(176,
+                System.Math.Max(44, e.NewSize.Height - fixedRows - 120));
+        }
+
         private void SearchResults_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
         {
             QueueLoadMoreCheck();
@@ -146,7 +156,9 @@ namespace UniversalMediaOS.WPF.Views
             }
 
             double distanceToBottom = _resultsScrollViewer.ScrollableHeight - _resultsScrollViewer.VerticalOffset;
-            bool nearBottom = distanceToBottom <= 2;
+            // Pixel scrolling still prefetches the next page before the current
+            // viewport ends, rather than waiting for the final two pixels.
+            bool nearBottom = distanceToBottom <= _resultsScrollViewer.ViewportHeight;
             bool needsContentToScroll = forceWhenScrollableAreaIsSmall && _resultsScrollViewer.ScrollableHeight <= 0;
 
             if ((nearBottom || needsContentToScroll) && vm.LoadMoreAnimeCommand.CanExecute(null))
