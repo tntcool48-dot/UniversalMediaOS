@@ -14,11 +14,13 @@ namespace UniversalMediaOS.Tests.E2E.Tests;
 public sealed class LiveCaptionSelectionTests(ITestOutputHelper output)
 {
     [Theory]
-    [InlineData(false, false)]
-    [InlineData(true, false)]
-    [InlineData(false, true)]
-    [InlineData(true, true)]
-    public async Task DownloadedCaptionOffAndOnRetainPositionAndPauseInNativeOverlay(bool paused, bool dropdown)
+    [InlineData(false, false, false)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(true, true, false)]
+    [InlineData(false, true, true)]
+    [InlineData(true, true, true)]
+    public async Task DownloadedCaptionOffAndOnRetainPositionAndPauseInNativeOverlay(bool paused, bool dropdown, bool restoredWindow)
     {
         using var fixture = new AppFixture();
         string directory = Path.Combine(fixture.SandboxPath, "caption-media");
@@ -29,9 +31,9 @@ public sealed class LiveCaptionSelectionTests(ITestOutputHelper output)
         {
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
             var encoded = await new PreparationProcessRunner().RunAsync("ffmpeg", ["-nostdin", "-hide_banner", "-v", "error",
-                "-f", "lavfi", "-i", "testsrc=size=160x90:rate=25", "-t", "40", "-c:v", "mpeg4", "-y", video], deadline.Token);
+                "-f", "lavfi", "-i", "testsrc=size=160x90:rate=25", "-t", "90", "-c:v", "mpeg4", "-y", video], deadline.Token);
             Assert.Equal(0, encoded.ExitCode);
-            File.WriteAllText(Path.Combine(directory, "caption.en.srt"), "1\n00:00:00,000 --> 00:00:40,000\nFirst line\nSecond line\n");
+            File.WriteAllText(Path.Combine(directory, "caption.en.srt"), "1\n00:00:00,000 --> 00:01:30,000\nFirst line\nSecond line\n");
             var identity = new AudiovisualIdentity { PrimaryId = new("fixture", "show", "captions"),
                 Kind = AudiovisualMediaKind.Television,
                 ContentForm = AudiovisualContentForm.Series, Title = "Caption fixture", Year = 2008 };
@@ -83,8 +85,8 @@ public sealed class LiveCaptionSelectionTests(ITestOutputHelper output)
             }
             // Mouse input exercises the Popup's routed events and focus handling;
             // a Selection pattern alone bypasses the reported failure.
-            Captions()!.Click();
-            Assert.True(SpinWait.SpinUntil(() => Captions()!.Patterns.ExpandCollapse.Pattern
+            Captions()!.Click(moveMouse: true);
+            Assert.True(SpinWait.SpinUntil(() => Captions()?.Patterns.ExpandCollapse.Pattern
                 .ExpandCollapseState.Value == ExpandCollapseState.Expanded, TimeSpan.FromSeconds(2)),
                 $"Opening {label}; enabled={Captions()!.IsEnabled}; selected={Captions()!.SelectedItem?.Text}; " +
                 $"position={Position()}; paused={IsPaused()}\n{ReadLog(logPath)}");
@@ -93,9 +95,16 @@ public sealed class LiveCaptionSelectionTests(ITestOutputHelper output)
             Thread.Sleep(2000);
             Assert.Equal(ExpandCollapseState.Expanded,
                 Captions()!.Patterns.ExpandCollapse.Pattern.ExpandCollapseState.Value);
-            Captions()!.Items.Single(item => item.Text == label).Click();
+            Captions()!.Items.Single(item => item.Text == label).Click(moveMouse: true);
         }
 
+        if (restoredWindow)
+        {
+            Window().Patterns.Window.Pattern.SetWindowVisualState(WindowVisualState.Normal);
+            Assert.True(SpinWait.SpinUntil(() => Window().Patterns.Window.Pattern.WindowVisualState.Value == WindowVisualState.Normal,
+                TimeSpan.FromSeconds(3)));
+            output.WriteLine($"Restored caption window: {Window().BoundingRectangle}");
+        }
         Button("Player")!.Invoke();
         Assert.True(SpinWait.SpinUntil(() => Button("Play or pause") != null, TimeSpan.FromSeconds(3)));
         Window().FindFirstDescendant(cf => cf.ByName("Playback options"))!.Patterns.ExpandCollapse.Pattern.Expand();

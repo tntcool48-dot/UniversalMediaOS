@@ -604,7 +604,12 @@ public sealed class DownloadQueueService : IDisposable
             if (activeId.HasValue)
             {
                 using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-                PauseAsync(activeId.Value, timeout.Token).GetAwaiter().GetResult();
+                var stopToken = timeout.Token;
+                // OnExit runs on the WPF dispatcher. Start the whole native
+                // stop chain away from that context before waiting, and bound
+                // even an executor which ignores its cancellation token.
+                Task.Run(() => PauseAsync(activeId.Value, stopToken))
+                    .WaitAsync(stopToken).GetAwaiter().GetResult();
             }
         }
         catch (Exception ex)

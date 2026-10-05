@@ -100,6 +100,72 @@ public sealed class DownloadQueueServiceTests
         Assert.Single(queue.GetJobsSnapshot());
     }
 
+    [Fact]
+    public async Task Dispose_OnBlockedUiContext_StopsTransferAndPersistsPausedProgress()
+    {
+        using var sandbox = new QueueSandbox();
+        var pause = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var executor = new ControlledExecutor { PauseCompletion = pause };
+        using var queue = new DownloadQueueService(sandbox.QueuePath, executor);
+        var job = queue.Enqueue("Shutdown fixture");
+        await executor.WaitForStartAsync(job.Id);
+        await WaitUntilAsync(() => job.Progress == 25);
+        var context = new HeldUiContext();
+        Exception? failure = null;
+        var closingThread = new Thread(() =>
+        {
+            SynchronizationContext.SetSynchronizationContext(context);
+            try { queue.Dispose(); }
+            catch (Exception error) { failure = error; }
+        }) { IsBackground = true };
+        closingThread.Start();
+        await WaitUntilAsync(() => executor.PauseCalls == 1);
+        pause.SetResult(true);
+        bool closedWithoutUiPump;
+        try { closedWithoutUiPump = closingThread.Join(TimeSpan.FromSeconds(2)); }
+        finally
+        {
+            // Release an old implementation's captured continuation so a
+            // failing regression leaves neither a blocked thread nor a worker.
+            context.Release();
+            Assert.True(closingThread.Join(TimeSpan.FromSeconds(3)));
+        }
+        Assert.True(closedWithoutUiPump, "Download shutdown waited for the blocked UI thread's continuation.");
+        Assert.Null(failure);
+        Assert.Equal(DownloadJobStatus.Paused, job.Status);
+        using var restored = new DownloadQueueService(sandbox.QueuePath, new ControlledExecutor());
+        var saved = Assert.Single(restored.GetJobsSnapshot());
+        Assert.Equal(DownloadJobStatus.Paused, saved.Status);
+        Assert.Equal(25, saved.Progress);
+        Assert.Equal(job.Id, saved.Id);
+    }
+
+    [Fact]
+    public async Task Dispose_BoundsPauseExecutorWhichIgnoresCancellation()
+    {
+        using var sandbox = new QueueSandbox();
+        var pause = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var executor = new ControlledExecutor { PauseCompletion = pause };
+        using var queue = new DownloadQueueService(sandbox.QueuePath, executor);
+        var job = queue.Enqueue("Unresponsive stop fixture");
+        await executor.WaitForStartAsync(job.Id);
+        var disposal = Task.Run(queue.Dispose);
+        bool bounded;
+        try
+        {
+            bounded = await Task.WhenAny(disposal, Task.Delay(TimeSpan.FromSeconds(8))) == disposal;
+        }
+        finally
+        {
+            pause.TrySetResult(true);
+            await disposal.WaitAsync(TimeSpan.FromSeconds(3));
+        }
+        Assert.True(bounded, "Download shutdown ignored its five-second stop deadline.");
+        Assert.Equal(DownloadJobStatus.Paused, job.Status);
+        using var restored = new DownloadQueueService(sandbox.QueuePath, new ControlledExecutor());
+        Assert.Equal(DownloadJobStatus.Paused, Assert.Single(restored.GetJobsSnapshot()).Status);
+    }
+
     private static async Task WaitUntilAsync(Func<bool> predicate, int timeoutMilliseconds = 5000)
     {
         using var timeout = new CancellationTokenSource(timeoutMilliseconds);
@@ -113,6 +179,7 @@ public sealed class DownloadQueueServiceTests
 
         public int PauseCalls { get; private set; }
         public int CancelCalls { get; private set; }
+        public TaskCompletionSource<bool>? PauseCompletion { get; init; }
 
         public async Task<DownloadExecutionResult> ExecuteAsync(
             DownloadQueueJob job,
@@ -132,7 +199,7 @@ public sealed class DownloadQueueServiceTests
         public Task<bool> PauseActiveAsync(CancellationToken token)
         {
             PauseCalls++;
-            return Task.FromResult(true);
+            return PauseCompletion?.Task ?? Task.FromResult(true);
         }
 
         public Task<bool> CancelActiveAsync(CancellationToken token)
@@ -153,6 +220,16 @@ public sealed class DownloadQueueServiceTests
         {
             Assert.True(_executions.TryGetValue(id, out var completion));
             completion.TrySetResult(new DownloadExecutionResult(success, path));
+        }
+    }
+
+    private sealed class HeldUiContext : SynchronizationContext
+    {
+        private readonly ConcurrentQueue<(SendOrPostCallback Callback, object? State)> _pending = new();
+        public override void Post(SendOrPostCallback callback, object? state) => _pending.Enqueue((callback, state));
+        public void Release()
+        {
+            while (_pending.TryDequeue(out var work)) work.Callback(work.State);
         }
     }
 

@@ -649,6 +649,9 @@ namespace UniversalMediaOS.Core.Archiving
                     AutoSaveLoadDhtCache = true,
                     AutoSaveLoadFastResume = true,
                     AutoSaveLoadMagnetLinkMetadata = true,
+                    // Only completed files receive their playable extension.
+                    // MonoTorrent retains the .!mt partial across stop/restart.
+                    UsePartialFiles = true,
                     CacheDirectory = cacheDir,
                     DhtEndPoint = new IPEndPoint(IPAddress.Any, 0),
                     ListenEndPoints = new Dictionary<string, IPEndPoint>
