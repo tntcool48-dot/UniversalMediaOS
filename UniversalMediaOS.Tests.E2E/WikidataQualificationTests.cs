@@ -19,7 +19,8 @@ public sealed class WikidataQualificationTests
         Assert.Contains(page.Items, i => i.Identity.ImdbId == "tt1160419" && i.Identity.Year == 2021);
         Assert.All(page.Items, i => Assert.Equal(AudiovisualContentForm.Feature, i.Identity.ContentForm));
         Assert.Equal(2, handler.Uris.Count);
-        Assert.Contains("haswbstatement:P31=Q11424|P31=Q202866", Uri.UnescapeDataString(handler.Uris[0].Query));
+        Assert.Contains("haswbstatement:P31=Q11424", Uri.UnescapeDataString(handler.Uris[0].Query));
+        Assert.Contains("P31=Q202866", Uri.UnescapeDataString(handler.Uris[0].Query));
     }
 
     [Fact]
@@ -52,6 +53,97 @@ public sealed class WikidataQualificationTests
             Assert.Null(i.Identity.TmdbId);
             Assert.Empty(i.OriginalLanguage);
         });
+    }
+
+    [Theory]
+    [InlineData(AudiovisualMediaKind.Movie)]
+    [InlineData(AudiovisualMediaKind.Cartoon)]
+    public async Task RecordedYourNameFindsTheExactAnimeFilm(AudiovisualMediaKind kind)
+    {
+        var handler = new Handler(_ => Fixture("your-name"));
+        using var http = new HttpClient(handler);
+        var page = await new WikidataMetadataClient(new(http)).GetPageAsync(
+            new(kind, AudiovisualCatalogMode.Search, "Your Name"));
+        var film = Assert.Single(page.Items, i => i.Identity.PrimaryId!.Value == "Q21697406");
+        Assert.Equal("Your Name", film.Title);
+        Assert.Equal(2016, film.Identity.Year);
+        Assert.Equal("tt5311514", film.Identity.ImdbId);
+        Assert.True(film.Identity.IsAnimated);
+        Assert.Equal(kind, film.Identity.Kind);
+        Assert.Null(film.Identity.TmdbId);
+        Assert.Empty(film.OriginalLanguage);
+        Assert.Equal(2, handler.Uris.Count);
+        Assert.Contains("P31=Q20650540", Uri.UnescapeDataString(handler.Uris[0].Query));
+        Assert.Contains("srlimit=5", handler.Uris[0].Query);
+        if (kind == AudiovisualMediaKind.Cartoon) Assert.Single(page.Items);
+        else Assert.Equal(5, page.Items.Count);
+    }
+
+    [Theory]
+    [InlineData(AudiovisualMediaKind.Movie)]
+    [InlineData(AudiovisualMediaKind.Cartoon)]
+    public async Task RecordedAnimatedFeaturesRetainIdsYearsAndAnimation(AudiovisualMediaKind kind)
+    {
+        var handler = new Handler(_ => Fixture("animated-features"));
+        using var http = new HttpClient(handler);
+        var page = await new WikidataMetadataClient(new(http)).GetPageAsync(new(kind));
+        Assert.Equal(2, page.Items.Count);
+        Assert.Contains(page.Items, i => i.Identity.PrimaryId!.Value == "Q1051023" &&
+            i.Identity.ImdbId == "tt1142977" && i.Identity.Year == 2012);
+        Assert.Contains(page.Items, i => i.Identity.PrimaryId!.Value == "Q16246692" &&
+            i.Identity.ImdbId == "tt3183630" && i.Identity.Year == 2013);
+        Assert.All(page.Items, i =>
+        {
+            Assert.True(i.Identity.IsAnimated);
+            Assert.Empty(i.OriginalLanguage);
+        });
+        Assert.Contains("P31=Q29168811", Uri.UnescapeDataString(handler.Uris[0].Query));
+    }
+
+    [Theory]
+    [InlineData(AudiovisualMediaKind.Movie)]
+    [InlineData(AudiovisualMediaKind.Cartoon)]
+    public async Task RecordedFeatureFilmsDoNotInventAnimationOrLanguage(AudiovisualMediaKind kind)
+    {
+        var handler = new Handler(_ => Fixture("feature-films"));
+        using var http = new HttpClient(handler);
+        var page = await new WikidataMetadataClient(new(http)).GetPageAsync(new(kind));
+        if (kind == AudiovisualMediaKind.Cartoon)
+        {
+            Assert.Empty(page.Items);
+            Assert.DoesNotContain("P31=Q24869", Uri.UnescapeDataString(handler.Uris[0].Query));
+            return;
+        }
+        Assert.Equal(5, page.Items.Count);
+        Assert.Contains(page.Items, i => i.Identity.PrimaryId!.Value == "Q137395955" && i.Title == "Froggie");
+        Assert.All(page.Items, i =>
+        {
+            Assert.Null(i.Identity.IsAnimated);
+            Assert.Empty(i.OriginalLanguage);
+            Assert.Equal(AudiovisualContentForm.Feature, i.Identity.ContentForm);
+        });
+        Assert.Contains("P31=Q24869", Uri.UnescapeDataString(handler.Uris[0].Query));
+    }
+
+    [Theory]
+    [InlineData("Q7725634", "normal")]
+    [InlineData("Q134556", "normal")]
+    [InlineData("Q24869", "deprecated")]
+    [InlineData("Q20650540", "deprecated")]
+    [InlineData("Q29168811", "deprecated")]
+    public async Task SameTitleAndImdbCannotReplaceQualifiedFilmClaims(string type, string rank)
+    {
+        const string search = """{"query":{"search":[{"title":"Q1"}]}}""";
+        string entities = """
+        {"entities":{"Q1":{"id":"Q1","labels":{"en":{"value":"Your Name"}},"claims":{
+          "P31":[{"rank":"$rank","mainsnak":{"snaktype":"value","datavalue":{"value":{"id":"$type"}}}}],
+          "P345":[{"rank":"normal","mainsnak":{"snaktype":"value","datavalue":{"value":"tt5311514"}}}]
+        }}}}
+        """.Replace("$rank", rank).Replace("$type", type);
+        using var http = new HttpClient(new Handler(_ => (search, entities)));
+        var page = await new WikidataMetadataClient(new(http)).GetPageAsync(new(AudiovisualMediaKind.Movie));
+        Assert.Empty(page.Items);
+        Assert.True(page.IsPartial);
     }
 
     [Theory]

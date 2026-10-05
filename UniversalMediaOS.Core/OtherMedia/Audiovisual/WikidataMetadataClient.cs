@@ -19,6 +19,10 @@ internal sealed class WikidataMetadataClient : IAudiovisualMetadataClient
         MaxResponseBytes = 128 * 1024, MediaKinds = [AudiovisualMediaKind.Movie, AudiovisualMediaKind.Cartoon]
     };
     private const int UpstreamPageSize = 5;
+    // Qualified subclasses occur as direct P31 values; Wikidata search does not
+    // automatically include their ancestors. Keep discovery and parsing aligned.
+    private static readonly string[] AnimatedFilmTypes = ["Q202866", "Q20650540", "Q29168811"];
+    private static readonly string[] FilmTypes = ["Q11424", "Q24869", .. AnimatedFilmTypes];
 
     public WikidataMetadataClient(ProviderRequestCoordinator requests, Uri? baseUri = null,
         bool includePosters = false, TimeSpan? posterBudget = null)
@@ -57,8 +61,8 @@ internal sealed class WikidataMetadataClient : IAudiovisualMetadataClient
         string terms = Regex.Replace(request.Query, @"[^\p{L}\p{N}\s]", " ").Trim();
         if (request.Mode == AudiovisualCatalogMode.Search && terms.Length == 0)
             return new([], null, [new(_provider.Id, ProviderOutcomeStatus.Success, TimeSpan.Zero)]);
-        string filter = request.Kind == AudiovisualMediaKind.Cartoon ? "haswbstatement:P31=Q202866"
-            : "haswbstatement:P31=Q11424|P31=Q202866";
+        var filmTypes = request.Kind == AudiovisualMediaKind.Cartoon ? AnimatedFilmTypes : FilmTypes;
+        string filter = "haswbstatement:" + string.Join('|', filmTypes.Select(type => "P31=" + type));
         string query = request.Mode == AudiovisualCatalogMode.Search ? $"\"{terms}\" {filter}" : filter;
         int limit = Math.Min(request.PageSize, UpstreamPageSize);
         var searched = await _requests.FetchAsync(_provider, Url(new()
@@ -179,8 +183,8 @@ internal sealed class WikidataMetadataClient : IAudiovisualMetadataClient
     {
         if (Text(entity, "id") != id) throw new JsonException();
         var types = Values(entity, "P31").Select(v => Text(v, "id")).ToArray();
-        bool animated = types.Contains("Q202866");
-        if (!animated && !types.Contains("Q11424") || kind == AudiovisualMediaKind.Cartoon && !animated) return null;
+        bool animated = types.Any(type => AnimatedFilmTypes.Contains(type));
+        if (!types.Any(type => FilmTypes.Contains(type)) || kind == AudiovisualMediaKind.Cartoon && !animated) return null;
         var labels = entity.GetProperty("labels");
         string title = labels.TryGetProperty("en", out var english) ? Text(english, "value") : "";
         if (title.Length == 0 && labels.TryGetProperty("mul", out var shared)) title = Text(shared, "value");

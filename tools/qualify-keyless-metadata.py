@@ -62,7 +62,9 @@ def tvmaze_search(query):
 
 def wikidata_typed(query="", offset=0, animated=False):
     base = "https://www.wikidata.org/w/api.php?"
-    category = "haswbstatement:P31=Q202866" if animated else "haswbstatement:P31=Q11424|P31=Q202866"
+    animated_types = ("Q202866", "Q20650540", "Q29168811")
+    film_types = animated_types if animated else ("Q11424", "Q24869", *animated_types)
+    category = "haswbstatement:" + "|".join("P31=" + identity for identity in film_types)
     search = fetch(base + urllib.parse.urlencode({
         "action": "query", "list": "search", "srsearch": f'"{query}" {category}' if query else category,
         "srnamespace": 0, "srprop": "", "srlimit": 5, "sroffset": offset,
@@ -101,7 +103,10 @@ def main():
         cases = [("films-page-1", lambda: wikidata_typed()),
                  ("films-page-2", lambda: wikidata_typed(offset=5)),
                  ("dune", lambda: wikidata_typed("Dune")),
-                 ("toy", lambda: wikidata_typed("Toy Story", animated=True))]
+                 ("toy", lambda: wikidata_typed("Toy Story", animated=True)),
+                 ("your-name", lambda: wikidata_typed("Your Name")),
+                 ("spirited-away", lambda: wikidata_typed("Spirited Away")),
+                 ("akira", lambda: wikidata_typed("Akira"))]
     report = []
     for name, action in cases:
         started = time.monotonic()

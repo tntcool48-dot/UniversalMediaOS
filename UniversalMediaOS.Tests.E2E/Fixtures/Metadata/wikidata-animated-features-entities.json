@@ -1,0 +1,205 @@
+{
+  "entities": {
+    "Q1051023": {
+      "id": "Q1051023",
+      "labels": {
+        "en": {
+          "language": "en",
+          "value": "Frankenweenie"
+        }
+      },
+      "claims": {
+        "P345": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "datavalue": {
+                "value": "tt1142977",
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "P31": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "datavalue": {
+                "value": {
+                  "entity-type": "item",
+                  "numeric-id": 29168811,
+                  "id": "Q29168811"
+                },
+                "type": "wikibase-entityid"
+              }
+            }
+          }
+        ],
+        "P577": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "datavalue": {
+                "value": {
+                  "time": "+2012-09-20T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              }
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "datavalue": {
+                "value": {
+                  "time": "+2012-01-01T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 9,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              }
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "datavalue": {
+                "value": {
+                  "time": "+2013-01-24T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              }
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "datavalue": {
+                "value": {
+                  "time": "+2013-01-03T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "Q16246692": {
+      "id": "Q16246692",
+      "labels": {
+        "en": {
+          "language": "en",
+          "value": "The Boy and the World"
+        }
+      },
+      "claims": {
+        "P31": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "datavalue": {
+                "value": {
+                  "entity-type": "item",
+                  "numeric-id": 29168811,
+                  "id": "Q29168811"
+                },
+                "type": "wikibase-entityid"
+              }
+            }
+          }
+        ],
+        "P577": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "datavalue": {
+                "value": {
+                  "time": "+2013-09-20T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              }
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "datavalue": {
+                "value": {
+                  "time": "+2015-12-17T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              }
+            }
+          },
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "datavalue": {
+                "value": {
+                  "time": "+2014-01-17T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 11,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              }
+            }
+          }
+        ],
+        "P345": [
+          {
+            "rank": "normal",
+            "mainsnak": {
+              "snaktype": "value",
+              "datavalue": {
+                "value": "tt3183630",
+                "type": "string"
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}
