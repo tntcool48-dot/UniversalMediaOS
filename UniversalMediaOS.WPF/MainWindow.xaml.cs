@@ -66,6 +66,7 @@ namespace UniversalMediaOS.WPF
         private double _restoreHeight;
         private WindowChrome? _restoreWindowChrome;
         private readonly bool _startOnSecondaryMonitor;
+        private readonly bool _maximizeOnSecondaryStartup;
 
         [StructLayout(LayoutKind.Sequential)]
         private struct RECT
@@ -99,12 +100,30 @@ namespace UniversalMediaOS.WPF
             {
                 WindowState = WindowState.Normal;
             }
+            _maximizeOnSecondaryStartup = _startOnSecondaryMonitor && WindowState == WindowState.Maximized;
+            if (_maximizeOnSecondaryStartup)
+            {
+                // Establish the normal restore rectangle on the requested monitor
+                // before maximizing. An initially maximized HWND otherwise keeps
+                // its pre-placement restore rectangle on the primary display.
+                WindowState = WindowState.Normal;
+                Loaded += MaximizeOnSecondaryStartup;
+            }
             DataContext = viewModel;
             SourceInitialized += MainWindow_SourceInitialized;
             WindowHelper.EnableMica(this);
             LocalizationRuntime.EnableAutoApply(this, () =>
                 viewModel.SettingsViewModel.SelectedLanguage.Equals("Arabic", StringComparison.OrdinalIgnoreCase));
             UpdateWindowStateVisuals();
+        }
+
+        private void MaximizeOnSecondaryStartup(object sender, RoutedEventArgs e)
+        {
+            Loaded -= MaximizeOnSecondaryStartup;
+            if (_maximizeOnSecondaryStartup)
+            {
+                WindowState = WindowState.Maximized;
+            }
         }
 
         private void MainWindow_SourceInitialized(object? sender, EventArgs e)

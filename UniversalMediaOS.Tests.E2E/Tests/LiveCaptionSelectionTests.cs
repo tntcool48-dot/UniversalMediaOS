@@ -7,10 +7,11 @@ using UniversalMediaOS.Core.OtherMedia;
 using UniversalMediaOS.Core.Services;
 using UniversalMediaOS.Tests.E2E.Infrastructure;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace UniversalMediaOS.Tests.E2E.Tests;
 
-public sealed class LiveCaptionSelectionTests
+public sealed class LiveCaptionSelectionTests(ITestOutputHelper output)
 {
     [Theory]
     [InlineData(false, false)]
@@ -60,6 +61,19 @@ public sealed class LiveCaptionSelectionTests
             .Patterns.RangeValue.Pattern.Value.Value ?? 0;
         bool IsPaused() => Button("Play or pause")?.FindFirstDescendant(cf => cf.ByText("Play")) != null;
         string logPath = Path.Combine(fixture.SandboxPath, "Roaming", "UniversalMediaOS", "app.log");
+        void WaitForReloadState(string label, int priorLogLength, Stopwatch selectionTimer)
+        {
+            Assert.True(SpinWait.SpinUntil(() =>
+            {
+                if (IsPaused() != paused) return false;
+                if (!paused) return true;
+                // A selected label and the pre-start Play button do not establish
+                // a paused decoder. Require a new native pause event from reload.
+                string log = ReadLog(logPath);
+                return log.Length > priorLogLength && log[priorLogLength..].Contains("LibVLC paused event fired", StringComparison.Ordinal);
+            }, TimeSpan.FromSeconds(3)), $"{label} did not restore the requested playback state.\n{ReadLog(logPath)}");
+            output.WriteLine($"{label}: requested {(paused ? "paused" : "playing")} state observed after {selectionTimer.Elapsed.TotalSeconds:0.000} s.");
+        }
         void SelectCaption(string label)
         {
             if (!dropdown)
@@ -107,8 +121,11 @@ public sealed class LiveCaptionSelectionTests
         }
         double position = Position();
         var elapsed = Stopwatch.StartNew();
+        int priorLogLength = ReadLog(logPath).Length;
+        var selectionTimer = Stopwatch.StartNew();
         SelectCaption("CC Off");
         Assert.True(SpinWait.SpinUntil(() => Captions()?.SelectedItem?.Text == "CC Off", TimeSpan.FromSeconds(3)), ReadLog(logPath));
+        WaitForReloadState("CC Off", priorLogLength, selectionTimer);
         Thread.Sleep(600); // Includes another decoder time/track refresh.
         Assert.Equal("CC Off", Captions()!.SelectedItem?.Text);
         Assert.InRange(Position(), position - 750,
@@ -116,8 +133,11 @@ public sealed class LiveCaptionSelectionTests
         Assert.Equal(paused, IsPaused());
         Assert.Equal(originalBytes, new FileInfo(video).Length);
         Assert.Equal(originalWriteTime, File.GetLastWriteTimeUtc(video));
+        priorLogLength = ReadLog(logPath).Length;
+        selectionTimer.Restart();
         SelectCaption("English (downloaded)");
         Assert.True(SpinWait.SpinUntil(() => Captions()?.SelectedItem?.Text == "English (downloaded)", TimeSpan.FromSeconds(3)), ReadLog(logPath));
+        WaitForReloadState("English (downloaded)", priorLogLength, selectionTimer);
         Thread.Sleep(600);
         Assert.Equal("English (downloaded)", Captions()!.SelectedItem?.Text);
         Assert.InRange(Position(), position - 750,
