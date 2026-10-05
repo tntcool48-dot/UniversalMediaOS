@@ -1,6 +1,8 @@
 <UserControl x:Class="UniversalMediaOS.WPF.Views.DownloadsView"
+             x:Name="DownloadsViewRoot"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:helpers="clr-namespace:UniversalMediaOS.WPF.Helpers"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              mc:Ignorable="d"
@@ -215,13 +217,22 @@
                                             ToolTip="Delete this local downloaded file."/>
 
                                     <Button Grid.Column="3"
-                                            Content="{Binding OpenActionText}"
                                             Command="{Binding DataContext.PlayFileCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                             CommandParameter="{Binding}"
-                                            Style="{StaticResource PrimaryButton}"
                                             Width="92"
                                             Height="36"
-                                            ToolTip="Play this downloaded file."/>
+                                            ToolTip="Play this downloaded file.">
+                                        <Button.Style>
+                                            <Style TargetType="Button" BasedOn="{StaticResource PrimaryButton}">
+                                                <Setter Property="Content" Value="{helpers:Loc Play}"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsBook}" Value="True">
+                                                        <Setter Property="Content" Value="{helpers:Loc Read}"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Button.Style>
+                                    </Button>
                                 </Grid>
                             </Border>
                         </Border>

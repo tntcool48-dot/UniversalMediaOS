@@ -19,6 +19,14 @@ namespace UniversalMediaOS.WPF.Helpers
                 typeof(LocalizationRuntime),
                 new PropertyMetadata(null));
 
+        private static readonly DependencyProperty OriginalToolTipProperty =
+            DependencyProperty.RegisterAttached("OriginalToolTip", typeof(string), typeof(LocalizationRuntime),
+                new PropertyMetadata(null));
+
+        private static readonly DependencyProperty AutoApplyProperty =
+            DependencyProperty.RegisterAttached("AutoApply", typeof(bool), typeof(LocalizationRuntime),
+                new FrameworkPropertyMetadata(false, FrameworkPropertyMetadataOptions.Inherits, OnAutoApplyChanged));
+
         private static string _language = "English";
         public static event EventHandler? LanguageChanged;
 
@@ -33,6 +41,20 @@ namespace UniversalMediaOS.WPF.Helpers
             ["Watch Together"] = "مشاهدة جماعية",
             ["My List"] = "قائمتي",
             ["Downloads"] = "التنزيلات",
+            ["Open folder"] = "فتح المجلد",
+            ["Read"] = "قراءة",
+            ["Local episodes, season packs, and readable files ready for playback."] = "حلقات محلية ومواسم وملفات جاهزة للمشاهدة أو القراءة.",
+            ["Download queue"] = "قائمة التنزيل",
+            ["Jobs are saved across restarts. Pause stops the torrent before the worker exits; partial data is kept for resume."] = "تُحفظ التنزيلات بعد إعادة التشغيل. يوقف الإيقاف المؤقت التورنت مع الاحتفاظ بالبيانات الجزئية للاستكمال.",
+            ["No downloaded files yet"] = "لا توجد ملفات منزلة بعد",
+            ["Queued seasons and local media will appear here after refresh."] = "ستظهر المواسم والملفات المحلية هنا بعد التحديث.",
+            ["Play this downloaded file."] = "شغّل هذا الملف المنزل.",
+            ["Delete this local downloaded file."] = "احذف هذا الملف المحلي المنزل.",
+            ["Rescan the download folder and refresh this list."] = "أعد فحص مجلد التنزيل وتحديث القائمة.",
+            ["Open the downloads folder in File Explorer."] = "افتح مجلد التنزيل في مستكشف الملفات.",
+            ["Set your preferred display language"] = "اختر لغة عرض التطبيق",
+            ["Settings Saved"] = "تم حفظ الإعدادات",
+            ["Settings saved. Reopen any Movie, TV, Cartoon, or Book tabs to apply provider changes."] = "تم حفظ الإعدادات. أعد فتح تبويبات الأفلام أو المسلسلات أو الرسوم المتحركة أو الكتب لتطبيق تغييرات المزودين.",
             ["Settings"] = "الإعدادات",
             ["SETTINGS"] = "الإعدادات",
             ["Appearance"] = "المظهر",
@@ -148,6 +170,12 @@ namespace UniversalMediaOS.WPF.Helpers
 
         public static void EnableAutoApply(FrameworkElement root, Func<bool> isArabic)
         {
+            // Loaded is direct, so the window's handler cannot see later views.
+            // Inherit an instance subscription into newly created descendants;
+            // translate only that element, preserving data bindings and avoiding
+            // a full-tree walk on every child load.
+            root.SetValue(AutoApplyProperty, true);
+
             root.AddHandler(FrameworkElement.LoadedEvent, new RoutedEventHandler((sender, _) =>
             {
                 if (sender is DependencyObject dependencyObject)
@@ -156,6 +184,26 @@ namespace UniversalMediaOS.WPF.Helpers
                 }
             }), true);
 
+        }
+
+        private static void OnAutoApplyChanged(DependencyObject owner, DependencyPropertyChangedEventArgs args)
+        {
+            if (owner is not FrameworkElement element) return;
+            if ((bool)args.NewValue)
+            {
+                element.Loaded += LocalizedElement_Loaded;
+                if (element.IsLoaded) TranslateElement(element, IsArabic(_language));
+            }
+            else
+            {
+                element.Loaded -= LocalizedElement_Loaded;
+            }
+        }
+
+        private static void LocalizedElement_Loaded(object sender, RoutedEventArgs args)
+        {
+            if (sender is DependencyObject element)
+                TranslateElement(element, IsArabic(_language));
         }
 
         public static void ApplyToOpenWindows()
@@ -200,28 +248,29 @@ namespace UniversalMediaOS.WPF.Helpers
             switch (element)
             {
                 case TextBlock textBlock when BindingOperations.GetBindingExpression(textBlock, TextBlock.TextProperty) == null:
-                    textBlock.Text = TranslateStoredText(textBlock, textBlock.Text, arabic);
+                    textBlock.Text = TranslateStoredText(textBlock, textBlock.Text, arabic, OriginalTextProperty);
                     break;
 
                 case ContentControl contentControl
                     when contentControl.Content is string content &&
                          BindingOperations.GetBindingExpression(contentControl, ContentControl.ContentProperty) == null:
-                    contentControl.Content = TranslateStoredText(contentControl, content, arabic);
+                    contentControl.Content = TranslateStoredText(contentControl, content, arabic, OriginalTextProperty);
                     break;
             }
 
             if (element is FrameworkElement frameworkElement &&
                 frameworkElement.ToolTip is string tooltip)
             {
-                frameworkElement.ToolTip = TranslateStoredText(frameworkElement, tooltip, arabic);
+                frameworkElement.ToolTip = TranslateStoredText(frameworkElement, tooltip, arabic, OriginalToolTipProperty);
             }
         }
 
-        private static string TranslateStoredText(DependencyObject owner, string current, bool arabic)
+        private static string TranslateStoredText(DependencyObject owner, string current, bool arabic,
+            DependencyProperty originalProperty)
         {
-            string? stored = (string?)owner.GetValue(OriginalTextProperty);
+            string? stored = (string?)owner.GetValue(originalProperty);
             string original = stored ?? RestoreEnglishIfTranslated(current);
-            owner.SetValue(OriginalTextProperty, original);
+            owner.SetValue(originalProperty, original);
 
             if (!arabic)
             {

@@ -844,8 +844,8 @@ namespace UniversalMediaOS.WPF.ViewModels
 
             AppLogger.Log("Settings saved successfully.");
             _dialogService.ShowInfoDialog(
-                "Settings saved. Reopen any Movie, TV, Cartoon, or Book tabs to apply provider changes.",
-                "Settings Saved");
+                Helpers.LocalizationRuntime.Translate("Settings saved. Reopen any Movie, TV, Cartoon, or Book tabs to apply provider changes."),
+                Helpers.LocalizationRuntime.Translate("Settings Saved"));
         }
 
         private void RefreshMalConnectionStatus(string? overrideStatus = null)
