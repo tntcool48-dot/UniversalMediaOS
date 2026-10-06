@@ -17,6 +17,109 @@ public sealed class ResumeDispatcherContentionTests(ITestOutputHelper output)
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public void RepeatedPausesKeepAtMostTwoAcceptedWritesForTheCurrentUnitWhileLocked(bool catalog)
+    {
+        using var profile = new IsolatedProfile();
+        RecoveryLayoutTests.RunSta(() =>
+        {
+            using var player = CreatePlayer(profile, catalog);
+            var (work, unit) = SaveInitial(player, profile);
+            using (var seed = new DatabaseContext()) seed.SaveResumeState(work, "adjacent-unit", 57);
+            int maximumPending = 0;
+            var elapsed = Stopwatch.StartNew();
+            using (var writer = new WriterLock(profile.ConnectionString!, work, unit, 5000))
+            {
+                for (int index = 0; index < 200; index++)
+                {
+                    player.PlaybackTime = (120 + index) * 1000;
+                    player.SetTabActive(false);
+                    player.SetTabActive(true);
+                    maximumPending = Math.Max(maximumPending, player.PendingResumeSaveCount);
+                }
+                elapsed.Stop();
+                output.WriteLine($"{(catalog ? "Catalog" : "Legacy")} 200 pauses: {maximumPending} pending saves, {elapsed.Elapsed.TotalMilliseconds:0.000} ms.");
+                Assert.InRange(maximumPending, 1, 2);
+                Assert.InRange(elapsed.Elapsed.TotalMilliseconds, 0, 500);
+            }
+            AssertPersisted(work, unit, 319);
+            using var verify = new DatabaseContext();
+            Assert.Equal(57, verify.GetResumeState(work, "adjacent-unit"));
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void CoalescedPausesDoNotMoveAcrossAnotherUnitsRead(bool catalog)
+    {
+        using var profile = new IsolatedProfile();
+        RecoveryLayoutTests.RunSta(() =>
+        {
+            using var player = CreatePlayer(profile, catalog);
+            var (work, unit) = SaveInitial(player, profile);
+            var next = EpisodeContext(1);
+            string nextWork = catalog ? next.WorkKey : "42";
+            string nextUnit = catalog ? next.UnitKey! : "2";
+            using (var seed = new DatabaseContext()) seed.SaveResumeState(nextWork, nextUnit, 180);
+            using (var writer = new WriterLock(profile.ConnectionString!, work, unit, 5000))
+            {
+                for (int index = 0; index < 200; index++)
+                {
+                    player.PlaybackTime = (120 + index) * 1000;
+                    player.SetTabActive(false);
+                    player.SetTabActive(true);
+                }
+                player.LoadEmbed("https://next.invalid/2", "Next unit", "2", malId: 42,
+                    audiovisualContext: catalog ? next : null);
+                player.BeginUserSeek();
+                player.CommitUserSeek(123_000);
+                player.ReportWebPlaybackAction("seek", 123, 600);
+                player.SetTabActive(false);
+                player.LoadEmbed(catalog ? "https://returned.invalid/embed" : "https://fixture.invalid/embed", "Contention fixture",
+                    audiovisualContext: catalog ? Context() : null);
+                Assert.False(player.ResumeLoadCompleted.IsCompleted);
+            }
+            WaitForResumeLoad(player);
+            Assert.True(player.TryConsumePendingWebResumePosition(out double restored));
+            Assert.Equal(319, restored);
+            AssertPersisted(work, unit, 319);
+            AssertPersisted(nextWork, nextUnit, 123);
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void CompletionReplacesQueuedPausesAndSurvivesLateProgressAndClose(bool catalog)
+    {
+        using var profile = new IsolatedProfile();
+        RecoveryLayoutTests.RunSta(() =>
+        {
+            using var player = CreatePlayer(profile, catalog);
+            var (work, unit) = SaveInitial(player, profile);
+            using (var seed = new DatabaseContext()) seed.SaveResumeState(work, "adjacent-unit", 57);
+            using (var writer = new WriterLock(profile.ConnectionString!, work, unit, 5000))
+            {
+                for (int index = 0; index < 200; index++)
+                {
+                    player.PlaybackTime = (120 + index) * 1000;
+                    player.SetTabActive(false);
+                    player.SetTabActive(true);
+                }
+                player.ReportWebPlaybackProgress(600, 600, true, paused: true);
+                player.ReportWebPlaybackProgress(200, 600, false, paused: true);
+                player.Dispose();
+                Assert.InRange(player.PendingResumeSaveCount, 0, 2);
+            }
+            AssertPersisted(work, unit, 0);
+            using var verify = new DatabaseContext();
+            Assert.Equal(57, verify.GetResumeState(work, "adjacent-unit"));
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public void SourceChangesReturnPromptlyAndOnlyTheLatestUnitReceivesItsResume(bool catalog)
     {
         using var profile = new IsolatedProfile();

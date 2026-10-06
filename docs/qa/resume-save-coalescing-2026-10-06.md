@@ -1,0 +1,31 @@
+# Progress-save accumulation during SQLite contention — October 6, 2026
+
+Two hundred inactive-tab pauses while an actual writer held the isolated database accumulated **200 pending catalog saves** and **111 pending legacy saves**. UI calls were prompt, but superseded tasks/contexts accumulated behind SQLite. Both bounded-queue regressions failed before repair. [Baseline](C:/Users/user/animeapp/UniversalMediaOS.Tests.E2E/TestResults/resume-save-queue-before-2026-10-06.trx).
+
+## Repair
+
+A player now keeps one executing save and one pending observation for its current uninterrupted source/ownership interval. Repeated accepted positions replace the pending immutable observation rather than allocate another database operation or register the same task repeatedly with app-wide flush. The worker captures that observation once its existing ordering gate is available; keys, duration, completion and observation time travel with it. Source reads and explicit ownership changes freeze the previous interval before reserving order. Completion replaces queued positions with zero and retains the late-progress guard. Accepted operations survive tab disposal and participate in app-wide draining; workers do not read native handles.
+
+This bounds repeated writes within an interval. It does **not** establish a global cap across arbitrarily many distinct source/read/ownership intervals. Those boundaries and portable configuration/migration remain open.
+
+## Controlled verification
+
+The two-case repaired run passed. The expanded production run passed **112 checks**, zero failures/skips, in **47 seconds**; after the hosted fixture lifetime corrections, the same meaningful cohort passed **112 checks**, zero failures/skips, in **48 seconds**, with no build warnings/errors. [Final results](C:/Users/user/animeapp/UniversalMediaOS.Tests.E2E/TestResults/resume-save-coalescing-lifetime-confirmed-2026-10-06.trx).
+
+Two hundred pauses retained **two pending saves** for each path and persisted the latest **319 seconds**, preserving an adjacent unit at 57. The production-confirmed burst returned in **1.516 ms (catalog)** / **0.162 ms (legacy)**. New checks require queued positions to finish before another unit is read, return to the original unit at 319, retain the explicitly sought other unit at **123 seconds**, and persist completion zero through late telemetry/close. Existing anime/film/TV identities, older-tab ownership, generations, native short-video decode/replay, subtitle handoff, resources and app-close tests remain.
+
+The first expanded run had **66 passes / one failure / zero skips**, 67 total, in **44 seconds**. Its new legacy return fixture changed the source URL of a URL-based unit and had no original-unit resume. It now reopens the exact original URL; canonical catalog behavior still tests a changed provider URL. No production identity matching was weakened. [Earlier run](C:/Users/user/animeapp/UniversalMediaOS.Tests.E2E/TestResults/resume-save-coalescing-focused-2026-10-06.trx). Under a three-second writer, the production-confirmed source-change checks each retained **48 dispatcher ticks**, maximum gaps **66.561 / 66.462 ms**, with original/latest/adjacent positions separate.
+
+## Actual second-monitor verification
+
+Owned Release process **40828**, isolated retained-download profile, Arabic controls, **1280×800 at (2880, 478)**. Downloads opened Pilot from **810.545 seconds**, decoded native frames/English captions and K paused/persisted **827.604**. An owned writer made no updates and rolled back at its safety deadline (**60.031 seconds**, no manual release). During the lock, two Right-arrow seeks and Downloads → Pilot returns retained paused decoded frames and authored English cues. Final slider **887.604 seconds** stayed paused. The writer released before final Alt+F4; this batch does not claim another locked process-exit check.
+
+After orderly close, a read-only query held **exactly 887.604 seconds**. S01E02/S02E01/Dune remained **339.236 / 371.022 / 318.291**. The owned app and writer exited, while human Debug process **40880** remained. Six protected videos (**2,028,915,092 bytes**), size/mtime, metadata/caption hashes, original configuration and original four resume rows were unchanged. No Scale, permanent/partial payload or account data changed. An initial configuration read used the wrong nested path; the scoped launch used the correct data-root variable and existing Secondary setting.
+
+Physical WPF SHA-256 **6614BDC7C4FDC815FFBF55D3137CD34805E0EA13B8FC8468A9860E2414E00679**; Core **F9FAFBD5CF65673766685BEF3B4BF2F91B0D8D1D8A2CFD458E93F918BBD95042**. Source HEAD was `da94b0d` plus this uncommitted production repair. Existing Release outputs were reused. Small private evidence remains in `.artifacts/implementation/resume-save-coalescing-20261006/`. Physical helper timestamps differ from the hosted clock and are not used to infer hosted ordering.
+
+## Hosted fixture lifetimes and remaining gates
+
+The preceding `da94b0d` [full hosted run](https://github.com/tntcool48-dot/UniversalMediaOS/actions/runs/37446514384) failed **923 passes / 22 skips / five failures**, 950 total, in **7 minutes 41 seconds**, build zero warnings/errors. Four caption fixtures duplicated disposal of a player-owned DbContext while its asynchronous read used it, causing transaction-disposal exceptions. One generated local-video fixture deleted a library temporary file while accepted persistence was pending. All eight duplicate-ownership sites in that caption fixture now give sole ownership to the player, and the native fixtures explicitly drain their progress service before deleting their owned profile. Existing assertions remain; the final **112-pass** cohort above includes these corrections. This failed full run is not relabeled.
+
+The latest completed passing full hosted checkpoint remains `b1c33ed`: **928 passes / 22 skips / zero failures**, 950 total, **7 minutes 10 seconds**, clean build and Python syntax passed. Coalescing is locally verified, pending publication/full validation. Cross-interval queue limits, portable migration, forced exit/beyond-drain deadlines, Windows shutdown, complete-profile/package behavior and provider/audio acceptance stay open. Books remain deferred; Arabic cartoons remain last among non-Books work.

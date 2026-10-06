@@ -27,6 +27,7 @@ public sealed class NativeShortMediaCompletionTests
         string root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "UniversalMediaOS.Tests", "NativeLockedResume-" + Guid.NewGuid().ToString("N")));
         Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, root);
         string? connectionString = null;
+        PlaybackProgressService? progress = null;
         try
         {
             Directory.CreateDirectory(root);
@@ -44,7 +45,8 @@ public sealed class NativeShortMediaCompletionTests
                 connectionString = seed.Database.GetConnectionString()!;
             }
             using var memory = new MemoryVideo();
-            using var player = new PlaybackViewModel(new DatabaseContext());
+            progress = new(new AudiovisualLibraryService());
+            using var player = new PlaybackViewModel(new DatabaseContext(), null, null, playbackProgress: progress);
             memory.Attach(player.MediaPlayer);
             player.Volume = 0;
             using (var writer = new ResumeDispatcherContentionTests.WriterLock(connectionString, work, unit, 5000))
@@ -72,6 +74,7 @@ public sealed class NativeShortMediaCompletionTests
         }
         finally
         {
+            if (progress != null) await progress.FlushAsync().WaitAsync(TimeSpan.FromSeconds(5));
             Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, previous);
             if (connectionString != null)
             {
@@ -117,6 +120,7 @@ public sealed class NativeShortMediaCompletionTests
         string root = Path.Combine(Path.GetTempPath(), "UniversalMediaOS.Tests", "NativeCompletion-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, root);
+        PlaybackProgressService? progress = null;
         try
         {
             string video = Path.Combine(root, "short-video.mp4");
@@ -139,7 +143,8 @@ public sealed class NativeShortMediaCompletionTests
                 new() { ContentForm = AudiovisualContentForm.Series, Title = "Short completion fixture" },
                 new() { SeasonNumber = 1, EpisodeNumber = 1 }, "Short completion fixture", "", new());
             using var memory = new MemoryVideo();
-            using var player = new PlaybackViewModel(new DatabaseContext());
+            progress = new(new AudiovisualLibraryService());
+            using var player = new PlaybackViewModel(new DatabaseContext(), null, null, playbackProgress: progress);
             memory.Attach(player.MediaPlayer);
             player.Volume = 0;
             player.LoadMedia(network ? server.Url : video, context.Title, "", "1", audiovisualContext: context);
@@ -202,6 +207,7 @@ public sealed class NativeShortMediaCompletionTests
         }
         finally
         {
+            if (progress != null) await progress.FlushAsync().WaitAsync(TimeSpan.FromSeconds(5));
             using (var connection = new Microsoft.Data.Sqlite.SqliteConnection(
                 $"Data Source={Path.Combine(root, "Roaming", "UniversalMediaOS", "media_os.db")};Cache=Shared;"))
                 Microsoft.Data.Sqlite.SqliteConnection.ClearPool(connection);

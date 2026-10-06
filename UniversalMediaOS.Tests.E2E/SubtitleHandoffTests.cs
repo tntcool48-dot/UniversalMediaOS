@@ -23,8 +23,7 @@ public sealed class SubtitleHandoffTests
         Assert.Equal(body, Assert.Single(message.Subtitles).InlineVtt);
         using var profile = new CaptionTestDataScope();
         using var proxy = new HlsLoopbackProxy();
-        using var database = new DatabaseContext();
-        using var player = new PlaybackViewModel(database, null, null, null, proxy);
+        using var player = new PlaybackViewModel(new DatabaseContext(), null, null, null, proxy);
         player.SetTabActive(false);
         player.LoadMedia(message.Value, message.Title, subtitles: message.Subtitles);
         using var http = new HttpClient();
@@ -71,8 +70,7 @@ public sealed class SubtitleHandoffTests
     {
         using var profile = new CaptionTestDataScope();
         using var proxy = new HlsLoopbackProxy();
-        using var database = new DatabaseContext();
-        using var player = new PlaybackViewModel(database, null, null, null, proxy);
+        using var player = new PlaybackViewModel(new DatabaseContext(), null, null, null, proxy);
         player.SetTabActive(false);
         const string master = "https://video.example/master.m3u8";
         const string rendition = "https://video.example/1080/index.m3u8";
@@ -111,8 +109,7 @@ public sealed class SubtitleHandoffTests
     {
         using var profile = new CaptionTestDataScope();
         using var proxy = new HlsLoopbackProxy();
-        using var database = new DatabaseContext();
-        using var player = new PlaybackViewModel(database, null, null, null, proxy);
+        using var player = new PlaybackViewModel(new DatabaseContext(), null, null, null, proxy);
         player.LoadMedia("https://video.example/fixture.mp4", "Fixture", subtitles:
             [new MediaSubtitleTrack("https://captions.example/english.vtt", "English", "en",
                 Cookie: "caption-session=fixture", Referer: "https://player.example/episode/1")],
@@ -148,8 +145,7 @@ public sealed class SubtitleHandoffTests
     {
         using var profile = new CaptionTestDataScope();
         using var proxy = new HlsLoopbackProxy();
-        using var database = new DatabaseContext();
-        using var player = new PlaybackViewModel(database, null, null, null, proxy);
+        using var player = new PlaybackViewModel(new DatabaseContext(), null, null, null, proxy);
         player.SetTabActive(false);
         player.LoadMedia("https://video.example/1.mp4", "Fixture", subtitles: [
             new("https://captions.example/1/en.vtt", "English", "eng"),
@@ -173,8 +169,7 @@ public sealed class SubtitleHandoffTests
     public void CaptionOffAndMissingRememberedLanguageNeverLoadAnUnrequestedFile()
     {
         using var profile = new CaptionTestDataScope();
-        using var database = new DatabaseContext();
-        using var player = new PlaybackViewModel(database);
+        using var player = new PlaybackViewModel(new DatabaseContext());
         player.SetTabActive(false);
         player.LoadMedia("https://video.example/1.mp4", "Fixture", subtitles: [
             new("https://captions.example/en.vtt", "English", "en"),
@@ -195,8 +190,7 @@ public sealed class SubtitleHandoffTests
     public void CaptionToggleRestoresNamedLanguageAndDoesNotSubstituteAMissingChoice()
     {
         using var profile = new CaptionTestDataScope();
-        using var database = new DatabaseContext();
-        using var player = new PlaybackViewModel(database);
+        using var player = new PlaybackViewModel(new DatabaseContext());
         player.SetTabActive(false);
         player.LoadMedia("https://video.example/1.mp4", "Fixture", subtitles: [
             new("https://captions.example/1/en.vtt", "English", "en"),
@@ -236,8 +230,7 @@ public sealed class SubtitleHandoffTests
             File.WriteAllText(caption, "1\n00:00:00,000 --> 00:00:10,000\nFirst line\nSecond line\n");
             try
             {
-                using var database = new DatabaseContext();
-                using var player = new PlaybackViewModel(database);
+                using var player = new PlaybackViewModel(new DatabaseContext());
                 player.SetTabActive(false);
                 player.LoadMedia(video, "Episode", localCaptionPaths: [caption]);
                 var selector = new System.Windows.Controls.ComboBox { DataContext = player, DisplayMemberPath = "Label" };
@@ -289,8 +282,7 @@ public sealed class SubtitleHandoffTests
     public void PauseIntentIsRetainedBeforeTheNativePlayerAcknowledgesIt()
     {
         using var profile = new CaptionTestDataScope();
-        using var database = new DatabaseContext();
-        using var player = new PlaybackViewModel(database);
+        using var player = new PlaybackViewModel(new DatabaseContext());
         player.IsPlaying = true;
         player.TogglePlayPauseCommand.Execute(null);
         Assert.False(player.IsPlaying);

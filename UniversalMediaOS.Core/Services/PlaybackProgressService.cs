@@ -170,8 +170,13 @@ public sealed class PlaybackProgressService
         finally { _gate.Release(); }
     }
 
-    public async Task SaveWhenOpenedAsync(Task<PlaybackProgressSession?> opening, double position, double duration,
+    public Task SaveWhenOpenedAsync(Task<PlaybackProgressSession?> opening, double position, double duration,
         bool completed, DateTimeOffset observedUtc, Func<bool> isLatest)
+        => SaveWhenOpenedAsync(opening, () => isLatest()
+            ? new PlaybackProgressObservation(position, duration, completed, observedUtc) : null);
+
+    public async Task SaveWhenOpenedAsync(Task<PlaybackProgressSession?> opening,
+        Func<PlaybackProgressObservation?> capture)
     {
         using var database = _createDatabase();
         _ = database.Database.GetDbConnection();
@@ -181,9 +186,10 @@ public sealed class PlaybackProgressService
         try
         {
             var session = await opening.ConfigureAwait(false);
-            if (session == null || !isLatest()) return;
-            var write = Capture(session, position, duration, completed);
-            if (write != null) await PersistAsync(database, write with { ObservedUtc = observedUtc }).ConfigureAwait(false);
+            var observation = capture();
+            if (session == null || observation == null) return;
+            var write = Capture(session, observation.Position, observation.Duration, observation.Completed);
+            if (write != null) await PersistAsync(database, write with { ObservedUtc = observation.ObservedUtc }).ConfigureAwait(false);
         }
         finally { _gate.Release(); }
     }
@@ -225,3 +231,5 @@ public sealed record PlaybackProgressContext(string WorkKey, string UnitKey,
 public sealed record PlaybackProgressSession(PlaybackProgressContext Context, long Owner);
 public sealed record PlaybackProgressWrite(PlaybackProgressSession Session, double Position,
     double Duration, long Sequence, DateTimeOffset ObservedUtc);
+public sealed record PlaybackProgressObservation(double Position, double Duration,
+    bool Completed, DateTimeOffset ObservedUtc);

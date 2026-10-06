@@ -50,11 +50,24 @@ namespace UniversalMediaOS.WPF.ViewModels
             System.Windows.Threading.Dispatcher.FromThread(Thread.CurrentThread);
         private readonly object _resumePersistenceGate = new();
         private readonly Dictionary<long, Task> _pendingResumeSaves = new();
+        private ResumeSaveSlot? _queuedResumeSave;
+        private sealed record ResumeSaveSnapshot(string MediaId, string EpisodeId, double Position,
+            double Duration, bool Ended, long Sequence, DateTimeOffset ObservedUtc);
+        private sealed class ResumeSaveSlot(ResumeSaveSnapshot snapshot)
+        {
+            public ResumeSaveSnapshot Snapshot { get; set; } = snapshot;
+            public Task Completion { get; set; } = Task.CompletedTask;
+            public bool Captured { get; set; }
+        }
         private readonly List<Task> _pendingResumeLoads = [];
         private Task<(PlaybackProgressSession? Session, double Position)> _resumeLoadRead =
             Task.FromResult<(PlaybackProgressSession?, double)>((null, 0));
         private Task<PlaybackProgressSession?> _progressSessionReady = Task.FromResult<PlaybackProgressSession?>(null);
         internal Task ResumeLoadCompleted { get; private set; } = Task.CompletedTask;
+        internal int PendingResumeSaveCount
+        {
+            get { lock (_resumePersistenceGate) return _pendingResumeSaves.Count(entry => !entry.Value.IsCompleted); }
+        }
         private bool _resumeReadApplied = true;
         private bool _playWhenResumeLoaded;
         private Media? _currentMedia;
@@ -2335,6 +2348,8 @@ namespace UniversalMediaOS.WPF.ViewModels
                 System.Windows.Threading.Dispatcher.FromThread(Thread.CurrentThread);
             lock (_resumePersistenceGate)
             {
+                // Freeze older-unit observations before reserving the ordered read.
+                _queuedResumeSave = null;
                 _pendingResumeLoads.RemoveAll(task => task.IsCompleted);
                 // A source reload must read after the old unit's accepted saves,
                 // including a save which itself awaits that unit's first load.
@@ -2503,20 +2518,29 @@ namespace UniversalMediaOS.WPF.ViewModels
                 long sequence = Interlocked.Increment(ref _resumeWriteSequence);
                 _latestResumeWrites.AddOrUpdate((mediaId, episodeId), sequence, (_, previous) => Math.Max(previous, sequence));
 
-                if (_progressContext != null)
+                var snapshot = new ResumeSaveSnapshot(mediaId, episodeId, valueToSave,
+                    Math.Max(0, PlaybackDuration / 1000.0), ended, sequence, DateTimeOffset.UtcNow);
+                if (_queuedResumeSave is { Captured: false } queued &&
+                    queued.Snapshot.MediaId == mediaId && queued.Snapshot.EpisodeId == episodeId)
                 {
-                    save = SaveCatalogProgressAfterLoadAsync(_progressSessionReady,
-                        mediaId, episodeId, valueToSave, Math.Max(0, PlaybackDuration / 1000.0), ended,
-                        sequence, DateTimeOffset.UtcNow);
+                    // Already accepted ordering stays fixed; only its superseded
+                    // observation changes. No additional context/task is queued.
+                    queued.Snapshot = snapshot;
+                    save = queued.Completion;
                 }
                 else
                 {
-                    save = SaveLegacyProgressAfterLoadAsync(_resumeLoadRead, mediaId, episodeId, valueToSave, ended, sequence);
+                    var slot = new ResumeSaveSlot(snapshot);
+                    _queuedResumeSave = slot;
+                    save = _progressContext != null
+                        ? SaveCatalogProgressAfterLoadAsync(_progressSessionReady, slot)
+                        : SaveLegacyProgressAfterLoadAsync(_resumeLoadRead, slot);
+                    slot.Completion = save;
+                    foreach (long finished in _pendingResumeSaves.Where(entry => entry.Value.IsCompleted).Select(entry => entry.Key).ToArray())
+                        _pendingResumeSaves.Remove(finished);
+                    if (!save.IsCompleted) _pendingResumeSaves[sequence] = save;
+                    _playbackProgress.TrackPendingPersistence(save);
                 }
-                foreach (long finished in _pendingResumeSaves.Where(entry => entry.Value.IsCompleted).Select(entry => entry.Key).ToArray())
-                    _pendingResumeSaves.Remove(finished);
-                if (!save.IsCompleted) _pendingResumeSaves[sequence] = save;
-                _playbackProgress.TrackPendingPersistence(save);
             }
 
             if (synchronous)
@@ -2526,14 +2550,28 @@ namespace UniversalMediaOS.WPF.ViewModels
             }
         }
 
-        private async Task SaveCatalogProgressAfterLoadAsync(Task<PlaybackProgressSession?> session,
-            string media, string unit, double position, double duration,
-            bool ended, long sequence, DateTimeOffset observed)
+        private ResumeSaveSnapshot? CaptureQueuedResumeSave(ResumeSaveSlot slot)
+        {
+            lock (_resumePersistenceGate)
+            {
+                slot.Captured = true;
+                if (ReferenceEquals(_queuedResumeSave, slot)) _queuedResumeSave = null;
+                var snapshot = slot.Snapshot;
+                return _latestResumeWrites.GetValueOrDefault((snapshot.MediaId, snapshot.EpisodeId)) == snapshot.Sequence
+                    ? snapshot : null;
+            }
+        }
+
+        private async Task SaveCatalogProgressAfterLoadAsync(Task<PlaybackProgressSession?> session, ResumeSaveSlot slot)
         {
             try
             {
-                await _playbackProgress.SaveWhenOpenedAsync(session, position, duration, ended, observed,
-                    () => _latestResumeWrites.GetValueOrDefault((media, unit)) == sequence).ConfigureAwait(false);
+                await _playbackProgress.SaveWhenOpenedAsync(session, () =>
+                {
+                    var snapshot = CaptureQueuedResumeSave(slot);
+                    return snapshot == null ? null : new PlaybackProgressObservation(snapshot.Position,
+                        snapshot.Duration, snapshot.Ended, snapshot.ObservedUtc);
+                }).ConfigureAwait(false);
             }
             catch (Exception ex) { AppLogger.Log($"[Resume] Failed to save catalog progress: {ex.Message}", "WARNING"); }
         }
@@ -2546,6 +2584,8 @@ namespace UniversalMediaOS.WPF.ViewModels
             if (_progressContext == null) return;
             lock (_resumePersistenceGate)
             {
+                // A later explicit owner must not move an accepted write across it.
+                _queuedResumeSave = null;
                 _pendingResumeLoads.RemoveAll(task => task.IsCompleted);
                 _progressSessionReady = _playbackProgress.TakeOwnershipWhenOpenedAsync(_progressSessionReady);
                 _pendingResumeLoads.Add(_progressSessionReady);
@@ -2562,13 +2602,13 @@ namespace UniversalMediaOS.WPF.ViewModels
         }
 
         private async Task SaveLegacyProgressAfterLoadAsync(Task<(PlaybackProgressSession? Session, double Position)> read,
-            string media, string unit, double position, bool ended, long sequence)
+            ResumeSaveSlot slot)
         {
             await read.ConfigureAwait(false);
-            await SaveResumePositionAsync(media, unit, position, ended, sequence).ConfigureAwait(false);
+            await SaveResumePositionAsync(slot).ConfigureAwait(false);
         }
 
-        private async Task SaveResumePositionAsync(string mediaId, string episodeId, double positionSeconds, bool clearing, long sequence)
+        private async Task SaveResumePositionAsync(ResumeSaveSlot slot)
         {
             try
             {
@@ -2577,15 +2617,15 @@ namespace UniversalMediaOS.WPF.ViewModels
                 {
                     await Task.Run(() =>
                     {
-                        if (_latestResumeWrites.GetValueOrDefault((mediaId, episodeId)) != sequence ||
-                            !EnsureResumeDatabaseCreated()) return;
-                        if (_latestResumeWrites.GetValueOrDefault((mediaId, episodeId)) != sequence) return;
+                        var snapshot = CaptureQueuedResumeSave(slot);
+                        if (snapshot == null || !EnsureResumeDatabaseCreated()) return;
+                        if (_latestResumeWrites.GetValueOrDefault((snapshot.MediaId, snapshot.EpisodeId)) != snapshot.Sequence) return;
                         // Captured writes remain valid after the player closes. Its
                         // database and semaphore live until every accepted save ends.
-                        _databaseContext.SaveResumeState(mediaId, episodeId, positionSeconds);
-                        AppLogger.Log(clearing
-                            ? $"[Resume] Cleared saved position for media '{mediaId}', episode '{episodeId}'."
-                            : $"[Resume] Saved position {positionSeconds:0.0}s for media '{mediaId}', episode '{episodeId}'.");
+                        _databaseContext.SaveResumeState(snapshot.MediaId, snapshot.EpisodeId, snapshot.Position);
+                        AppLogger.Log(snapshot.Ended
+                            ? $"[Resume] Cleared saved position for media '{snapshot.MediaId}', episode '{snapshot.EpisodeId}'."
+                            : $"[Resume] Saved position {snapshot.Position:0.0}s for media '{snapshot.MediaId}', episode '{snapshot.EpisodeId}'.");
                     }).ConfigureAwait(false);
                 }
                 finally
@@ -2619,6 +2659,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             lock (_resumePersistenceGate)
             {
                 _resumePersistenceClosed = true;
+                _queuedResumeSave = null;
                 pending = Task.WhenAll(_pendingResumeSaves.Values.Concat(_pendingResumeLoads));
                 _pendingResumeSaves.Clear();
                 _pendingResumeLoads.Clear();
