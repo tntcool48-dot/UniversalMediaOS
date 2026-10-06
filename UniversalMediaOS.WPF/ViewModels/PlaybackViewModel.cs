@@ -2918,7 +2918,8 @@ namespace UniversalMediaOS.WPF.ViewModels
                     }
                     else if (normalized is "pause" or "buffer_pause")
                     {
-                        MediaPlayer.Pause();
+                        _pauseWhenStarted = true;
+                        MediaPlayer.SetPause(true);
                     }
                 }
                 catch (Exception ex)

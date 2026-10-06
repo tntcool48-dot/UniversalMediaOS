@@ -4,19 +4,159 @@ using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
+using System.Threading.Channels;
 using LibVLCSharp.Shared;
 using Microsoft.EntityFrameworkCore;
+using UniversalMediaOS.Core.Configuration;
 using UniversalMediaOS.Core.Data;
 using UniversalMediaOS.Core.Helpers;
 using UniversalMediaOS.Core.OtherMedia;
 using UniversalMediaOS.Core.Services;
 using UniversalMediaOS.WPF.ViewModels;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace UniversalMediaOS.Tests.E2E;
 
-public sealed class NativeShortMediaCompletionTests
+public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
 {
+    [Fact]
+    public Task TwoNativeWatchTogetherPlayersRetainPauseAcrossTwentyPeerReconnectsAndHostPromotion()
+        => OnDispatcher(() => NativeWatchTogetherReconnectAsync(output));
+
+    private static async Task NativeWatchTogetherReconnectAsync(ITestOutputHelper output)
+    {
+        string? previous = Environment.GetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable);
+        string parent = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "UniversalMediaOS.Tests"));
+        string root = Path.Combine(parent, "NativeWatchReconnect-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, root);
+        var progress = new PlaybackProgressService(new(Path.Combine(root, "library.json")));
+        string? connectionString = null;
+        try
+        {
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(35));
+            string video = Path.Combine(root, "reconnect.mp4");
+            var encoded = await new PreparationProcessRunner().RunAsync("ffmpeg", ["-nostdin", "-hide_banner", "-v", "error",
+                "-f", "lavfi", "-i", "testsrc=size=160x90:rate=25", "-t", "90", "-c:v", "mpeg4", "-y", video], deadline.Token);
+            Assert.Equal(0, encoded.ExitCode);
+            using (var database = new DatabaseContext())
+            {
+                database.Database.EnsureCreated();
+                connectionString = database.Database.GetConnectionString()!;
+            }
+            using var reservation = new TcpListener(IPAddress.Loopback, 0);
+            reservation.Start();
+            int port = ((IPEndPoint)reservation.LocalEndpoint).Port;
+            reservation.Stop();
+            using var relay = new WatchRoomRelayService();
+            using var hostClient = new WatchTogetherClientService(new DomainHotSwapper(Path.Combine(root, "host.json")));
+            using var peerClient = new WatchTogetherClientService(new DomainHotSwapper(Path.Combine(root, "peer.json")));
+            using var hostMemory = new MemoryVideo();
+            using var peerMemory = new MemoryVideo();
+            using var host = new PlaybackViewModel(new DatabaseContext(), hostClient, new(hostClient), playbackProgress: progress);
+            using var peer = new PlaybackViewModel(new DatabaseContext(), peerClient, new(peerClient), playbackProgress: progress);
+            hostMemory.Attach(host.MediaPlayer);
+            peerMemory.Attach(peer.MediaPlayer);
+            host.Volume = peer.Volume = 0;
+            host.LoadMedia(video, "Reconnect host", episodeNumber: "1", malId: 42);
+            peer.LoadMedia(video, "Reconnect peer", episodeNumber: "1", malId: 43);
+            host.PlayPending();
+            peer.PlayPending();
+            await Wait(() => host.IsPlaying && hostMemory.Frames >= 2, host);
+            await Wait(() => peer.IsPlaying && peerMemory.Frames >= 2, peer);
+            host.TogglePlayPauseCommand.Execute(null);
+            peer.TogglePlayPauseCommand.Execute(null);
+            await Wait(() => host.MediaPlayer.State == VLCState.Paused && !host.IsPlaying, host);
+            await Wait(() => peer.MediaPlayer.State == VLCState.Paused && !peer.IsPlaying, peer);
+            host.ActivateWatchTogetherPlayback();
+            peer.ActivateWatchTogetherPlayback();
+            var initialSyncs = Channel.CreateUnbounded<double>();
+            peerClient.MessageReceived += (_, message) =>
+            {
+                if (message.Payload.TryGetProperty("type", out var type) && type.GetString() == "initial_sync")
+                    initialSyncs.Writer.TryWrite(message.Payload.GetProperty("timestamp").GetDouble());
+            };
+            int unexpectedStarts = 0;
+            peer.MediaPlayer.Playing += (_, _) => Interlocked.Increment(ref unexpectedStarts);
+            await relay.StartAsync(port, deadline.Token);
+            string server = $"localhost:{port}";
+            try
+            {
+                await hostClient.ConnectAsync(server, "native-reconnect", 0, deadline.Token);
+                await Wait(() => hostClient.Role == WatchRoomRole.Host, host);
+                using var process = Process.GetCurrentProcess();
+                for (int cycle = 0; cycle < 20; cycle++)
+                {
+                    long hostPosition = 27_000 + cycle * 2_000;
+                    host.MediaPlayer.Time = hostPosition;
+                    await Wait(() => Math.Abs(host.MediaPlayer.Time - hostPosition) <= 1000, host);
+                    await peerClient.ConnectAsync(server, "native-reconnect", 2.5, deadline.Token);
+                    double synchronized = await initialSyncs.Reader.ReadAsync(deadline.Token);
+                    Assert.InRange(synchronized, hostPosition / 1000.0 - 1, hostPosition / 1000.0 + 1);
+                    await Wait(() => peer.MediaPlayer.State == VLCState.Paused && !peer.IsPlaying &&
+                        Math.Abs(peer.MediaPlayer.Time - (synchronized + 2.5) * 1000) <= 1500, peer);
+                    await Task.Delay(250, deadline.Token);
+                    Assert.Equal(0, Volatile.Read(ref unexpectedStarts));
+                    Assert.Equal(WatchRoomRole.Peer, peerClient.Role);
+                    Assert.Equal(WatchRoomConnectionState.Connected, hostClient.State);
+                    await peerClient.DisconnectAsync().WaitAsync(TimeSpan.FromSeconds(3), deadline.Token);
+                    Assert.Equal(WatchRoomConnectionState.Disconnected, peerClient.State);
+                    Assert.Equal(WatchRoomRole.None, peerClient.Role);
+                    if ((cycle + 1) % 5 == 0)
+                    {
+                        long heap = GC.GetTotalMemory(forceFullCollection: true);
+                        process.Refresh();
+                        output.WriteLine($"Reconnect {cycle + 1}: managed heap {heap} bytes, private memory {process.PrivateMemorySize64} bytes, handles {process.HandleCount}.");
+                    }
+                }
+                output.WriteLine($"Twenty native peer reconnects: {unexpectedStarts} unintended playing events; latest host/peer {host.MediaPlayer.Time}/{peer.MediaPlayer.Time} ms.");
+                await peerClient.ConnectAsync(server, "native-reconnect", 2.5, deadline.Token);
+                await initialSyncs.Reader.ReadAsync(deadline.Token);
+                for (int repeat = 0; repeat < 2; repeat++)
+                    await hostClient.SendAsync(new { type = "action", action = "buffer_pause", timestamp = host.MediaPlayer.Time / 1000.0 }, deadline.Token);
+                await Task.Delay(250, deadline.Token);
+                Assert.Equal(0, Volatile.Read(ref unexpectedStarts));
+                Assert.Equal(VLCState.Paused, peer.MediaPlayer.State);
+                await hostClient.DisconnectAsync().WaitAsync(TimeSpan.FromSeconds(3), deadline.Token);
+                await Wait(() => peerClient.Role == WatchRoomRole.Host, peer);
+                await hostClient.ConnectAsync(server, "native-reconnect", 0, deadline.Token);
+                await Wait(() => hostClient.Role == WatchRoomRole.Peer, host);
+                await Task.Delay(2200, deadline.Token); // Let accepted remote-command echo suppression expire.
+                peer.BeginUserSeek();
+                peer.CommitUserSeek(58_000);
+                await Wait(() => Math.Abs(host.MediaPlayer.Time - 55_500) <= 1500, host);
+                peer.TogglePlayPauseCommand.Execute(null);
+                await Wait(() => host.MediaPlayer.State == VLCState.Playing && peer.MediaPlayer.State == VLCState.Playing, host);
+                peer.TogglePlayPauseCommand.Execute(null);
+                await Wait(() => host.MediaPlayer.State == VLCState.Paused && peer.MediaPlayer.State == VLCState.Paused, host);
+                Assert.True(hostMemory.Frames > 2 && peerMemory.Frames > 2);
+                Assert.False(host.HasPlaybackError || peer.HasPlaybackError);
+                output.WriteLine("Host promotion/rejoin retained roles, offset seek, decoded play and explicit pause on both native players.");
+            }
+            finally
+            {
+                await peerClient.DisconnectAsync().WaitAsync(TimeSpan.FromSeconds(3));
+                await hostClient.DisconnectAsync().WaitAsync(TimeSpan.FromSeconds(3));
+                relay.Stop();
+                Assert.False(relay.IsRunning);
+            }
+        }
+        finally
+        {
+            await progress.FlushAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, previous);
+            if (connectionString != null)
+            {
+                using var pool = new Microsoft.Data.Sqlite.SqliteConnection(connectionString);
+                Microsoft.Data.Sqlite.SqliteConnection.ClearPool(pool);
+            }
+            Assert.StartsWith(parent + Path.DirectorySeparatorChar, root, StringComparison.OrdinalIgnoreCase);
+            Assert.Null(new DirectoryInfo(root).LinkTarget);
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
+    }
+
     [Fact]
     public Task NativeStartWaitsForItsLockedResumeThenDecodesAtTheSavedPosition()
         => OnDispatcher(NativeLockedResumeAsync);
