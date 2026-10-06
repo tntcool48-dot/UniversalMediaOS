@@ -20,11 +20,11 @@ namespace UniversalMediaOS.Tests.E2E.Tests
 
             Assert.Contains(view.Descendants(), element =>
                 element.Name.LocalName == "Button" &&
-                (string?)element.Attribute("Content") == "Open URL" &&
+                (string?)element.Attribute("AutomationProperties.Name") == "Open media URL or path" &&
                 (string?)element.Attribute("Command") == "{Binding OpenSourceCommand}");
             Assert.Contains(view.Descendants(), element =>
                 element.Name.LocalName == "Button" &&
-                (string?)element.Attribute("Content") == "Open File" &&
+                (string?)element.Attribute("AutomationProperties.Name") == "Choose a local media file" &&
                 (string?)element.Attribute("Click") == "OpenMediaFileButton_Click");
 
             string source = File.ReadAllText(Path.Combine(

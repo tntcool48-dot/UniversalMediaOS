@@ -215,6 +215,29 @@
 
     <Style TargetType="PasswordBox" BasedOn="{StaticResource AppPasswordBox}"/>
 
+    <Style x:Key="AppComboBoxItem" TargetType="ComboBoxItem">
+        <Setter Property="Background" Value="{DynamicResource BgInput}"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+        <Setter Property="Padding" Value="10,8"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ComboBoxItem">
+                    <Border x:Name="ItemChrome" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
+                        <ContentPresenter/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsHighlighted" Value="True">
+                            <Setter TargetName="ItemChrome" Property="Background" Value="#2238BDF8"/>
+                        </Trigger>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="ItemChrome" Property="Background" Value="#3314B8A6"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <Style x:Key="AppComboBox" TargetType="ComboBox">
         <Setter Property="Background" Value="{DynamicResource BgInput}"/>
         <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
@@ -226,34 +249,7 @@
         <Setter Property="MinWidth" Value="0"/>
         <Setter Property="FontSize" Value="{DynamicResource AppControlFontSize}"/>
         <Setter Property="SnapsToDevicePixels" Value="True"/>
-        <Setter Property="ItemContainerStyle">
-            <Setter.Value>
-                <Style TargetType="ComboBoxItem">
-                    <Setter Property="Background" Value="{DynamicResource BgInput}"/>
-                    <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
-                    <Setter Property="Padding" Value="10,8"/>
-                    <Setter Property="Template">
-                        <Setter.Value>
-                            <ControlTemplate TargetType="ComboBoxItem">
-                                <Border x:Name="ItemChrome"
-                                        Background="{TemplateBinding Background}"
-                                        Padding="{TemplateBinding Padding}">
-                                    <ContentPresenter/>
-                                </Border>
-                                <ControlTemplate.Triggers>
-                                    <Trigger Property="IsHighlighted" Value="True">
-                                        <Setter TargetName="ItemChrome" Property="Background" Value="#2238BDF8"/>
-                                    </Trigger>
-                                    <Trigger Property="IsSelected" Value="True">
-                                        <Setter TargetName="ItemChrome" Property="Background" Value="#3314B8A6"/>
-                                    </Trigger>
-                                </ControlTemplate.Triggers>
-                            </ControlTemplate>
-                        </Setter.Value>
-                    </Setter>
-                </Style>
-            </Setter.Value>
-        </Setter>
+        <Setter Property="ItemContainerStyle" Value="{StaticResource AppComboBoxItem}"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ComboBox">

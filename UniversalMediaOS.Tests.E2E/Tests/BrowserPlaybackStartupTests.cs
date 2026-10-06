@@ -26,6 +26,7 @@ public sealed class BrowserPlaybackStartupTests
             XNamespace ui = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
             XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
             var root = new XElement(ui + "Grid", new XAttribute(XNamespace.Xmlns + "x", x),
+                new XAttribute(XNamespace.Xmlns + "helpers", "clr-namespace:UniversalMediaOS.WPF.Helpers;assembly=UniversalMediaOS.WPF"),
                 new XElement(ui + "Grid.Resources",
                     new XElement(ui + "BooleanToVisibilityConverter", new XAttribute(x + "Key", "BoolToVisibility")),
                     document.Descendants().Where(element => (string?)element.Attribute(x + "Key") is
@@ -133,6 +134,7 @@ public sealed class BrowserPlaybackStartupTests
                 .Where(a => a.Name.LocalName is "MouseLeave" or "Expanded" or "Collapsed" or "AutomationProperties.Name").ToArray())
                 attribute.Remove();
             var root = new XElement(ui + "Grid", new XAttribute(XNamespace.Xmlns + "x", x),
+                new XAttribute(XNamespace.Xmlns + "helpers", "clr-namespace:UniversalMediaOS.WPF.Helpers;assembly=UniversalMediaOS.WPF"),
                 new XElement(ui + "Border", new XAttribute(x + "Name", "Video")), controls);
             var visual = (Grid)XamlReader.Parse(root.ToString());
             visual.DataContext = new { IsWebViewActive = false };
@@ -243,7 +245,8 @@ public sealed class BrowserPlaybackStartupTests
                 document.Descendants().Where(e => (string?)e.Attribute(x + "Key") is "ControlButtonStyle" or "PrimaryControlButtonStyle" or "PlaybackStateOverlayTemplate")
                     .Select(e => new XElement(e)));
             surface.AddFirst(resources);
-            surface.Add(new XAttribute(XNamespace.Xmlns + "x", x));
+            surface.Add(new XAttribute(XNamespace.Xmlns + "x", x),
+                new XAttribute(XNamespace.Xmlns + "helpers", "clr-namespace:UniversalMediaOS.WPF.Helpers;assembly=UniversalMediaOS.WPF"));
             foreach (var attribute in surface.DescendantsAndSelf().Attributes().Where(a => a.Name.LocalName is "Click" or "MouseMove" or "MouseLeftButtonDown").ToArray()) attribute.Remove();
             var visual = (Grid)XamlReader.Parse(surface.ToString());
             visual.DataContext = new { IsWebViewActive = true, IsPictureInPictureMode = false, IsPlaybackBusy = busy, HasPlaybackError = error };

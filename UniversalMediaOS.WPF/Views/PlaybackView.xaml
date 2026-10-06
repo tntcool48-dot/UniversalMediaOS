@@ -13,6 +13,12 @@
              PreviewKeyDown="PlaybackRoot_PreviewKeyDown">
 
     <UserControl.Resources>
+        <DataTemplate x:Key="LocalizedTrackLabel">
+            <TextBlock Text="{helpers:LocValue Label}" FlowDirection="LeftToRight"/>
+        </DataTemplate>
+        <Style x:Key="LocalizedTrackItem" TargetType="ComboBoxItem" BasedOn="{StaticResource AppComboBoxItem}">
+            <Setter Property="AutomationProperties.Name" Value="{helpers:LocValue Label}"/>
+        </Style>
         <Style x:Key="ControlButtonStyle" TargetType="Button">
             <Setter Property="MinWidth" Value="38"/>
             <Setter Property="Height" Value="34"/>
@@ -93,7 +99,7 @@
                                      Height="4"
                                      Foreground="#2DD4BF"
                                      Background="#334155"/>
-                        <TextBlock Text="{Binding PlaybackStatusText}"
+                        <TextBlock Text="{helpers:LocValue PlaybackStatusText}"
                                    Margin="0,12,0,0"
                                    Foreground="#F8FAFC"
                                    FontSize="14"
@@ -112,7 +118,7 @@
                         BorderThickness="1"
                         Visibility="{Binding HasPlaybackError, Converter={StaticResource BoolToVisibility}}">
                     <StackPanel>
-                        <TextBlock Text="Playback problem"
+                        <TextBlock Text="{helpers:Loc Playback problem}"
                                    Foreground="#FCA5A5"
                                    FontSize="18"
                                    FontWeight="Bold"
@@ -124,11 +130,11 @@
                                    TextAlignment="Center"
                                    TextWrapping="Wrap"/>
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-                            <Button Content="Retry stream"
+                            <Button Content="{helpers:Loc Retry stream}"
                                     Command="{Binding RetryPlaybackCommand}"
                                     Style="{StaticResource PrimaryControlButtonStyle}"
                                     AutomationProperties.Name="Retry playback"/>
-                            <Button Content="Open browser player"
+                            <Button Content="{helpers:Loc Open browser player}"
                                     Command="{Binding OpenWebFallbackCommand}"
                                     Style="{StaticResource ControlButtonStyle}"
                                     Visibility="{Binding HasWebFallback, Converter={StaticResource BoolToVisibility}}"
@@ -158,6 +164,7 @@
                 <!-- VideoView places this content above its native HWND. Keep
                      transport controls here so video bounds never depend on them. -->
                 <Grid x:Name="NativeOverlay" Background="Transparent" Focusable="True" ClipToBounds="True"
+                      FlowDirection="{Binding FlowDirection, Source={x:Static helpers:LocalizationBindingSource.Instance}}"
                       SizeChanged="PlaybackOverlay_SizeChanged"
                       MouseMove="PlaybackRoot_MouseMove"
                       PreviewMouseDown="PlaybackRoot_PreviewMouseDown"
@@ -202,15 +209,15 @@
                             </Grid.RowDefinitions>
                             <Border x:Name="TitlePanel" Padding="8,4" CornerRadius="5" Background="#A6050507">
                             <DockPanel Margin="0">
-                                <Button DockPanel.Dock="Right" Content="Restore" Click="PictureInPictureButton_Click"
+                                <Button DockPanel.Dock="Right" Content="{helpers:Loc Restore}" Click="PictureInPictureButton_Click"
                                         Style="{StaticResource ControlButtonStyle}"
                                         Visibility="{Binding IsPictureInPictureMode, Converter={StaticResource BoolToVisibility}}"
                                         AutomationProperties.Name="Exit picture in picture" ToolTip="Restore the app window."/>
                                 <TextBlock DockPanel.Dock="Right" Text="{Binding EpisodeInfo}" Foreground="#CBD5E1"
                                            VerticalAlignment="Center" Margin="8,0"/>
-                                <TextBlock DockPanel.Dock="Right" Text="{Binding PlaybackStatusText}" MaxWidth="160"
+                                <TextBlock DockPanel.Dock="Right" Text="{helpers:LocValue PlaybackStatusText}" MaxWidth="160"
                                            TextTrimming="CharacterEllipsis" Foreground="#5EEAD4" FontSize="11"
-                                           VerticalAlignment="Center" Margin="8,0" ToolTip="{Binding PlaybackStatusText}"/>
+                                           VerticalAlignment="Center" Margin="8,0" ToolTip="{helpers:LocValue PlaybackStatusText}"/>
                                 <TextBlock x:Name="MediaTitleText" Text="{Binding MediaTitle}" Foreground="#F8FAFC"
                                            FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
                                            VerticalAlignment="Center" MouseLeftButtonDown="MediaTitleText_MouseLeftButtonDown"
@@ -221,13 +228,13 @@
                                 <Border x:Name="OptionsPanel" HorizontalAlignment="Right" VerticalAlignment="Top"
                                         MaxWidth="850" MaxHeight="{Binding ActualHeight, ElementName=OptionsArea}"
                                         Padding="10" CornerRadius="6" Background="#ED111827">
-                            <Expander x:Name="PlaybackOptions" Header="Playback options" IsExpanded="False"
+                            <Expander x:Name="PlaybackOptions" Header="{helpers:Loc Playback options}" IsExpanded="False"
                                       Foreground="#CBD5E1" Margin="0" HorizontalContentAlignment="Stretch"
                                       Expanded="PlaybackOptions_Changed" Collapsed="PlaybackOptions_Changed"
-                                      AutomationProperties.Name="Playback options">
+                                      AutomationProperties.Name="{helpers:Loc Playback options}">
                                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                                 <StackPanel Margin="0,6,0,0">
-                                    <TextBlock Text="{Binding AudioNotice}" Foreground="#CBD5E1" TextWrapping="Wrap">
+                                    <TextBlock Text="{helpers:LocValue AudioNotice}" Foreground="#CBD5E1" TextWrapping="Wrap">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock">
                                                 <Style.Triggers>
@@ -241,29 +248,29 @@
                                     <WrapPanel>
                                         <ComboBox ItemsSource="{Binding PlaybackRates}" SelectedItem="{Binding PlaybackRate, Mode=TwoWay}"
                                                   Style="{StaticResource CompactComboBox}" Width="72" Height="34" Margin="0,0,8,6"
-                                                  AutomationProperties.Name="Playback speed" ToolTip="Playback speed">
+                                                  AutomationProperties.Name="{helpers:Loc Playback speed}" ToolTip="{helpers:Loc Playback speed}">
                                             <ComboBox.ItemTemplate>
-                                                <DataTemplate><TextBlock Text="{Binding StringFormat={}{0:0.##}x}"/></DataTemplate>
+                                                <DataTemplate><TextBlock Text="{Binding StringFormat={}{0:0.##}x}" FlowDirection="LeftToRight"/></DataTemplate>
                                             </ComboBox.ItemTemplate>
                                         </ComboBox>
                                         <ComboBox ItemsSource="{Binding QualityOptions}" SelectedItem="{Binding SelectedQuality, Mode=TwoWay}"
-                                                  DisplayMemberPath="Label" Style="{StaticResource CompactComboBox}" Width="88" Height="34" Margin="0,0,8,6"
+                                                  ItemTemplate="{StaticResource LocalizedTrackLabel}" ItemContainerStyle="{StaticResource LocalizedTrackItem}" Style="{StaticResource CompactComboBox}" Width="88" Height="34" Margin="0,0,8,6"
                                                   Visibility="{Binding IsQualitySelectionAvailable, Converter={StaticResource BoolToVisibility}}"
-                                                  AutomationProperties.Name="Video quality" ToolTip="Quality advertised by this stream"/>
+                                                  AutomationProperties.Name="{helpers:Loc Video quality}" ToolTip="{helpers:Loc Quality advertised by this stream}"/>
                                         <ComboBox ItemsSource="{Binding AudioOptions}" SelectedItem="{Binding SelectedAudioTrack, Mode=TwoWay}"
-                                                  DisplayMemberPath="Label" Style="{StaticResource CompactComboBox}" Width="180" Height="34" Margin="0,0,8,6"
-                                                  IsEnabled="{Binding AudioTracksAvailable}" AutomationProperties.Name="Audio track" ToolTip="Choose audio track"/>
-                                        <Button Content="CC" Command="{Binding ToggleCaptionsCommand}" IsEnabled="{Binding CaptionsAvailable}"
+                                                  ItemTemplate="{StaticResource LocalizedTrackLabel}" ItemContainerStyle="{StaticResource LocalizedTrackItem}" Style="{StaticResource CompactComboBox}" Width="180" Height="34" Margin="0,0,8,6"
+                                                  IsEnabled="{Binding AudioTracksAvailable}" AutomationProperties.Name="{helpers:Loc Audio track}" ToolTip="{helpers:Loc Choose audio track}"/>
+                                        <Button Content="{helpers:Loc CC}" Command="{Binding ToggleCaptionsCommand}" IsEnabled="{Binding CaptionsAvailable}"
                                                 Style="{StaticResource ControlButtonStyle}" Margin="0,0,6,6"
-                                                AutomationProperties.Name="Toggle subtitles" ToolTip="Turn subtitles on or off; keep the selected language"/>
+                                                AutomationProperties.Name="{helpers:Loc Toggle subtitles}" ToolTip="{helpers:Loc Turn subtitles on or off; keep the selected language}"/>
                                         <ComboBox ItemsSource="{Binding CaptionOptions}" SelectedItem="{Binding SelectedCaption, Mode=TwoWay}"
-                                                  DisplayMemberPath="Label" Style="{StaticResource CompactComboBox}" Width="180" Height="34" Margin="0,0,8,6"
-                                                  IsEnabled="{Binding CaptionsAvailable}" AutomationProperties.Name="Subtitle track" ToolTip="Choose subtitles or turn them off"/>
-                                        <CheckBox Content="Auto next" IsChecked="{Binding AutoPlayNext, Mode=TwoWay}"
+                                                  ItemTemplate="{StaticResource LocalizedTrackLabel}" ItemContainerStyle="{StaticResource LocalizedTrackItem}" Style="{StaticResource CompactComboBox}" Width="180" Height="34" Margin="0,0,8,6"
+                                                  IsEnabled="{Binding CaptionsAvailable}" AutomationProperties.Name="{helpers:Loc Subtitle track}" ToolTip="{helpers:Loc Choose subtitles or turn them off}"/>
+                                        <CheckBox Content="{helpers:Loc Auto next}" IsChecked="{Binding AutoPlayNext, Mode=TwoWay}"
                                                   IsEnabled="{Binding CanGoToNextEpisode}" Foreground="#CBD5E1" VerticalAlignment="Center" Margin="8,0"/>
-                                        <Button Content="Previous" Command="{Binding PreviousEpisodeCommand}" IsEnabled="{Binding CanGoToPreviousEpisode}"
+                                        <Button Content="{helpers:Loc Previous}" Command="{Binding PreviousEpisodeCommand}" IsEnabled="{Binding CanGoToPreviousEpisode}"
                                                 Style="{StaticResource ControlButtonStyle}" AutomationProperties.Name="Previous episode"/>
-                                        <Button Content="Next" Command="{Binding NextEpisodeCommand}" IsEnabled="{Binding CanGoToNextEpisode}"
+                                        <Button Content="{helpers:Loc Next}" Command="{Binding NextEpisodeCommand}" IsEnabled="{Binding CanGoToNextEpisode}"
                                                 Style="{StaticResource ControlButtonStyle}" AutomationProperties.Name="Next episode"/>
                                         <Button Content="{helpers:Loc Stop}" Command="{Binding StopCommand}" Style="{StaticResource ControlButtonStyle}"
                                                 AutomationProperties.Name="Stop playback"/>
@@ -275,14 +282,15 @@
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
                                         <TextBox Text="{Binding SourceInput, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource AppTextBox}"
+                                                 FlowDirection="LeftToRight"
                                                  Height="34" VerticalContentAlignment="Center" AutomationProperties.Name="Media URL or local file path"
                                                  ToolTip="Direct media URL or local file path; Enter to open.">
                                             <TextBox.InputBindings><KeyBinding Key="Enter" Command="{Binding OpenSourceCommand}"/></TextBox.InputBindings>
                                         </TextBox>
-                                        <Button Grid.Column="1" Content="Open URL" Command="{Binding OpenSourceCommand}"
+                                        <Button Grid.Column="1" Content="{helpers:Loc Open URL}" Command="{Binding OpenSourceCommand}"
                                                 Style="{StaticResource PrimaryControlButtonStyle}" Margin="8,0,2,0"
                                                 AutomationProperties.Name="Open media URL or path"/>
-                                        <Button Grid.Column="2" Content="Open File" Click="OpenMediaFileButton_Click"
+                                        <Button Grid.Column="2" Content="{helpers:Loc Open File}" Click="OpenMediaFileButton_Click"
                                                 Style="{StaticResource ControlButtonStyle}" AutomationProperties.Name="Choose a local media file"/>
                                     </Grid>
                                 </StackPanel>
@@ -297,7 +305,7 @@
                                         <RowDefinition Height="Auto"/>
                                         <RowDefinition Height="Auto"/>
                                     </Grid.RowDefinitions>
-                            <Grid Grid.Row="0" Margin="0,0,0,6">
+                            <Grid Grid.Row="0" Margin="0,0,0,6" FlowDirection="LeftToRight">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="Auto"/>
                                     <ColumnDefinition Width="*"/>
@@ -363,7 +371,7 @@
                                             VerticalAlignment="Stretch"/>
 
             <Grid Visibility="{Binding IsWebViewActive, Converter={StaticResource BoolToVisibility}}">
-              <Button Content="Exit PiP"
+              <Button Content="{helpers:Loc Exit PiP}"
                     HorizontalAlignment="Right"
                     VerticalAlignment="Top"
                     Margin="12"

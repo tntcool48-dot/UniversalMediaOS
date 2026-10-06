@@ -141,6 +141,41 @@ namespace UniversalMediaOS.WPF.Helpers
             ["CC"] = "ترجمة",
             ["Site CC"] = "ترجمة الموقع",
             ["CC Off"] = "إيقاف الترجمة",
+            ["Playback options"] = "خيارات التشغيل",
+            ["Playback problem"] = "مشكلة في التشغيل",
+            ["Retry stream"] = "إعادة محاولة التشغيل",
+            ["Open browser player"] = "فتح مشغل الموقع",
+            ["Restore"] = "استعادة النافذة",
+            ["Auto next"] = "تشغيل الحلقة التالية تلقائيًا",
+            ["Previous"] = "السابق",
+            ["Next"] = "التالي",
+            ["Open URL"] = "فتح الرابط",
+            ["Open File"] = "فتح ملف",
+            ["Exit PiP"] = "الخروج من النافذة المصغرة",
+            ["Playback speed"] = "سرعة التشغيل",
+            ["Video quality"] = "جودة الفيديو",
+            ["Audio track"] = "مسار الصوت",
+            ["Subtitle track"] = "مسار الترجمة",
+            ["Toggle subtitles"] = "تبديل الترجمة",
+            ["Choose audio track"] = "اختر مسار الصوت",
+            ["Choose subtitles or turn them off"] = "اختر الترجمة أو أوقفها",
+            ["Turn subtitles on or off; keep the selected language"] = "شغّل الترجمة أو أوقفها مع الاحتفاظ باللغة المختارة",
+            ["Quality advertised by this stream"] = "الجودة التي يعلنها مصدر الفيديو",
+            ["Auto"] = "تلقائي",
+            ["English (downloaded)"] = "الإنجليزية (ملف منزل)",
+            ["Arabic (downloaded)"] = "العربية (ملف منزل)",
+            ["Japanese"] = "اليابانية",
+            ["Playing"] = "قيد التشغيل",
+            ["Stopped"] = "متوقف",
+            ["Finished"] = "انتهى التشغيل",
+            ["Ready to play"] = "جاهز للتشغيل",
+            ["Opening stream..."] = "جارٍ فتح الفيديو...",
+            ["Starting playback..."] = "جارٍ بدء التشغيل...",
+            ["Preparing stream..."] = "جارٍ تجهيز الفيديو...",
+            ["Buffering..."] = "جارٍ التخزين المؤقت...",
+            ["Playback failed"] = "فشل التشغيل",
+            ["Audio language unverified."] = "لغة الصوت غير مؤكدة.",
+            ["Audio language unverified; check Audio in the player."] = "لغة الصوت غير مؤكدة؛ تحقق من مسار الصوت في المشغل.",
             ["Back to Search"] = "العودة إلى البحث",
             ["Watch Options"] = "خيارات المشاهدة",
             ["Watch Now"] = "شاهد الآن",
@@ -334,10 +369,14 @@ namespace UniversalMediaOS.WPF.Helpers
 
         public string Language => LocalizationRuntime.CurrentLanguage;
 
+        public FlowDirection FlowDirection => LocalizationRuntime.IsArabic(Language)
+            ? FlowDirection.RightToLeft : FlowDirection.LeftToRight;
+
         internal void Refresh()
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs("Item[]"));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Language)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(FlowDirection)));
         }
     }
 
