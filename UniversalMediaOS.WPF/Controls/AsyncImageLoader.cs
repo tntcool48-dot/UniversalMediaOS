@@ -302,8 +302,17 @@ namespace UniversalMediaOS.WPF.Controls
             return bitmap;
         }
 
-        private static HttpRequestMessage CreateImageRequest(string url) =>
-            new(HttpMethod.Get, url);
+        private static HttpRequestMessage CreateImageRequest(string url)
+        {
+            var request = new HttpRequestMessage(HttpMethod.Get, url);
+            string host = request.RequestUri!.Host;
+            if (host.Equals("mangadex.org", StringComparison.OrdinalIgnoreCase) ||
+                host.EndsWith(".mangadex.org", StringComparison.OrdinalIgnoreCase) ||
+                host.Equals("mangadex.network", StringComparison.OrdinalIgnoreCase) ||
+                host.EndsWith(".mangadex.network", StringComparison.OrdinalIgnoreCase))
+                request.Headers.UserAgent.ParseAdd(UniversalMediaOS.Core.Services.MangaService.ClientUserAgent);
+            return request;
+        }
 
         internal static HttpRequestMessage CreateImageRequestForTesting(string url) =>
             CreateImageRequest(url);

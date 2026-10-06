@@ -172,6 +172,8 @@
                         </StackPanel.Style>
                         <TextBlock Text="Manga reader" Style="{StaticResource CaptionText}" FontWeight="Bold"/>
                         <TextBlock Text="{Binding Breadcrumb}" Style="{StaticResource SubtitleText}" TextTrimming="CharacterEllipsis"/>
+                        <TextBlock Text="{Binding ReaderStatus}" Style="{StaticResource CaptionText}"
+                                   Foreground="{DynamicResource TextMuted}" TextWrapping="Wrap" Margin="0,4,0,0"/>
                     </StackPanel>
                 </Grid>
 

@@ -55,6 +55,7 @@ namespace UniversalMediaOS.WPF.ViewModels
 
         // ── Breadcrumb label ─────────────────────────────────
         [ObservableProperty] private string _breadcrumb = string.Empty;
+        [ObservableProperty] private string _readerStatus = string.Empty;
 
         public MangaViewModel(MangaService mangaService)
         {
@@ -200,6 +201,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             PageUrls.Clear();
             CurrentViewMode = 1;
             Breadcrumb = manga.Title;
+            ReaderStatus = "Loading chapters...";
             IsLoadingChapters = true;
 
             try
@@ -214,6 +216,7 @@ namespace UniversalMediaOS.WPF.ViewModels
 
                 AppLogger.Log($"Loaded {chapters.Count} chapters for '{manga.Title}'");
                 Chapters.ReplaceRange(chapters);
+                ReaderStatus = chapters.Count == 0 ? "No English chapters are available for this manga." : string.Empty;
 
                 if (Chapters.Count == 0)
                 {
@@ -227,6 +230,8 @@ namespace UniversalMediaOS.WPF.ViewModels
             catch (Exception ex)
             {
                 AppLogger.Log($"Failed to load chapters: {ex.Message}", "ERROR");
+                if (IsCurrentChapterGeneration(generation))
+                    ReaderStatus = "Could not load chapters. Go back and retry.";
             }
             finally
             {
@@ -250,6 +255,7 @@ namespace UniversalMediaOS.WPF.ViewModels
 
             SelectedChapter = chapter;
             Breadcrumb = $"{SelectedManga?.Title ?? "Manga"} \u203A Ch. {chapter.ChapterNumber}";
+            ReaderStatus = string.Empty;
 
             // If chapter has an external URL, open in WebView
             if (!string.IsNullOrEmpty(chapter.ExternalUrl))
@@ -265,6 +271,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             PageUrls.Clear();
             CurrentViewMode = 2;
             IsLoadingPages = true;
+            ReaderStatus = "Loading chapter pages...";
 
             try
             {
@@ -278,6 +285,7 @@ namespace UniversalMediaOS.WPF.ViewModels
 
                 AppLogger.Log($"Loaded {pages.Count} pages for chapter '{chapter.ChapterNumber}'");
                 PageUrls.ReplaceRange(pages);
+                ReaderStatus = pages.Count == 0 ? "No pages are available for this chapter. Select another chapter." : string.Empty;
 
                 if (PageUrls.Count == 0)
                 {
@@ -296,6 +304,7 @@ namespace UniversalMediaOS.WPF.ViewModels
                 if (IsCurrentPageGeneration(generation))
                 {
                     CurrentViewMode = 1;
+                    ReaderStatus = "Could not load chapter pages. Select a chapter to retry.";
                 }
             }
             finally
@@ -314,6 +323,7 @@ namespace UniversalMediaOS.WPF.ViewModels
         private void GoBack()
         {
             AppLogger.Log($"GoBackCommand invoked from mode={CurrentViewMode}");
+            ReaderStatus = string.Empty;
             switch (CurrentViewMode)
             {
                 case 3:

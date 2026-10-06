@@ -43,6 +43,9 @@ namespace UniversalMediaOS.WPF.Views
         }
 
         private void MangaView_Unloaded(object sender, System.Windows.RoutedEventArgs e)
+            => CloseForTab();
+
+        internal void CloseForTab()
         {
             _isLoaded = false;
             DetachViewModel();

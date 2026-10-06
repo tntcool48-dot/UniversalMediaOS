@@ -51,11 +51,12 @@ namespace UniversalMediaOS.Tests.E2E.Tests
         }
 
         [Fact]
-        public void MangaDexApiClient_DoesNotImpersonateBrowserOrSendCorsHeaders()
+        public void MangaDexApiClient_IdentifiesTheApplicationWithoutBrowserOrCorsHeaders()
         {
             using var client = MangaService.CreateHttpClientForTesting();
 
-            Assert.Empty(client.DefaultRequestHeaders.UserAgent);
+            Assert.Contains(client.DefaultRequestHeaders.UserAgent, agent => agent.Product?.Name == "UniversalMediaOS");
+            Assert.DoesNotContain(client.DefaultRequestHeaders.UserAgent, agent => agent.Product?.Name == "Mozilla");
             Assert.Null(client.DefaultRequestHeaders.Referrer);
             Assert.False(client.DefaultRequestHeaders.Contains("Origin"));
             Assert.False(client.DefaultRequestHeaders.Contains("Sec-Fetch-Site"));
@@ -70,10 +71,19 @@ namespace UniversalMediaOS.Tests.E2E.Tests
                 "https://uploads.mangadex.org/covers/title/cover.jpg.512.jpg");
 
             Assert.Empty(client.DefaultRequestHeaders.UserAgent);
+            Assert.Contains(request.Headers.UserAgent, agent => agent.Product?.Name == "UniversalMediaOS");
             Assert.Null(request.Headers.Referrer);
             Assert.False(request.Headers.Contains("Origin"));
             Assert.False(request.Headers.Contains("Sec-Fetch-Site"));
             Assert.Contains(client.DefaultRequestHeaders.Accept, header => header.MediaType == "image/jpeg");
+        }
+
+        [Fact]
+        public void OtherPosterProvidersRetainTheirExistingRequestHeaders()
+        {
+            using var request = AsyncImageLoader.CreateImageRequestForTesting("https://images.example/cover.jpg");
+            Assert.Empty(request.Headers.UserAgent);
+            Assert.Null(request.Headers.Referrer);
         }
 
         [Theory]

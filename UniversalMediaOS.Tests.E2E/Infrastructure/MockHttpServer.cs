@@ -13,11 +13,13 @@ namespace UniversalMediaOS.Tests.E2E.Infrastructure
         private readonly HttpListener _listener;
         private readonly CancellationTokenSource _cts;
         private Task? _listenerTask;
+        private readonly byte[]? _mangaPagePng;
 
         public string BaseUrl { get; }
 
-        public MockHttpServer(int port = 0)
+        public MockHttpServer(int port = 0, byte[]? mangaPagePng = null)
         {
+            _mangaPagePng = mangaPagePng;
             if (port <= 0)
             {
                 using var reservation = new TcpListener(IPAddress.Loopback, 0);
@@ -198,7 +200,7 @@ namespace UniversalMediaOS.Tests.E2E.Infrastructure
                 {
                     // Serve dummy page image
                     res.ContentType = "image/png";
-                    byte[] dummyPng = new byte[] {
+                    byte[] dummyPng = _mangaPagePng ?? new byte[] {
                         0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
                         0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
                         0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0xDA, 0x63, 0x60, 0x60, 0x60, 0x60,

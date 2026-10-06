@@ -35,6 +35,9 @@ namespace UniversalMediaOS.Core.Services
 
     public class MangaService
     {
+        public static string ClientUserAgent =>
+            $"UniversalMediaOS/{typeof(MangaService).Assembly.GetName().Version?.ToString(3) ?? "1.0.0"} (+https://github.com/tntcool48-dot/UniversalMediaOS)";
+
         private static readonly HttpClient _httpClient = CreateHttpClient();
         private readonly UniversalMediaOS.Core.Configuration.DomainHotSwapper? _config;
         private readonly string _mangaDexUrl;
@@ -52,6 +55,7 @@ namespace UniversalMediaOS.Core.Services
             // the request look like an inconsistent CORS request and has caused
             // MangaDex's edge protection to reject otherwise valid calls.
             client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
+            client.DefaultRequestHeaders.UserAgent.ParseAdd(ClientUserAgent);
             return client;
         }
 
@@ -76,7 +80,7 @@ namespace UniversalMediaOS.Core.Services
             {
                 string url = $"{_mangaDexUrl.TrimEnd('/')}/manga?title={Uri.EscapeDataString(query.Trim())}&limit=20&availableTranslatedLanguage[]=en&{BuildContentRatingQuery()}&includes[]=cover_art&order[relevance]=desc";
                 using var response = await _httpClient.GetAsync(url, token);
-                if (!response.IsSuccessStatusCode) return results;
+                response.EnsureSuccessStatusCode();
 
                 string json = await response.Content.ReadAsStringAsync(token);
                 using var doc = JsonDocument.Parse(json);
@@ -89,6 +93,7 @@ namespace UniversalMediaOS.Core.Services
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"Manga Search Error: {ex.Message}");
+                throw;
             }
 
             return results;
@@ -102,7 +107,7 @@ namespace UniversalMediaOS.Core.Services
             {
                 string url = $"{_mangaDexUrl.TrimEnd('/')}/manga?limit=24&availableTranslatedLanguage[]=en&{BuildContentRatingQuery()}&includes[]=cover_art&hasAvailableChapters=true&order[followedCount]=desc";
                 using var response = await _httpClient.GetAsync(url, token);
-                if (!response.IsSuccessStatusCode) return results;
+                response.EnsureSuccessStatusCode();
 
                 string json = await response.Content.ReadAsStringAsync(token);
                 using var doc = JsonDocument.Parse(json);
@@ -115,6 +120,7 @@ namespace UniversalMediaOS.Core.Services
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"Manga Recommendations Error: {ex.Message}");
+                throw;
             }
 
             return results;
@@ -401,7 +407,8 @@ namespace UniversalMediaOS.Core.Services
 
                     string url = $"{_mangaDexUrl.TrimEnd('/')}/manga/{mangaId}/feed?translatedLanguage[]=en&limit=100&offset={offset}&order[chapter]=asc";
                     using var response = await _httpClient.GetAsync(url, token);
-                    if (!response.IsSuccessStatusCode) break;
+                    if (!response.IsSuccessStatusCode && chapters.Count > 0) break;
+                    response.EnsureSuccessStatusCode();
 
                     string json = await response.Content.ReadAsStringAsync(token);
                     using var doc = JsonDocument.Parse(json);
@@ -466,6 +473,7 @@ namespace UniversalMediaOS.Core.Services
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"Manga Chapters Error: {ex.Message}");
+                if (chapters.Count == 0) throw;
             }
 
             return chapters
@@ -490,7 +498,7 @@ namespace UniversalMediaOS.Core.Services
             {
                 string url = $"{_mangaDexUrl.TrimEnd('/')}/at-home/server/{chapterId}";
                 using var response = await _httpClient.GetAsync(url, token);
-                if (!response.IsSuccessStatusCode) return pages;
+                response.EnsureSuccessStatusCode();
 
                 string json = await response.Content.ReadAsStringAsync(token);
                 using var doc = JsonDocument.Parse(json);
@@ -522,6 +530,7 @@ namespace UniversalMediaOS.Core.Services
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"Manga Pages Error: {ex.Message}");
+                throw;
             }
 
             return pages;

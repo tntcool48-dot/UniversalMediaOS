@@ -10,7 +10,8 @@ namespace UniversalMediaOS.WPF.Controls;
 
 /// <summary>
 /// Keeps each open player's HWND and browser document in the visual tree.
-/// Catalog/utility views still use the ordinary active-content presenter.
+/// Manga readers retain their document and scroll position as well.
+/// Other catalog/utility views use the ordinary active-content presenter.
 /// </summary>
 public sealed class PlaybackTabContentHost : Grid
 {
@@ -33,6 +34,7 @@ public sealed class PlaybackTabContentHost : Grid
     private readonly ContentControl _otherContent = new();
     private readonly ScaleTransform _otherContentScale = new();
     private readonly Dictionary<MediaTabViewModel, PlaybackView> _players = new();
+    private readonly Dictionary<MediaTabViewModel, MangaView> _mangaReaders = new();
 
     public PlaybackTabContentHost()
     {
@@ -82,6 +84,13 @@ public sealed class PlaybackTabContentHost : Grid
             Children.Remove(view);
             _players.Remove(tab);
         }
+        foreach (var tab in _mangaReaders.Keys.Where(tab => Tabs?.Contains(tab) != true).ToArray())
+        {
+            MangaView view = _mangaReaders[tab];
+            view.CloseForTab();
+            Children.Remove(view);
+            _mangaReaders.Remove(tab);
+        }
 
         MediaTabViewModel? active = Tabs?.Contains(ActiveTab!) == true ? ActiveTab : null;
         foreach (var (tab, view) in _players)
@@ -90,6 +99,8 @@ public sealed class PlaybackTabContentHost : Grid
             // from belonging to an inactive tab. Never reparent on selection.
             view.Visibility = ReferenceEquals(tab, active) ? Visibility.Visible : Visibility.Hidden;
         }
+        foreach (var (tab, view) in _mangaReaders)
+            view.Visibility = ReferenceEquals(tab, active) ? Visibility.Visible : Visibility.Hidden;
 
         if (active?.ContentViewModel is PlaybackViewModel player)
         {
@@ -99,6 +110,17 @@ public sealed class PlaybackTabContentHost : Grid
             {
                 var view = new PlaybackView { DataContext = player };
                 _players.Add(active, view);
+                Children.Add(view);
+            }
+        }
+        else if (active?.ContentViewModel is MangaViewModel manga)
+        {
+            _otherContent.Content = null;
+            _otherContent.Visibility = Visibility.Collapsed;
+            if (!_mangaReaders.ContainsKey(active))
+            {
+                var view = new MangaView { DataContext = manga, LayoutTransform = _otherContentScale };
+                _mangaReaders.Add(active, view);
                 Children.Add(view);
             }
         }
