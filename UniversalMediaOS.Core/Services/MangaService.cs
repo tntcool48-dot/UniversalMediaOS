@@ -33,6 +33,17 @@ namespace UniversalMediaOS.Core.Services
         public string ExternalUrl { get; set; } = string.Empty;
     }
 
+    public sealed class IncompleteMangaChaptersException : Exception
+    {
+        public IReadOnlyList<MangaChapter> AvailableChapters { get; }
+
+        public IncompleteMangaChaptersException(IEnumerable<MangaChapter> chapters, Exception cause)
+            : base("The chapter lookup did not finish.", cause)
+        {
+            AvailableChapters = Array.AsReadOnly(chapters.ToArray());
+        }
+    }
+
     public class MangaService
     {
         public static string ClientUserAgent =>
@@ -407,20 +418,24 @@ namespace UniversalMediaOS.Core.Services
 
                     string url = $"{_mangaDexUrl.TrimEnd('/')}/manga/{mangaId}/feed?translatedLanguage[]=en&limit=100&offset={offset}&order[chapter]=asc";
                     using var response = await _httpClient.GetAsync(url, token);
-                    if (!response.IsSuccessStatusCode && chapters.Count > 0) break;
                     response.EnsureSuccessStatusCode();
 
                     string json = await response.Content.ReadAsStringAsync(token);
                     using var doc = JsonDocument.Parse(json);
 
-                    if (doc.RootElement.TryGetProperty("total", out var totalProp) && totalProp.ValueKind == JsonValueKind.Number)
-                    {
-                        total = totalProp.GetInt32();
-                    }
+                    if (!doc.RootElement.TryGetProperty("total", out var totalProp) ||
+                        totalProp.ValueKind != JsonValueKind.Number ||
+                        !totalProp.TryGetInt32(out total) || total < 0)
+                        throw new JsonException("Chapter feed did not report a valid total.");
 
                     if (doc.RootElement.TryGetProperty("data", out var dataArray) && dataArray.ValueKind == JsonValueKind.Array)
                     {
-                        if (dataArray.GetArrayLength() == 0) break;
+                        if (dataArray.GetArrayLength() == 0)
+                        {
+                            if (offset < total)
+                                throw new JsonException("Chapter feed ended before its reported total.");
+                            break;
+                        }
 
                         foreach (var item in dataArray.EnumerateArray())
                         {
@@ -452,18 +467,18 @@ namespace UniversalMediaOS.Core.Services
                                 });
                             }
                         }
+                        offset += dataArray.GetArrayLength();
                     }
                     else
                     {
-                        break;
+                        throw new JsonException("Chapter feed did not contain a data array.");
                     }
 
                     // MangaDex rate limit: ~5 req/s. Pause between paginated requests to avoid HTTP 429.
-                    if (offset + 100 < total)
+                    if (offset < total)
                     {
                         await Task.Delay(250, token);
                     }
-                    offset += 100;
                 }
             }
             catch (OperationCanceledException)
@@ -474,9 +489,13 @@ namespace UniversalMediaOS.Core.Services
             {
                 System.Diagnostics.Debug.WriteLine($"Manga Chapters Error: {ex.Message}");
                 if (chapters.Count == 0) throw;
+                throw new IncompleteMangaChaptersException(OrderChapterChoices(chapters), ex);
             }
 
-            return chapters
+            return OrderChapterChoices(chapters);
+        }
+
+        private static List<MangaChapter> OrderChapterChoices(IEnumerable<MangaChapter> chapters) => chapters
                 .GroupBy(
                     chapter => chapter.ChapterNumber == "0" ? $"id:{chapter.Id}" : chapter.ChapterNumber,
                     StringComparer.OrdinalIgnoreCase)
@@ -487,7 +506,6 @@ namespace UniversalMediaOS.Core.Services
                 .OrderBy(chapter => ParseChapterNumber(chapter.ChapterNumber))
                 .ThenBy(chapter => chapter.ChapterNumber, StringComparer.OrdinalIgnoreCase)
                 .ToList();
-        }
 
         public virtual async Task<List<string>> GetPageUrlsAsync(string chapterId, CancellationToken token = default)
         {

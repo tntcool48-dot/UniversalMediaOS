@@ -14,12 +14,15 @@ namespace UniversalMediaOS.Tests.E2E.Infrastructure
         private readonly CancellationTokenSource _cts;
         private Task? _listenerTask;
         private readonly byte[]? _mangaPagePng;
+        private readonly Func<HttpListenerRequest, (int Status, string Body)>? _mangaChapterFeed;
 
         public string BaseUrl { get; }
 
-        public MockHttpServer(int port = 0, byte[]? mangaPagePng = null)
+        public MockHttpServer(int port = 0, byte[]? mangaPagePng = null,
+            Func<HttpListenerRequest, (int Status, string Body)>? mangaChapterFeed = null)
         {
             _mangaPagePng = mangaPagePng;
+            _mangaChapterFeed = mangaChapterFeed;
             if (port <= 0)
             {
                 using var reservation = new TcpListener(IPAddress.Loopback, 0);
@@ -190,7 +193,9 @@ namespace UniversalMediaOS.Tests.E2E.Infrastructure
                 // 7. MangaDex API Mock
                 else if (path.Contains("/manga") && path.Contains("/feed"))
                 {
-                    responseBody = "{\"total\": 1, \"data\": [{\"id\": \"mock-chapter-1\", \"type\": \"chapter\", \"attributes\": {\"chapter\": \"1\", \"title\": \"Chapter 1\", \"pages\": 2, \"externalUrl\": \"\"}}]}";
+                    var feed = _mangaChapterFeed?.Invoke(req);
+                    res.StatusCode = feed?.Status ?? 200;
+                    responseBody = feed?.Body ?? "{\"total\": 1, \"data\": [{\"id\": \"mock-chapter-1\", \"type\": \"chapter\", \"attributes\": {\"chapter\": \"1\", \"title\": \"Chapter 1\", \"pages\": 2, \"externalUrl\": \"\"}}]}";
                 }
                 else if (path.Contains("/at-home/server/"))
                 {

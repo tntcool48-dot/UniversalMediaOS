@@ -20,10 +20,13 @@ namespace UniversalMediaOS.Tests.E2E.Infrastructure
         private readonly string? _previousDataRoot;
         public string SandboxPath { get; }
 
-        public AppFixture(byte[]? mangaPagePng = null)
+        public AppFixture() : this(mangaPagePng: null) { }
+
+        internal AppFixture(byte[]? mangaPagePng,
+            Func<System.Net.HttpListenerRequest, (int Status, string Body)>? mangaChapterFeed = null)
         {
             // 1. Start Mock HTTP Server
-            _server = new MockHttpServer(mangaPagePng: mangaPagePng);
+            _server = new MockHttpServer(mangaPagePng: mangaPagePng, mangaChapterFeed: mangaChapterFeed);
             _server.Start();
 
             // 2. Setup APPDATA redirection and test environment sandbox

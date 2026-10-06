@@ -29,6 +29,7 @@ namespace UniversalMediaOS.WPF.ViewModels
         private int _pageGeneration;
         private bool _isInitialized;
         private bool _isDisposed;
+        private string _chapterListStatus = string.Empty;
 
         // ── Search ──────────────────────────────────────────
         [ObservableProperty] private string _searchQuery = string.Empty;
@@ -202,6 +203,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             CurrentViewMode = 1;
             Breadcrumb = manga.Title;
             ReaderStatus = "Loading chapters...";
+            _chapterListStatus = string.Empty;
             IsLoadingChapters = true;
 
             try
@@ -216,7 +218,7 @@ namespace UniversalMediaOS.WPF.ViewModels
 
                 AppLogger.Log($"Loaded {chapters.Count} chapters for '{manga.Title}'");
                 Chapters.ReplaceRange(chapters);
-                ReaderStatus = chapters.Count == 0 ? "No English chapters are available for this manga." : string.Empty;
+                ReaderStatus = _chapterListStatus = chapters.Count == 0 ? "No English chapters are available for this manga." : string.Empty;
 
                 if (Chapters.Count == 0)
                 {
@@ -227,11 +229,22 @@ namespace UniversalMediaOS.WPF.ViewModels
             {
                 AppLogger.Log($"Chapter load cancelled for '{manga.Title}'.");
             }
+            catch (IncompleteMangaChaptersException ex)
+            {
+                AppLogger.Log($"Chapter lookup incomplete; retained {ex.AvailableChapters.Count} choices.", "WARNING");
+                if (!token.IsCancellationRequested && IsCurrentChapterGeneration(generation) &&
+                    string.Equals(SelectedManga?.Id, manga.Id, StringComparison.Ordinal))
+                {
+                    Chapters.ReplaceRange(ex.AvailableChapters);
+                    ReaderStatus = _chapterListStatus = "Some chapters could not load. Showing available chapters. Go back and retry.";
+                }
+            }
             catch (Exception ex)
             {
                 AppLogger.Log($"Failed to load chapters: {ex.Message}", "ERROR");
-                if (IsCurrentChapterGeneration(generation))
-                    ReaderStatus = "Could not load chapters. Go back and retry.";
+                if (!token.IsCancellationRequested && IsCurrentChapterGeneration(generation) &&
+                    string.Equals(SelectedManga?.Id, manga.Id, StringComparison.Ordinal))
+                    ReaderStatus = _chapterListStatus = "Could not load chapters. Go back and retry.";
             }
             finally
             {
@@ -334,6 +347,7 @@ namespace UniversalMediaOS.WPF.ViewModels
                     ExternalUrl = string.Empty;
                     CurrentViewMode = 1;
                     Breadcrumb = SelectedManga?.Title ?? "Manga";
+                    ReaderStatus = _chapterListStatus;
                     break;
                 case 1:
                     // Back to search results

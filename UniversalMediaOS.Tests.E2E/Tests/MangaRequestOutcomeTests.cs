@@ -87,6 +87,116 @@ public sealed class MangaRequestOutcomeTests
         Assert.False(viewModel.IsLoadingPages);
     }
 
+    [Theory]
+    [InlineData("http")]
+    [InlineData("malformed")]
+    [InlineData("premature-empty")]
+    public async Task LaterChapterFailureRetainsUsableChoicesReportsIncompleteAndCanRetry(string failure)
+    {
+        await using var fixture = new MangaServer();
+        var offsets = new List<int>();
+        bool retry = false;
+        string Feed(int first, int count) => JsonSerializer.Serialize(new
+        {
+            total = 101,
+            data = Enumerable.Range(first, count).Select(number => new
+            {
+                id = $"exact-chapter-{number}",
+                attributes = new { chapter = number.ToString(), title = $"Chapter {number}", pages = 2 }
+            })
+        });
+        fixture.Reply = request =>
+        {
+            if (request.Url!.AbsolutePath.Contains("/at-home/", StringComparison.Ordinal))
+                return (200, "{\"baseUrl\":\"http://127.0.0.1\",\"chapter\":{\"hash\":\"fixture\",\"data\":[\"page.png\"]}}");
+            int offset = int.Parse(request.QueryString["offset"]!);
+            offsets.Add(offset);
+            if (offset == 0) return (200, Feed(1, 100));
+            if (retry) return (200, Feed(101, 1));
+            return failure switch
+            {
+                "http" => (503, "{\"error\":\"unavailable\"}"),
+                "malformed" => (200, "{invalid-json"),
+                _ => (200, Feed(101, 0))
+            };
+        };
+        using var viewModel = new MangaViewModel(new(fixture.Config));
+        var manga = new MangaSearchResult { Id = "exact-manga", Title = "Exact same-title work" };
+        await viewModel.ReadCommand.ExecuteAsync(manga);
+        Assert.Equal(Enumerable.Range(1, 100).Select(number => $"exact-chapter-{number}"),
+            viewModel.Chapters.Select(chapter => chapter.Id));
+        Assert.Equal("Some chapters could not load. Showing available chapters. Go back and retry.", viewModel.ReaderStatus);
+        Assert.Equal(new[] { 0, 100 }, offsets);
+        Assert.Same(manga, viewModel.SelectedManga);
+        Assert.Equal(1, viewModel.CurrentViewMode);
+        Assert.False(viewModel.IsLoadingChapters);
+
+        await viewModel.SelectChapterCommand.ExecuteAsync(viewModel.Chapters[0]);
+        Assert.Equal(2, viewModel.CurrentViewMode);
+        viewModel.GoBackCommand.Execute(null);
+        Assert.Equal(1, viewModel.CurrentViewMode);
+        Assert.Equal("Some chapters could not load. Showing available chapters. Go back and retry.", viewModel.ReaderStatus);
+
+        viewModel.GoBackCommand.Execute(null);
+        retry = true;
+        await viewModel.ReadCommand.ExecuteAsync(manga);
+        Assert.Equal(Enumerable.Range(1, 101).Select(number => $"exact-chapter-{number}"),
+            viewModel.Chapters.Select(chapter => chapter.Id));
+        Assert.Empty(viewModel.ReaderStatus);
+        Assert.Equal(new[] { 0, 100, 0, 100 }, offsets);
+    }
+
+    [Fact]
+    public async Task ShortChapterResponseAdvancesByActualCountWithoutSkippingUnits()
+    {
+        await using var fixture = new MangaServer();
+        var offsets = new List<int>();
+        fixture.Reply = request =>
+        {
+            int offset = int.Parse(request.QueryString["offset"]!);
+            offsets.Add(offset);
+            return (200, JsonSerializer.Serialize(new
+            {
+                total = 3,
+                data = Enumerable.Range(offset + 1, Math.Min(2, Math.Max(0, 3 - offset))).Select(number => new
+                {
+                    id = $"short-page-chapter-{number}",
+                    attributes = new { chapter = number.ToString(), title = $"Chapter {number}", pages = 2 }
+                })
+            }));
+        };
+        var chapters = await new MangaService(fixture.Config).GetChaptersAsync("exact-work");
+        Assert.Equal(new[] { "short-page-chapter-1", "short-page-chapter-2", "short-page-chapter-3" },
+            chapters.Select(chapter => chapter.Id));
+        Assert.Equal(new[] { 0, 2 }, offsets);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task BackNavigationDoesNotRestoreAnOldFailedOrPartialLookup(bool partial)
+    {
+        var service = new DelayedFailureService();
+        using var viewModel = new MangaViewModel(service);
+        Task read = viewModel.ReadCommand.ExecuteAsync(new MangaSearchResult { Id = "old-work", Title = "Old work" });
+        viewModel.GoBackCommand.Execute(null);
+        Exception error = new HttpRequestException("Fixture failure");
+        if (partial)
+            error = new IncompleteMangaChaptersException(new[] { new MangaChapter { Id = "old-unit", ChapterNumber = "1" } }, error);
+        service.Result.SetException(error);
+        await read;
+        Assert.Empty(viewModel.Chapters);
+        Assert.Empty(viewModel.ReaderStatus);
+        Assert.Null(viewModel.SelectedManga);
+        Assert.Equal(0, viewModel.CurrentViewMode);
+    }
+
+    private sealed class DelayedFailureService : MangaService
+    {
+        public TaskCompletionSource<List<MangaChapter>> Result { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override Task<List<MangaChapter>> GetChaptersAsync(string mangaId, CancellationToken token = default) => Result.Task;
+    }
+
     private sealed class MangaServer : IAsyncDisposable
     {
         private readonly HttpListener _listener = new();
@@ -94,6 +204,7 @@ public sealed class MangaRequestOutcomeTests
         private readonly Task _loop;
         private readonly string _root;
         public int Status = 503;
+        public Func<HttpListenerRequest, (int Status, string Body)>? Reply;
         public string LastUserAgent = string.Empty;
         public DomainHotSwapper Config { get; }
 
@@ -119,9 +230,10 @@ public sealed class MangaRequestOutcomeTests
                     try { context = await _listener.GetContextAsync().WaitAsync(_stop.Token); }
                     catch (OperationCanceledException) { break; }
                     LastUserAgent = context.Request.UserAgent ?? string.Empty;
-                    context.Response.StatusCode = Status;
+                    var reply = Reply?.Invoke(context.Request) ?? (Status, "{\"data\":[],\"total\":0,\"baseUrl\":\"http://127.0.0.1\",\"chapter\":{\"hash\":\"empty\",\"data\":[]}}");
+                    context.Response.StatusCode = reply.Item1;
                     context.Response.ContentType = "application/json";
-                    byte[] body = Encoding.UTF8.GetBytes("{\"data\":[],\"total\":0,\"baseUrl\":\"http://127.0.0.1\",\"chapter\":{\"hash\":\"empty\",\"data\":[]}}");
+                    byte[] body = Encoding.UTF8.GetBytes(reply.Item2);
                     context.Response.ContentLength64 = body.Length;
                     await context.Response.OutputStream.WriteAsync(body);
                     context.Response.Close();
