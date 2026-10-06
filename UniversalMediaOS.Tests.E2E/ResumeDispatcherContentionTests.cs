@@ -17,6 +17,157 @@ public sealed class ResumeDispatcherContentionTests(ITestOutputHelper output)
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public void SourceChangesReturnPromptlyAndOnlyTheLatestUnitReceivesItsResume(bool catalog)
+    {
+        using var profile = new IsolatedProfile();
+        RecoveryLayoutTests.RunSta(() =>
+        {
+            using var player = CreatePlayer(profile, catalog);
+            var (work, unit) = SaveInitial(player, profile);
+            var first = EpisodeContext(1);
+            var latest = EpisodeContext(2);
+            using (var seed = new DatabaseContext())
+            {
+                seed.SaveResumeState(catalog ? first.WorkKey : "42", catalog ? first.UnitKey! : "2", 180);
+                seed.SaveResumeState(catalog ? latest.WorkKey : "42", catalog ? latest.UnitKey! : "3", 371);
+            }
+            player.PlaybackTime = 120_000;
+            var elapsed = Stopwatch.StartNew();
+            double maximumHeartbeatGap = 0;
+            int heartbeatCount = 0;
+            using (var writer = new WriterLock(profile.ConnectionString!, work, unit, 5000))
+            {
+                var heartbeatClock = Stopwatch.StartNew();
+                double previousTick = 0;
+                var heartbeat = new System.Windows.Threading.DispatcherTimer
+                    { Interval = TimeSpan.FromMilliseconds(50) };
+                heartbeat.Tick += (_, _) =>
+                {
+                    double now = heartbeatClock.Elapsed.TotalMilliseconds;
+                    maximumHeartbeatGap = Math.Max(maximumHeartbeatGap, now - previousTick);
+                    previousTick = now;
+                    heartbeatCount++;
+                };
+                heartbeat.Start();
+                elapsed.Restart();
+                player.LoadEmbed("https://next.invalid/2", "Next unit", "2", malId: 42,
+                    audiovisualContext: catalog ? first : null);
+                player.LoadEmbed("https://next.invalid/3", "Latest unit", "3", malId: 42,
+                    audiovisualContext: catalog ? latest : null);
+                elapsed.Stop();
+                try
+                {
+                    Assert.False(player.ResumeLoadCompleted.IsCompleted);
+                    PumpUntil(() => heartbeatClock.Elapsed >= TimeSpan.FromSeconds(3));
+                    Assert.False(player.TryConsumePendingWebResumePosition(out _));
+                }
+                finally { heartbeat.Stop(); }
+            }
+            output.WriteLine($"{(catalog ? "Catalog" : "Legacy")} two source changes returned in {elapsed.Elapsed.TotalMilliseconds:0.000} ms.");
+            double restored = 0;
+            PumpUntil(() => player.TryConsumePendingWebResumePosition(out restored));
+            output.WriteLine($"{(catalog ? "Catalog" : "Legacy")} two source changes returned in {elapsed.Elapsed.TotalMilliseconds:0.000} ms; latest unit restored {restored} seconds.");
+            Assert.Equal(371, restored);
+            AssertPersisted(work, unit, 120);
+            using var verify = new DatabaseContext();
+            Assert.Equal(180, verify.GetResumeState(catalog ? first.WorkKey : "42", catalog ? first.UnitKey! : "2"));
+            Assert.InRange(elapsed.Elapsed.TotalMilliseconds, 0, 500);
+            output.WriteLine($"Three-second writer heartbeat: {heartbeatCount} ticks, maximum gap {maximumHeartbeatGap:0.000} ms.");
+            Assert.True(heartbeatCount >= 30);
+            Assert.InRange(maximumHeartbeatGap, 0, 100);
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ExplicitSeekWinsOverAPendingUnitResume(bool catalog)
+    {
+        using var profile = new IsolatedProfile();
+        RecoveryLayoutTests.RunSta(() =>
+        {
+            using var player = CreatePlayer(profile, catalog);
+            var (work, unit) = SaveInitial(player, profile);
+            var next = EpisodeContext(1);
+            using (var seed = new DatabaseContext())
+                seed.SaveResumeState(catalog ? next.WorkKey : "42", catalog ? next.UnitKey! : "2", 180);
+            player.PlaybackTime = 120_000;
+            using (var writer = new WriterLock(profile.ConnectionString!, work, unit, 5000))
+            {
+                player.LoadEmbed("https://next.invalid/2", "Next unit", "2", malId: 42,
+                    audiovisualContext: catalog ? next : null);
+                player.ReportWebPlaybackProgress(0, 600, false, paused: true);
+                player.BeginUserSeek();
+                player.CommitUserSeek(123_000);
+                player.ReportWebPlaybackAction("seek", 123, 600);
+                player.SetTabActive(false); // Pause captures the explicitly chosen position.
+                Assert.False(player.ResumeLoadCompleted.IsCompleted);
+            }
+            WaitForResumeLoad(player);
+            Assert.False(player.TryConsumePendingWebResumePosition(out _));
+            Assert.Equal(123_000, player.PlaybackTime);
+            AssertPersisted(work, unit, 120);
+            AssertPersisted(catalog ? next.WorkKey : "42", catalog ? next.UnitKey! : "2", 123);
+        });
+    }
+
+    [Fact]
+    public async Task QueuedCatalogLoadKeepsItsCapturedProfileAndFollowsAcceptedProgress()
+    {
+        using var profile = new IsolatedProfile();
+        var progress = new PlaybackProgressService(new(Path.Combine(profile.Root, "library.json")));
+        var session = progress.Open(Context()).Session;
+        using (var seed = new DatabaseContext())
+        {
+            profile.ConnectionString = seed.Database.GetConnectionString()!;
+            seed.SaveResumeState(session.Context.WorkKey, session.Context.UnitKey!, 90);
+        }
+        Task save;
+        Task<(PlaybackProgressSession Session, double Position)> read;
+        using (var writer = new WriterLock(profile.ConnectionString!, session.Context.WorkKey, session.Context.UnitKey!, 5000))
+        {
+            save = progress.SaveAsync(progress.Capture(session, 120, 600, false)!);
+            read = progress.OpenAsync(session.Context);
+            Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, Path.Combine(profile.Root, "other-profile"));
+        }
+        await save;
+        Assert.Equal(120, (await read).Position);
+        Assert.False(Directory.Exists(Path.Combine(profile.Root, "other-profile")));
+        Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, profile.Root);
+        AssertPersisted(session.Context.WorkKey, session.Context.UnitKey!, 120);
+    }
+
+    private static AudiovisualPlaybackContext EpisodeContext(int season) => new("av:fixture:show:load-contention",
+        new() { Kind = AudiovisualMediaKind.Television, ContentForm = AudiovisualContentForm.Series,
+            Title = "Load contention fixture" }, new() { SeasonNumber = season, EpisodeNumber = 1 },
+        "Load contention fixture", "", new());
+
+    internal static void WaitForResumeLoad(PlaybackViewModel player)
+    {
+        if (Thread.CurrentThread.GetApartmentState() == ApartmentState.STA)
+            PumpUntil(() => player.ResumeLoadCompleted.IsCompleted);
+        player.ResumeLoadCompleted.WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+    }
+
+    private static void PumpUntil(Func<bool> condition)
+    {
+        var dispatcher = System.Windows.Threading.Dispatcher.CurrentDispatcher;
+        var deadline = Stopwatch.StartNew();
+        bool success;
+        while (!(success = condition()) && deadline.Elapsed < TimeSpan.FromSeconds(5))
+        {
+            var frame = new System.Windows.Threading.DispatcherFrame();
+            dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background,
+                new Action(() => frame.Continue = false));
+            System.Windows.Threading.Dispatcher.PushFrame(frame);
+            Thread.Sleep(5);
+        }
+        Assert.True(success, "The current unit must receive its delayed resume within the deadline.");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public void PausingAnInactiveTabDoesNotWaitForASqliteWriter(bool catalog)
     {
         using var profile = new IsolatedProfile();
@@ -118,6 +269,8 @@ public sealed class ResumeDispatcherContentionTests(ITestOutputHelper output)
 
     private static (string Work, string Unit) SaveInitial(PlaybackViewModel player, IsolatedProfile profile)
     {
+        PumpUntil(() => player.ResumeLoadCompleted.IsCompleted);
+        player.ResumeLoadCompleted.GetAwaiter().GetResult();
         player.ReportWebPlaybackProgress(90, 600, false, paused: true);
         Assert.True(SpinWait.SpinUntil(() =>
         {
@@ -138,7 +291,7 @@ public sealed class ResumeDispatcherContentionTests(ITestOutputHelper output)
             return database.GetResumeState(work, unit) == expected;
         }, TimeSpan.FromSeconds(5)), $"Queued exact-unit position {expected} must persist after the writer releases.");
 
-    private sealed class WriterLock : IDisposable
+    internal sealed class WriterLock : IDisposable
     {
         private readonly ManualResetEventSlim _release = new();
         private readonly Task _writer;

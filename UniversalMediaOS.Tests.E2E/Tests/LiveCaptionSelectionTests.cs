@@ -130,7 +130,8 @@ public sealed class LiveCaptionSelectionTests(ITestOutputHelper output)
             Assert.True(SpinWait.SpinUntil(() => Window().FindFirstDescendant(cf => cf.ByAutomationId("PlaybackOptions"))?
                 .FindFirstDescendant(cf => cf.ByText("خيارات التشغيل")) != null, TimeSpan.FromSeconds(3)),
                 "The retained native options header must use the selected Arabic language.");
-            Assert.Equal("الإنجليزية (ملف منزل)", Captions()!.SelectedItem?.Text);
+            Assert.True(SpinWait.SpinUntil(() => Captions()?.SelectedItem?.Text == "الإنجليزية (ملف منزل)",
+                TimeSpan.FromSeconds(3)), "The retained caption overlay must reattach with its selected downloaded English track.\n" + ReadLog(logPath));
             Assert.True(IsPaused(), "Returning from language settings must keep the player paused.");
             if (!paused) Button("Play or pause")!.Invoke();
         }

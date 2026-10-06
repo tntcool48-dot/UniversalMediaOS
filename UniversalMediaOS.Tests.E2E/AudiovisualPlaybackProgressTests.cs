@@ -39,6 +39,7 @@ public sealed class AudiovisualPlaybackProgressTests : IDisposable
         using var restarted = Player(new(new(LibraryPath)));
         restarted.LoadEmbed("https://other-provider.invalid/new?token=changed", "Changed display title",
             audiovisualContext: Context("tt1160419", provider: "other"));
+        ResumeDispatcherContentionTests.WaitForResumeLoad(restarted);
         Assert.True(restarted.TryConsumePendingWebResumePosition(out double position));
         Assert.Equal(123, position);
     }
@@ -54,6 +55,7 @@ public sealed class AudiovisualPlaybackProgressTests : IDisposable
         using (var newer = Player())
         {
             newer.LoadEmbed("https://new.invalid/embed", "Film", audiovisualContext: Context("tt1160419", provider: "new"));
+            ResumeDispatcherContentionTests.WaitForResumeLoad(newer);
             Assert.True(newer.TryConsumePendingWebResumePosition(out double restored));
             Assert.Equal(90, restored);
             newer.ReportWebPlaybackProgress(240, 600, false);

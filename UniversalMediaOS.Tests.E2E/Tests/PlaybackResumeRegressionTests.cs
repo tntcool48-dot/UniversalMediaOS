@@ -64,6 +64,7 @@ namespace UniversalMediaOS.Tests.E2E.Tests
             using var second = new PlaybackViewModel(new DatabaseContext());
             second.LoadMedia("https://second.invalid/new.mp4", "Changed title", audiovisualContext: context);
             second.LoadEmbed("https://third.invalid/embed", "Another title", audiovisualContext: context);
+            ResumeDispatcherContentionTests.WaitForResumeLoad(second);
             Assert.True(second.TryConsumePendingWebResumePosition(out double position));
             Assert.Equal(123, position);
         }
@@ -85,6 +86,7 @@ namespace UniversalMediaOS.Tests.E2E.Tests
             using var vm = new PlaybackViewModel(new DatabaseContext());
             vm.LoadEmbed("https://example.invalid/same", "Same title", episode.ToString(),
                 audiovisualContext: Context(id, season, episode));
+            ResumeDispatcherContentionTests.WaitForResumeLoad(vm);
             Assert.True(vm.TryConsumePendingWebResumePosition(out double actual));
             Assert.Equal(expected, actual);
         }
@@ -102,6 +104,7 @@ namespace UniversalMediaOS.Tests.E2E.Tests
                 { ContentForm = AudiovisualContentForm.Series }, AudiovisualUnit.Feature, "Same title", "", new());
             using var vm = new PlaybackViewModel(new DatabaseContext());
             vm.LoadEmbed("https://example.invalid/embed", "Same title", "1", audiovisualContext: context);
+            ResumeDispatcherContentionTests.WaitForResumeLoad(vm);
             Assert.False(vm.TryConsumePendingWebResumePosition(out _));
             vm.ReportWebPlaybackProgress(100, 600, false);
             vm.ReportWebPlaybackProgress(600, 600, true);
@@ -171,6 +174,8 @@ namespace UniversalMediaOS.Tests.E2E.Tests
 
             using var viewModel = new PlaybackViewModel(new DatabaseContext());
             viewModel.LoadEmbed("https://example.invalid/embed", "Test Show - Ep 3", "3", malId: 42);
+
+            ResumeDispatcherContentionTests.WaitForResumeLoad(viewModel);
 
             Assert.True(viewModel.TryConsumePendingWebResumePosition(out double seconds));
             Assert.Equal(91.5, seconds, precision: 1);

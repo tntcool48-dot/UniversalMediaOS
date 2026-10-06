@@ -2059,6 +2059,9 @@ namespace UniversalMediaOS.WPF.Views
         private async void ApplyBrowserTelemetry(AuthenticatedWebTelemetry telemetry)
         {
             if (_webViewDisposed || !_viewLoaded || DataContext is not ViewModels.PlaybackViewModel { IsWebViewActive: true } vm) return;
+            if (!vm.ResumeLoadCompleted.IsCompleted && telemetry.Type == "ums-video-progress") return;
+            if (_pendingBrowserResumeSeconds == null && vm.TryConsumePendingWebResumePosition(out double loadedResume))
+                _pendingBrowserResumeSeconds = loadedResume;
             // Restore only the selected video document, not every embedded frame.
             if (_pendingBrowserResumeSeconds is { } resume && telemetry.Duration >= 120)
             {

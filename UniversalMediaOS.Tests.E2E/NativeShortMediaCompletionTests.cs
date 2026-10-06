@@ -5,6 +5,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using LibVLCSharp.Shared;
+using Microsoft.EntityFrameworkCore;
 using UniversalMediaOS.Core.Data;
 using UniversalMediaOS.Core.Helpers;
 using UniversalMediaOS.Core.OtherMedia;
@@ -16,6 +17,94 @@ namespace UniversalMediaOS.Tests.E2E;
 
 public sealed class NativeShortMediaCompletionTests
 {
+    [Fact]
+    public Task NativeStartWaitsForItsLockedResumeThenDecodesAtTheSavedPosition()
+        => OnDispatcher(NativeLockedResumeAsync);
+
+    private static async Task NativeLockedResumeAsync()
+    {
+        string? previous = Environment.GetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable);
+        string root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "UniversalMediaOS.Tests", "NativeLockedResume-" + Guid.NewGuid().ToString("N")));
+        Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, root);
+        string? connectionString = null;
+        try
+        {
+            Directory.CreateDirectory(root);
+            string video = Path.Combine(root, "resume.mp4");
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            var encoded = await new PreparationProcessRunner().RunAsync("ffmpeg", ["-nostdin", "-hide_banner", "-v", "error",
+                "-f", "lavfi", "-i", "testsrc=size=160x90:rate=25", "-t", "90", "-c:v", "mpeg4", "-y", video], deadline.Token);
+            Assert.Equal(0, encoded.ExitCode);
+            const string work = "av:fixture:film:locked-native";
+            const string unit = "feature";
+            using (var seed = new DatabaseContext())
+            {
+                seed.Database.EnsureCreated();
+                seed.SaveResumeState(work, unit, 27);
+                connectionString = seed.Database.GetConnectionString()!;
+            }
+            using var memory = new MemoryVideo();
+            using var player = new PlaybackViewModel(new DatabaseContext());
+            memory.Attach(player.MediaPlayer);
+            player.Volume = 0;
+            using (var writer = new ResumeDispatcherContentionTests.WriterLock(connectionString, work, unit, 5000))
+            {
+                player.LoadMedia(video, "Locked native fixture", audiovisualContext: new(work,
+                    new() { ContentForm = AudiovisualContentForm.Feature }, new(), "Locked native fixture", "", new()));
+                player.PlayPending();
+                await Task.Delay(300);
+                Assert.False(player.ResumeLoadCompleted.IsCompleted);
+                Assert.False(player.IsPlaying);
+                Assert.Equal(0, memory.Frames);
+                Assert.NotEmpty(player.PendingMediaPath);
+            }
+            await player.ResumeLoadCompleted.WaitAsync(TimeSpan.FromSeconds(5));
+            await Wait(() => memory.Frames >= 2 && player.MediaPlayer.Time >= 26_000, player);
+            Assert.InRange(player.MediaPlayer.Time, 26_000, 31_000);
+            var paused = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            EventHandler<EventArgs> onPaused = (_, _) => paused.TrySetResult();
+            player.MediaPlayer.Paused += onPaused;
+            try { player.SetTabActive(false); await paused.Task.WaitAsync(TimeSpan.FromSeconds(3)); }
+            finally { player.MediaPlayer.Paused -= onPaused; }
+            player.Dispose();
+            using var verify = new DatabaseContext();
+            Assert.InRange(verify.GetResumeState(work, unit), 26, 31);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, previous);
+            if (connectionString != null)
+            {
+                using var connection = new Microsoft.Data.Sqlite.SqliteConnection(connectionString);
+                Microsoft.Data.Sqlite.SqliteConnection.ClearPool(connection);
+            }
+            string parent = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "UniversalMediaOS.Tests")) + Path.DirectorySeparatorChar;
+            Assert.StartsWith(parent, root, StringComparison.OrdinalIgnoreCase);
+            Assert.Null(new DirectoryInfo(root).LinkTarget);
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
+    }
+
+    private static Task OnDispatcher(Func<Task> test)
+    {
+        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var thread = new Thread(() =>
+        {
+            var dispatcher = System.Windows.Threading.Dispatcher.CurrentDispatcher;
+            SynchronizationContext.SetSynchronizationContext(new System.Windows.Threading.DispatcherSynchronizationContext(dispatcher));
+            dispatcher.BeginInvoke(async () =>
+            {
+                try { await test(); completed.TrySetResult(); }
+                catch (Exception ex) { completed.TrySetException(ex); }
+                finally { dispatcher.BeginInvokeShutdown(System.Windows.Threading.DispatcherPriority.Background); }
+            });
+            System.Windows.Threading.Dispatcher.Run();
+        }) { IsBackground = true };
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        return completed.Task.WaitAsync(TimeSpan.FromSeconds(40));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

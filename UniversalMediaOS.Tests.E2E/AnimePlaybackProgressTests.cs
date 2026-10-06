@@ -31,12 +31,14 @@ public sealed class AnimePlaybackProgressTests : IDisposable
         using (var second = Player())
         {
             second.LoadEmbed("https://first.invalid/1", "Same title - Ep 1", "1", episodeContext: Context(200));
+            ResumeDispatcherContentionTests.WaitForResumeLoad(second);
             Assert.False(second.TryConsumePendingWebResumePosition(out _));
             second.ReportWebPlaybackProgress(180, 600, false);
         }
         var restarted = new PlaybackProgressService(new(LibraryPath));
         using var reopened = Player(restarted);
         reopened.LoadEmbed("https://different.invalid/new-token", "Different display title", "1", episodeContext: Context(100, audio: "dub"));
+        ResumeDispatcherContentionTests.WaitForResumeLoad(reopened);
         Assert.True(reopened.TryConsumePendingWebResumePosition(out double position));
         Assert.Equal(90, position);
         Assert.Equal(180, Read("anime:anilist:200", "episode:1"));
@@ -52,6 +54,7 @@ public sealed class AnimePlaybackProgressTests : IDisposable
         using var player = Player();
         player.LoadEmbed("https://changed.invalid/embed", "Same title", "1", malId: 52991,
             episodeContext: Context(154587, 52991));
+        ResumeDispatcherContentionTests.WaitForResumeLoad(player);
         Assert.True(player.TryConsumePendingWebResumePosition(out double position));
         Assert.Equal(123, position);
         Assert.Equal(123, Read("anime:anilist:154587", "episode:1"));
@@ -67,6 +70,7 @@ public sealed class AnimePlaybackProgressTests : IDisposable
         Seed("anime:anilist:154587", "episode:1", 0);
         using var player = Player();
         player.LoadEmbed("https://changed.invalid/embed", "Film", "1", episodeContext: Context(154587, 52991));
+        ResumeDispatcherContentionTests.WaitForResumeLoad(player);
         Assert.False(player.TryConsumePendingWebResumePosition(out _));
         Assert.Equal(0, Read("anime:anilist:154587", "episode:1"));
         Assert.Equal(90, Read("52991", "1"));
@@ -84,6 +88,7 @@ public sealed class AnimePlaybackProgressTests : IDisposable
         player.LoadEmbed("https://first.invalid/1", "Same title - Ep 1", episode, episodeContext: Context(100));
         player.ReportWebPlaybackProgress(123, 600, false);
         player.Dispose();
+        ResumeDispatcherContentionTests.WaitForResumeLoad(player);
         Assert.False(player.TryConsumePendingWebResumePosition(out _));
         using var database = new DatabaseContext();
         Assert.Single(database.ResumeStates.ToArray());
@@ -99,6 +104,7 @@ public sealed class AnimePlaybackProgressTests : IDisposable
         older.SetTabActive(false);
         using var current = Player();
         current.LoadEmbed("https://new.invalid/1", "Alias", "1", episodeContext: Context(100, audio: "dub"));
+        ResumeDispatcherContentionTests.WaitForResumeLoad(current);
         Assert.True(current.TryConsumePendingWebResumePosition(out double position));
         Assert.Equal(90, position);
         current.ReportWebPlaybackProgress(240, 600, false);
@@ -117,6 +123,7 @@ public sealed class AnimePlaybackProgressTests : IDisposable
         player.ReportWebPlaybackProgress(90, 600, false);
         await player.NextEpisodeCommand.ExecuteAsync(null);
         Assert.Equal("dub", player.BrowserAudioPreference);
+        ResumeDispatcherContentionTests.WaitForResumeLoad(player);
         Assert.False(player.TryConsumePendingWebResumePosition(out _));
         player.ReportWebPlaybackProgress(180, 600, false);
         player.Dispose();

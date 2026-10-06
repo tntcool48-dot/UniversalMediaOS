@@ -41,26 +41,48 @@ public sealed class PlaybackProgressService
         try
         {
             using var database = _createDatabase();
-            database.Database.EnsureCreated();
-            var rows = database.ResumeStates.Where(row => row.MediaId == context.WorkKey && row.EpisodeId == context.UnitKey).Take(2).ToArray();
-            double position = rows.Length == 1 ? rows[0].PositionSeconds : 0;
-            if (rows.Length == 0 && context.LegacyWorkKey != null && context.LegacyUnitKey != null)
-            {
-                var legacy = database.ResumeStates.Where(row => row.MediaId == context.LegacyWorkKey &&
-                    row.EpisodeId == context.LegacyUnitKey).Take(2).ToArray();
-                if (legacy.Length == 1)
-                {
-                    position = legacy[0].PositionSeconds;
-                    database.SaveResumeState(context.WorkKey, context.UnitKey, position);
-                    AppLogger.Log($"[Resume] Imported verified alias '{context.LegacyWorkKey}/{context.LegacyUnitKey}' into '{context.WorkKey}/{context.UnitKey}'; legacy row retained.");
-                }
-            }
-            var session = new PlaybackProgressSession(context, Interlocked.Increment(ref _sequence));
-            _owners[(context.WorkKey, context.UnitKey)] = session.Owner;
-            _activeWorkOwners[context.WorkKey] = session.Owner;
-            return (session, position);
+            return ReadOpen(database, context);
         }
         finally { _gate.Release(); }
+    }
+
+    public async Task<(PlaybackProgressSession Session, double Position)> OpenAsync(
+        PlaybackProgressContext context, Task? precedingSaves = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(context.WorkKey);
+        ArgumentException.ThrowIfNullOrWhiteSpace(context.UnitKey);
+        using var database = _createDatabase();
+        // Capture the destination before a queued load yields, just as saves do.
+        _ = database.Database.GetDbConnection();
+        await _gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (precedingSaves != null) await precedingSaves.ConfigureAwait(false);
+            return await Task.Run(() => ReadOpen(database, context)).ConfigureAwait(false);
+        }
+        finally { _gate.Release(); }
+    }
+
+    private (PlaybackProgressSession Session, double Position) ReadOpen(DatabaseContext database, PlaybackProgressContext context)
+    {
+        database.Database.EnsureCreated();
+        var rows = database.ResumeStates.Where(row => row.MediaId == context.WorkKey && row.EpisodeId == context.UnitKey).Take(2).ToArray();
+        double position = rows.Length == 1 ? rows[0].PositionSeconds : 0;
+        if (rows.Length == 0 && context.LegacyWorkKey != null && context.LegacyUnitKey != null)
+        {
+            var legacy = database.ResumeStates.Where(row => row.MediaId == context.LegacyWorkKey &&
+                row.EpisodeId == context.LegacyUnitKey).Take(2).ToArray();
+            if (legacy.Length == 1)
+            {
+                position = legacy[0].PositionSeconds;
+                database.SaveResumeState(context.WorkKey, context.UnitKey, position);
+                AppLogger.Log($"[Resume] Imported verified alias '{context.LegacyWorkKey}/{context.LegacyUnitKey}' into '{context.WorkKey}/{context.UnitKey}'; legacy row retained.");
+            }
+        }
+        var session = new PlaybackProgressSession(context, Interlocked.Increment(ref _sequence));
+        _owners[(context.WorkKey, context.UnitKey)] = session.Owner;
+        _activeWorkOwners[context.WorkKey] = session.Owner;
+        return (session, position);
     }
 
     public PlaybackProgressSession TakeOwnership(PlaybackProgressSession session)
@@ -75,6 +97,17 @@ public sealed class PlaybackProgressService
         _owners[key] = updated.Owner;
         _activeWorkOwners[session.Context.WorkKey] = updated.Owner;
         return updated;
+    }
+
+    public async Task<PlaybackProgressSession?> TakeOwnershipWhenOpenedAsync(Task<PlaybackProgressSession?> opening)
+    {
+        await _gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            var session = await opening.ConfigureAwait(false);
+            return session == null ? null : TakeOwnership(session);
+        }
+        finally { _gate.Release(); }
     }
 
     public PlaybackProgressWrite? Capture(PlaybackProgressSession session, double position, double duration, bool completed)
@@ -100,33 +133,57 @@ public sealed class PlaybackProgressService
         // not pick up a subsequently changed data root or database setting.
         _ = database.Database.GetDbConnection();
         await _gate.WaitAsync().ConfigureAwait(false);
+        try { await PersistAsync(database, write).ConfigureAwait(false); }
+        finally { _gate.Release(); }
+    }
+
+    public async Task SaveWhenOpenedAsync(Task<PlaybackProgressSession?> opening, double position, double duration,
+        bool completed, DateTimeOffset observedUtc, Func<bool> isLatest)
+    {
+        using var database = _createDatabase();
+        _ = database.Database.GetDbConnection();
+        // Reserve order before awaiting the load. Otherwise a newer provider's
+        // Open could overtake progress already accepted by its older player.
+        await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
-            // SQLite's async API can execute synchronously, including busy waits.
-            // Acquire ordering first so an immediate Open still waits for this save.
-            await Task.Run(async () =>
-            {
-                if (!Current()) return;
-                await database.Database.EnsureCreatedAsync().ConfigureAwait(false);
-                if (!Current()) return;
-                await database.SaveResumeStateAsync(context.WorkKey, context.UnitKey!, write.Position).ConfigureAwait(false);
-                AppLogger.Log($"[Resume] Saved position {write.Position:0.0}s for media '{context.WorkKey}', episode '{context.UnitKey}'.");
-                // The immutable observation time prevents another unit's delayed save from
-                // changing the last-unit summary. A JSON failure cannot undo SQLite progress.
-                try
-                {
-                    if (context.Audiovisual is { } audiovisual && _activeWorkOwners.GetValueOrDefault(context.WorkKey) == write.Session.Owner)
-                        await _library.RecordProgressAsync(AudiovisualLibraryKey.Create(audiovisual.Identity, context.WorkKey),
-                            audiovisual.Title, audiovisual.PosterUrl, audiovisual.Unit.SeasonNumber, audiovisual.Unit.EpisodeNumber,
-                            write.Position, write.Duration, observedUtc: write.ObservedUtc).ConfigureAwait(false);
-                }
-                catch (Exception ex)
-                {
-                    AppLogger.Log($"[Resume] Movie/TV library summary could not be saved: {ex.Message}", "WARNING");
-                }
-            }).ConfigureAwait(false);
+            var session = await opening.ConfigureAwait(false);
+            if (session == null || !isLatest()) return;
+            var write = Capture(session, position, duration, completed);
+            if (write != null) await PersistAsync(database, write with { ObservedUtc = observedUtc }).ConfigureAwait(false);
         }
         finally { _gate.Release(); }
+    }
+
+    private async Task PersistAsync(DatabaseContext database, PlaybackProgressWrite write)
+    {
+        var context = write.Session.Context;
+        var key = (context.WorkKey, context.UnitKey!);
+        bool Current() => _owners.GetValueOrDefault(key) == write.Session.Owner &&
+            _latestWrites.GetValueOrDefault(key) == write.Sequence;
+        // SQLite's async API can execute synchronously, including busy waits.
+        // Acquire ordering first so an immediate Open still waits for this save.
+        await Task.Run(async () =>
+        {
+            if (!Current()) return;
+            await database.Database.EnsureCreatedAsync().ConfigureAwait(false);
+            if (!Current()) return;
+            await database.SaveResumeStateAsync(context.WorkKey, context.UnitKey!, write.Position).ConfigureAwait(false);
+            AppLogger.Log($"[Resume] Saved position {write.Position:0.0}s for media '{context.WorkKey}', episode '{context.UnitKey}'.");
+            // The immutable observation time prevents another unit's delayed save from
+            // changing the last-unit summary. A JSON failure cannot undo SQLite progress.
+            try
+            {
+                if (context.Audiovisual is { } audiovisual && _activeWorkOwners.GetValueOrDefault(context.WorkKey) == write.Session.Owner)
+                    await _library.RecordProgressAsync(AudiovisualLibraryKey.Create(audiovisual.Identity, context.WorkKey),
+                        audiovisual.Title, audiovisual.PosterUrl, audiovisual.Unit.SeasonNumber, audiovisual.Unit.EpisodeNumber,
+                        write.Position, write.Duration, observedUtc: write.ObservedUtc).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Log($"[Resume] Movie/TV library summary could not be saved: {ex.Message}", "WARNING");
+            }
+        }).ConfigureAwait(false);
     }
 }
 

@@ -15,6 +15,7 @@ using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using LibVLCSharp.Shared;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using UniversalMediaOS.Core.Data;
 using UniversalMediaOS.Core.Configuration;
@@ -43,11 +44,19 @@ namespace UniversalMediaOS.WPF.ViewModels
         private readonly DatabaseContext _databaseContext;
         private readonly HlsLoopbackProxy? _hlsProxy;
         private readonly PlaybackProgressService _playbackProgress;
-        private PlaybackProgressSession? _progressSession;
         private PlaybackProgressContext? _progressContext;
         private readonly SemaphoreSlim _resumeDatabaseLock = new(1, 1);
+        private readonly System.Windows.Threading.Dispatcher? _creationDispatcher =
+            System.Windows.Threading.Dispatcher.FromThread(Thread.CurrentThread);
         private readonly object _resumePersistenceGate = new();
         private readonly Dictionary<long, Task> _pendingResumeSaves = new();
+        private readonly List<Task> _pendingResumeLoads = [];
+        private Task<(PlaybackProgressSession? Session, double Position)> _resumeLoadRead =
+            Task.FromResult<(PlaybackProgressSession?, double)>((null, 0));
+        private Task<PlaybackProgressSession?> _progressSessionReady = Task.FromResult<PlaybackProgressSession?>(null);
+        internal Task ResumeLoadCompleted { get; private set; } = Task.CompletedTask;
+        private bool _resumeReadApplied = true;
+        private bool _playWhenResumeLoaded;
         private Media? _currentMedia;
         private Media? _pendingMedia;
         private DateTime _lastTimeUpdate = DateTime.MinValue;
@@ -445,7 +454,7 @@ namespace UniversalMediaOS.WPF.ViewModels
                 if (!_isDisposing && !IsDisposed && generation == Volatile.Read(ref _playbackGeneration)) action();
             }
 
-            if ((targetDispatcher ?? App.Current?.Dispatcher) is { } dispatcher)
+            if ((targetDispatcher ?? App.Current?.Dispatcher ?? _creationDispatcher) is { } dispatcher)
             {
                 if (!dispatcher.HasShutdownStarted) dispatcher.InvokeAsync(RunIfAlive);
             }
@@ -491,7 +500,8 @@ namespace UniversalMediaOS.WPF.ViewModels
                     _isUpdatingTimeFromPlayer = false;
                 }
                 TrySyncMalFromProgress(PlaybackTime, MediaPlayer.Length > 0 ? MediaPlayer.Length : PlaybackDuration, ended: false);
-                QueueResumeSave(PlaybackTime / 1000.0, ended: false, force: false, synchronous: false);
+                if (ResumeLoadCompleted.IsCompleted)
+                    QueueResumeSave(PlaybackTime / 1000.0, ended: false, force: false, synchronous: false);
             });
         }
 
@@ -628,6 +638,13 @@ namespace UniversalMediaOS.WPF.ViewModels
                 return;
             }
 
+            if (!_resumeReadApplied)
+            {
+                _playWhenResumeLoaded = true;
+                return;
+            }
+            _playWhenResumeLoaded = false;
+
             AppLogger.Log($"PlayPending: Replaying media '{PendingMediaPath}' now that VideoView is ready.");
             try
             {
@@ -652,6 +669,7 @@ namespace UniversalMediaOS.WPF.ViewModels
 
         public void BeginUserSeek()
         {
+            _resumeSeekApplied = true;
             IsSeekingFromSlider = true;
         }
 
@@ -745,7 +763,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             else if (!string.Equals(urlOrPath, _lastMediaSource, StringComparison.Ordinal)) _lastValidatedHlsVariant = string.Empty;
 
             AppLogger.Log($"LoadMedia invoked: Title='{title}', UrlOrPath='{urlOrPath}', Referer='{effectiveReferer}', MalId={malId}");
-            SaveCurrentResumePosition(force: true, synchronous: true);
+            SaveCurrentResumePosition(force: true, synchronous: false);
             _stopRequested = true;
             if (_currentMedia != null || _pendingMedia != null) MediaPlayer.Stop();
             Interlocked.Increment(ref _playbackGeneration);
@@ -1245,8 +1263,7 @@ namespace UniversalMediaOS.WPF.ViewModels
                 PlaybackDuration = durationSeconds * 1000;
                 if (!ended && paused.HasValue)
                 {
-                    if (!IsPlaying && !paused.Value && _progressSession is { } progressSession)
-                        _progressSession = _playbackProgress.TakeOwnership(progressSession);
+                    if (!IsPlaying && !paused.Value) RequestProgressOwnership();
                     IsPlaying = !paused.Value;
                     PlaybackStatusText = paused.Value ? "Paused" : "Playing";
                 }
@@ -1326,9 +1343,9 @@ namespace UniversalMediaOS.WPF.ViewModels
             if (credibleVideo)
             {
                 PlaybackDuration = durationSeconds * 1000;
-                if (normalized == "play" && _progressSession is { } progressSession)
-                    _progressSession = _playbackProgress.TakeOwnership(progressSession);
+                if (normalized == "play") RequestProgressOwnership();
             }
+            if (normalized is "seek" or "seeked" or "seeking") _resumeSeekApplied = true;
 
             if (currentSeconds >= 0)
             {
@@ -1437,8 +1454,7 @@ namespace UniversalMediaOS.WPF.ViewModels
         {
             AppLogger.Log("TogglePlayPause command invoked.");
             if (!IsTabActive || _isDisposing || IsDisposed) return;
-            if (!IsPlaying && _progressSession is { } progressSession)
-                _progressSession = _playbackProgress.TakeOwnership(progressSession);
+            if (!IsPlaying) RequestProgressOwnership();
             if (IsWebViewActive)
             {
                 _pauseWhenStarted = false;
@@ -1661,6 +1677,7 @@ namespace UniversalMediaOS.WPF.ViewModels
                     (GetCurrentPlaybackPositionSeconds() + offset.TotalSeconds) * 1000.0,
                     durationMilliseconds > 0 ? durationMilliseconds : long.MaxValue);
                 double requestedSeconds = requestedMilliseconds / 1000.0;
+                _resumeSeekApplied = true;
                 PlaybackTime = requestedMilliseconds;
                 WebPlaybackCommandRequested?.Invoke(
                     this,
@@ -1681,6 +1698,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             }
 
             long requested = ClampSeekMilliseconds(MediaPlayer.Time + offset.TotalMilliseconds, duration);
+            _resumeSeekApplied = true;
             MediaPlayer.Time = requested;
             PlaybackTime = MediaPlayer.Time;
             AppLogger.Log($"Seeked {offset.TotalSeconds:+0;-0;0}s to {MediaPlayer.Time} ms");
@@ -1979,7 +1997,7 @@ namespace UniversalMediaOS.WPF.ViewModels
                 _stopRequested = true;
                 if (saveResume)
                 {
-                    SaveCurrentResumePosition(force: true, synchronous: true);
+                    SaveCurrentResumePosition(force: true, synchronous: false);
                 }
                 Interlocked.Increment(ref _playbackGeneration);
 
@@ -2200,7 +2218,7 @@ namespace UniversalMediaOS.WPF.ViewModels
 
         private void ConfigureResumeState(int malId, string episodeNumber, string title, string sourceKey)
         {
-            _progressSession = null;
+            _progressSessionReady = Task.FromResult<PlaybackProgressSession?>(null);
             _progressContext = null;
             _resumePersistenceClosed = false;
             _restoringCurrentPosition = false;
@@ -2209,6 +2227,10 @@ namespace UniversalMediaOS.WPF.ViewModels
             _pendingResumePositionSeconds = 0;
             _lastSavedResumeSeconds = double.NaN;
             _lastResumeSaveUtc = DateTime.MinValue;
+            _resumeLoadRead = Task.FromResult<(PlaybackProgressSession?, double)>((null, 0));
+            ResumeLoadCompleted = Task.CompletedTask;
+            _resumeReadApplied = false;
+            _playWhenResumeLoaded = false;
             if (AudiovisualContext is { } audiovisual)
             {
                 _resumeMediaId = audiovisual.WorkKey;
@@ -2231,6 +2253,7 @@ namespace UniversalMediaOS.WPF.ViewModels
 
             if (!HasResumeKey())
             {
+                _resumeReadApplied = true;
                 AppLogger.Log("[Resume] Resume tracking skipped because no stable media key was available.", "WARNING");
                 return;
             }
@@ -2304,53 +2327,68 @@ namespace UniversalMediaOS.WPF.ViewModels
 
         private void LoadResumePosition()
         {
-            if (!HasResumeKey())
+            if (!HasResumeKey()) return;
+            string media = _resumeMediaId;
+            string unit = _resumeEpisodeId;
+            int generation = Volatile.Read(ref _playbackGeneration);
+            var dispatcher = App.Current?.Dispatcher ??
+                System.Windows.Threading.Dispatcher.FromThread(Thread.CurrentThread);
+            lock (_resumePersistenceGate)
             {
-                return;
+                _pendingResumeLoads.RemoveAll(task => task.IsCompleted);
+                // A source reload must read after the old unit's accepted saves,
+                // including a save which itself awaits that unit's first load.
+                Task preceding = Task.WhenAll(_pendingResumeSaves.Values.Concat(_pendingResumeLoads));
+                _resumeLoadRead = ReadResumePositionAsync(_progressContext, media, unit, preceding);
+                _progressSessionReady = LoadedSessionAsync(_resumeLoadRead);
+                _pendingResumeLoads.Add(_resumeLoadRead);
+                ResumeLoadCompleted = ApplyLoadedResumeAsync(_resumeLoadRead, generation, media, unit, dispatcher);
             }
+        }
 
-            if (_progressContext is { } context)
-            {
-                try
-                {
-                    var opened = _playbackProgress.Open(context);
-                    _progressSession = opened.Session;
-                    if (opened.Position > MinimumResumePositionSeconds)
-                        _pendingResumePositionSeconds = opened.Position;
-                    AppLogger.Log($"[Resume] Loaded saved position {opened.Position:0.0}s for media '{context.WorkKey}', episode '{context.UnitKey}'.");
-                }
-                catch (Exception ex) { AppLogger.Log($"[Resume] Failed to load catalog progress: {ex.Message}", "WARNING"); }
-                return;
-            }
-
-            if (!_resumeDatabaseLock.Wait(TimeSpan.FromSeconds(2)))
-            {
-                AppLogger.Log("[Resume] Timed out waiting to load resume state.", "WARNING");
-                return;
-            }
-
+        private async Task<(PlaybackProgressSession? Session, double Position)> ReadResumePositionAsync(
+            PlaybackProgressContext? context, string media, string unit, Task preceding)
+        {
             try
             {
-                if (!EnsureResumeDatabaseCreated())
+                if (context != null) return await _playbackProgress.OpenAsync(context, preceding).ConfigureAwait(false);
+                _ = _databaseContext.Database.GetDbConnection(); // Freeze this player's destination before yielding.
+                await preceding.ConfigureAwait(false);
+                await _resumeDatabaseLock.WaitAsync().ConfigureAwait(false);
+                try
                 {
-                    return;
+                    double position = await Task.Run(() => EnsureResumeDatabaseCreated()
+                        ? _databaseContext.GetResumeState(media, unit) : 0).ConfigureAwait(false);
+                    return (null, position);
                 }
-
-                double savedSeconds = _databaseContext.GetResumeState(_resumeMediaId, _resumeEpisodeId);
-                if (savedSeconds > MinimumResumePositionSeconds)
-                {
-                    _pendingResumePositionSeconds = savedSeconds;
-                    AppLogger.Log($"[Resume] Loaded saved position {savedSeconds:0.0}s for media '{_resumeMediaId}', episode '{_resumeEpisodeId}'.");
-                }
+                finally { _resumeDatabaseLock.Release(); }
             }
             catch (Exception ex)
             {
                 AppLogger.Log($"[Resume] Failed to load resume state: {ex.Message}", "WARNING");
+                return (null, 0);
             }
-            finally
+        }
+
+        private async Task ApplyLoadedResumeAsync(Task<(PlaybackProgressSession? Session, double Position)> read,
+            int generation, string media, string unit, System.Windows.Threading.Dispatcher? dispatcher)
+        {
+            var loaded = await read.ConfigureAwait(false);
+            void Apply()
             {
-                _resumeDatabaseLock.Release();
+                if (_isDisposing || IsDisposed || generation != Volatile.Read(ref _playbackGeneration) ||
+                    media != _resumeMediaId || unit != _resumeEpisodeId) return;
+                // An explicit reload/seek or completed state wins over a late read.
+                if (!_restoringCurrentPosition && !_resumeSeekApplied && !_playbackEnded &&
+                    loaded.Position > MinimumResumePositionSeconds)
+                    _pendingResumePositionSeconds = loaded.Position;
+                AppLogger.Log($"[Resume] Loaded saved position {loaded.Position:0.0}s for media '{media}', episode '{unit}'.");
+                _resumeReadApplied = true;
+                if (_playWhenResumeLoaded && IsTabActive) PlayPending();
+                ApplyPendingResumeSeek();
             }
+            if (dispatcher is { HasShutdownStarted: false }) await dispatcher.InvokeAsync(Apply);
+            else if (dispatcher == null) Apply();
         }
 
         private void ApplyPendingResumeSeek()
@@ -2466,14 +2504,13 @@ namespace UniversalMediaOS.WPF.ViewModels
 
                 if (_progressContext != null)
                 {
-                    if (_progressSession is not { } session) return;
-                    var write = _playbackProgress.Capture(session, valueToSave, Math.Max(0, PlaybackDuration / 1000.0), ended);
-                    if (write == null) return;
-                    save = SaveCatalogProgressAsync(write);
+                    save = SaveCatalogProgressAfterLoadAsync(_progressSessionReady,
+                        mediaId, episodeId, valueToSave, Math.Max(0, PlaybackDuration / 1000.0), ended,
+                        sequence, DateTimeOffset.UtcNow);
                 }
                 else
                 {
-                    save = SaveResumePositionAsync(mediaId, episodeId, valueToSave, ended, sequence);
+                    save = SaveLegacyProgressAfterLoadAsync(_resumeLoadRead, mediaId, episodeId, valueToSave, ended, sequence);
                 }
                 foreach (long finished in _pendingResumeSaves.Where(entry => entry.Value.IsCompleted).Select(entry => entry.Key).ToArray())
                     _pendingResumeSaves.Remove(finished);
@@ -2487,19 +2524,41 @@ namespace UniversalMediaOS.WPF.ViewModels
             }
         }
 
-        private async Task SaveCatalogProgressAsync(PlaybackProgressWrite write)
+        private async Task SaveCatalogProgressAfterLoadAsync(Task<PlaybackProgressSession?> session,
+            string media, string unit, double position, double duration,
+            bool ended, long sequence, DateTimeOffset observed)
         {
-            try { await _playbackProgress.SaveAsync(write).ConfigureAwait(false); }
+            try
+            {
+                await _playbackProgress.SaveWhenOpenedAsync(session, position, duration, ended, observed,
+                    () => _latestResumeWrites.GetValueOrDefault((media, unit)) == sequence).ConfigureAwait(false);
+            }
             catch (Exception ex) { AppLogger.Log($"[Resume] Failed to save catalog progress: {ex.Message}", "WARNING"); }
+        }
+
+        private static async Task<PlaybackProgressSession?> LoadedSessionAsync(
+            Task<(PlaybackProgressSession? Session, double Position)> read) => (await read.ConfigureAwait(false)).Session;
+
+        private void RequestProgressOwnership()
+        {
+            if (_progressContext == null) return;
+            lock (_resumePersistenceGate)
+            {
+                _pendingResumeLoads.RemoveAll(task => task.IsCompleted);
+                _progressSessionReady = _playbackProgress.TakeOwnershipWhenOpenedAsync(_progressSessionReady);
+                _pendingResumeLoads.Add(_progressSessionReady);
+            }
+        }
+
+        private async Task SaveLegacyProgressAfterLoadAsync(Task<(PlaybackProgressSession? Session, double Position)> read,
+            string media, string unit, double position, bool ended, long sequence)
+        {
+            await read.ConfigureAwait(false);
+            await SaveResumePositionAsync(media, unit, position, ended, sequence).ConfigureAwait(false);
         }
 
         private async Task SaveResumePositionAsync(string mediaId, string episodeId, double positionSeconds, bool clearing, long sequence)
         {
-            if (_resumePersistenceClosed)
-            {
-                return;
-            }
-
             try
             {
                 await _resumeDatabaseLock.WaitAsync().ConfigureAwait(false);
@@ -2549,8 +2608,9 @@ namespace UniversalMediaOS.WPF.ViewModels
             lock (_resumePersistenceGate)
             {
                 _resumePersistenceClosed = true;
-                pending = Task.WhenAll(_pendingResumeSaves.Values);
+                pending = Task.WhenAll(_pendingResumeSaves.Values.Concat(_pendingResumeLoads));
                 _pendingResumeSaves.Clear();
+                _pendingResumeLoads.Clear();
             }
             _ = DisposeResumeResourcesAsync(pending);
         }
