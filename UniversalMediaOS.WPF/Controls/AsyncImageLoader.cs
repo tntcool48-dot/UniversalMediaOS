@@ -32,6 +32,27 @@ namespace UniversalMediaOS.WPF.Controls
         }
 
         internal static HttpClient CreateHttpClientForTesting() => CreateHttpClient();
+
+        private static readonly DependencyPropertyKey HasErrorPropertyKey = DependencyProperty.RegisterAttachedReadOnly(
+            "HasError", typeof(bool), typeof(AsyncImageLoader), new PropertyMetadata(false));
+        public static readonly DependencyProperty HasErrorProperty = HasErrorPropertyKey.DependencyProperty;
+        public static bool GetHasError(DependencyObject obj) => (bool)obj.GetValue(HasErrorProperty);
+
+        private static readonly DependencyPropertyKey IsLoadingPropertyKey = DependencyProperty.RegisterAttachedReadOnly(
+            "IsLoading", typeof(bool), typeof(AsyncImageLoader), new PropertyMetadata(false));
+        public static readonly DependencyProperty IsLoadingProperty = IsLoadingPropertyKey.DependencyProperty;
+        public static bool GetIsLoading(DependencyObject obj) => (bool)obj.GetValue(IsLoadingProperty);
+
+        public static void Retry(Image image)
+        {
+            ImageLoadState state = GetState(image);
+            if (!state.IsAttached || state.Active != null || !GetHasError(image)) return;
+            state.CompletedKey = null;
+            image.Source = null;
+            if (state.FailureToolTip != null && Equals(image.ToolTip, state.FailureToolTip)) image.ToolTip = null;
+            state.FailureToolTip = null;
+            _ = LoadImageAsync(image, state);
+        }
         
         private static readonly DependencyProperty LoadStateProperty =
             DependencyProperty.RegisterAttached(
@@ -65,6 +86,8 @@ namespace UniversalMediaOS.WPF.Controls
             if (d is not Image imageControl) return;
             ImageLoadState state = GetState(imageControl);
             CancelPending(state);
+            imageControl.SetValue(HasErrorPropertyKey, false);
+            imageControl.SetValue(IsLoadingPropertyKey, false);
             state.CompletedKey = null;
             imageControl.Source = null;
             if (state.FailureToolTip != null && Equals(imageControl.ToolTip, state.FailureToolTip)) imageControl.ToolTip = null;
@@ -94,9 +117,11 @@ namespace UniversalMediaOS.WPF.Controls
 
         private static void ImageUnloaded(object sender, RoutedEventArgs e)
         {
-            ImageLoadState state = GetState((Image)sender);
+            var image = (Image)sender;
+            ImageLoadState state = GetState(image);
             state.IsAttached = false;
             CancelPending(state);
+            image.SetValue(IsLoadingPropertyKey, false);
         }
 
         private static void CancelPending(ImageLoadState state)
@@ -113,6 +138,8 @@ namespace UniversalMediaOS.WPF.Controls
             string key = ImageRequestLoader.Key(url, decodeWidth);
             using var operation = new CancellationTokenSource();
             state.Active = operation;
+            imageControl.SetValue(HasErrorPropertyKey, false);
+            imageControl.SetValue(IsLoadingPropertyKey, true);
             bool IsCurrent() => state.IsAttached && ReferenceEquals(state.Active, operation) &&
                 !operation.IsCancellationRequested && key == ImageRequestLoader.Key(GetImageUrl(imageControl), GetDecodeWidth(imageControl));
             try
@@ -134,6 +161,7 @@ namespace UniversalMediaOS.WPF.Controls
                 if (!IsCurrent()) return;
                 AppLogger.Log($"Image load failed for '{url}': {ex.Message}", "WARNING");
                 imageControl.Source = CreateFallbackImage();
+                imageControl.SetValue(HasErrorPropertyKey, true);
                 if (imageControl.ToolTip == null)
                 {
                     state.FailureToolTip = ex is TimeoutException ? "Image request timed out." : "Image failed to load.";
@@ -142,7 +170,11 @@ namespace UniversalMediaOS.WPF.Controls
             }
             finally
             {
-                if (ReferenceEquals(state.Active, operation)) state.Active = null;
+                if (ReferenceEquals(state.Active, operation))
+                {
+                    state.Active = null;
+                    imageControl.SetValue(IsLoadingPropertyKey, false);
+                }
             }
         }
 

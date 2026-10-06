@@ -25,6 +25,12 @@ namespace UniversalMediaOS.WPF.Views
             Unloaded += MangaView_Unloaded;
         }
 
+        private void RetryMangaPage_Click(object sender, System.Windows.RoutedEventArgs e)
+        {
+            if (sender is Button { Tag: Image image })
+                Controls.AsyncImageLoader.Retry(image);
+        }
+
         private void MangaView_DataContextChanged(object sender, System.Windows.DependencyPropertyChangedEventArgs e)
         {
             DetachViewModel();

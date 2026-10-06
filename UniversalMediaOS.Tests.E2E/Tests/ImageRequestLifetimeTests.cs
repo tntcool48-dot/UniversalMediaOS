@@ -182,6 +182,8 @@ public sealed class ImageRequestLifetimeTests
         old.SetException(new HttpRequestException("late recycled failure"));
         await Eventually(() => fixture.Loader.Active == 0);
         Assert.Same(current, image.Source);
+        Assert.False(AsyncImageLoader.GetHasError(image));
+        Assert.False(AsyncImageLoader.GetIsLoading(image));
         Assert.Equal("Existing descriptive tooltip", image.ToolTip);
         AsyncImageLoader.SetDecodeWidth(image, 320);
         await Eventually(() => image.Source is BitmapImage bitmap && bitmap.PixelWidth == 320);
@@ -233,6 +235,42 @@ public sealed class ImageRequestLifetimeTests
         await Eventually(() => images[0].Source != null);
         Assert.Same(images[1].Source, images[0].Source);
         Assert.Equal(1, fixture.Requests);
+    });
+
+    [Fact]
+    public async Task ExplicitRetryRetainsOwnershipAvoidsDuplicateRequestsAndPreservesDescriptiveTooltip() => await OnDispatcher(async () =>
+    {
+        var release = Signal();
+        int attempts = 0;
+        using var fixture = new Fixture(async (_, token) =>
+        {
+            if (Interlocked.Increment(ref attempts) == 1)
+                return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
+            await release.Task.WaitAsync(token);
+            return Response();
+        });
+        var image = new Image { ToolTip = "Page one" };
+        AsyncImageLoader.SetRequestLoaderForTesting(image, fixture.Loader);
+        AsyncImageLoader.SetImageUrl(image, "https://images.example/explicit-retry");
+        Loaded(image);
+        await Eventually(() => AsyncImageLoader.GetHasError(image) && !AsyncImageLoader.GetIsLoading(image));
+        Assert.NotNull(image.Source);
+        Assert.Equal("Page one", image.ToolTip);
+        AsyncImageLoader.Retry(image);
+        AsyncImageLoader.Retry(image);
+        Assert.False(AsyncImageLoader.GetHasError(image));
+        Assert.True(AsyncImageLoader.GetIsLoading(image));
+        Assert.Equal(2, fixture.Requests);
+        release.SetResult();
+        await Eventually(() => image.Source is BitmapImage && !AsyncImageLoader.GetIsLoading(image));
+        Assert.Equal("Page one", image.ToolTip);
+        var decoded = image.Source;
+        AsyncImageLoader.Retry(image);
+        Assert.Same(decoded, image.Source);
+        Assert.Equal(2, fixture.Requests);
+        Unloaded(image);
+        AsyncImageLoader.Retry(image);
+        Assert.Equal(2, fixture.Requests);
     });
 
     private static void Loaded(Image image) => image.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));

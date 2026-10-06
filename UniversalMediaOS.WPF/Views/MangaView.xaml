@@ -408,11 +408,31 @@
             <ListBox.ItemTemplate>
                 <DataTemplate>
                     <Border Background="{StaticResource BgPanel}" CornerRadius="8" Padding="8" Margin="0,0,0,8">
-                        <Image controls:AsyncImageLoader.ImageUrl="{Binding}"
-                               controls:AsyncImageLoader.DecodeWidth="1000"
-                               HorizontalAlignment="Center"
-                               Stretch="Uniform"
-                               MaxWidth="900"/>
+                        <Grid>
+                            <Image x:Name="PageImage" controls:AsyncImageLoader.ImageUrl="{Binding}"
+                                   controls:AsyncImageLoader.DecodeWidth="1000"
+                                   HorizontalAlignment="Center" Stretch="Uniform" MaxWidth="900">
+                                <Image.Style>
+                                    <Style TargetType="Image">
+                                        <Style.Triggers>
+                                            <Trigger Property="controls:AsyncImageLoader.HasError" Value="True">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                            </Trigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Image.Style>
+                            </Image>
+                            <TextBlock Text="Loading page..." Style="{StaticResource CaptionText}" Margin="18"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                                       Visibility="{Binding ElementName=PageImage, Path=(controls:AsyncImageLoader.IsLoading), Converter={StaticResource BoolToVisibility}}"/>
+                            <StackPanel MinHeight="140" Margin="24" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                        Visibility="{Binding ElementName=PageImage, Path=(controls:AsyncImageLoader.HasError), Converter={StaticResource BoolToVisibility}}">
+                                <TextBlock Text="This page could not load." Style="{StaticResource BodyText}" TextWrapping="Wrap"/>
+                                <Button Content="Retry page" Style="{StaticResource SecondaryButton}" Margin="0,12,0,0"
+                                        Tag="{Binding ElementName=PageImage}" Click="RetryMangaPage_Click"
+                                        ToolTip="Retry this page without reloading the chapter."/>
+                            </StackPanel>
+                        </Grid>
                     </Border>
                 </DataTemplate>
             </ListBox.ItemTemplate>

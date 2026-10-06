@@ -15,14 +15,17 @@ namespace UniversalMediaOS.Tests.E2E.Infrastructure
         private Task? _listenerTask;
         private readonly byte[]? _mangaPagePng;
         private readonly Func<HttpListenerRequest, (int Status, string Body)>? _mangaChapterFeed;
+        private readonly Func<HttpListenerRequest, int>? _mangaPageStatus;
 
         public string BaseUrl { get; }
 
         public MockHttpServer(int port = 0, byte[]? mangaPagePng = null,
-            Func<HttpListenerRequest, (int Status, string Body)>? mangaChapterFeed = null)
+            Func<HttpListenerRequest, (int Status, string Body)>? mangaChapterFeed = null,
+            Func<HttpListenerRequest, int>? mangaPageStatus = null)
         {
             _mangaPagePng = mangaPagePng;
             _mangaChapterFeed = mangaChapterFeed;
+            _mangaPageStatus = mangaPageStatus;
             if (port <= 0)
             {
                 using var reservation = new TcpListener(IPAddress.Loopback, 0);
@@ -203,6 +206,7 @@ namespace UniversalMediaOS.Tests.E2E.Infrastructure
                 }
                 else if (path.Contains("/mangapages/data/"))
                 {
+                    res.StatusCode = _mangaPageStatus?.Invoke(req) ?? 200;
                     // Serve dummy page image
                     res.ContentType = "image/png";
                     byte[] dummyPng = _mangaPagePng ?? new byte[] {
