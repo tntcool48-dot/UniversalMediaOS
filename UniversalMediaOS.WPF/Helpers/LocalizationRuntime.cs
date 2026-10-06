@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Globalization;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
@@ -28,6 +29,7 @@ namespace UniversalMediaOS.WPF.Helpers
                 new FrameworkPropertyMetadata(false, FrameworkPropertyMetadataOptions.Inherits, OnAutoApplyChanged));
 
         private static string _language = "English";
+        internal static string CurrentLanguage => _language;
         public static event EventHandler? LanguageChanged;
 
         private static readonly Dictionary<string, string> Arabic = new(StringComparer.Ordinal)
@@ -117,6 +119,21 @@ namespace UniversalMediaOS.WPF.Helpers
             ["Optional"] = "اختياري",
             ["Play"] = "تشغيل",
             ["Pause"] = "إيقاف مؤقت",
+            ["Resume"] = "استكمال",
+            ["Cancel"] = "إلغاء",
+            ["Retry"] = "إعادة المحاولة",
+            ["Remove"] = "إزالة",
+            ["Queued"] = "في قائمة الانتظار",
+            ["Downloading"] = "جارٍ التنزيل",
+            ["Pausing..."] = "جارٍ الإيقاف المؤقت...",
+            ["Paused"] = "متوقف مؤقتًا",
+            ["Cancelling..."] = "جارٍ الإلغاء...",
+            ["Completed"] = "مكتمل",
+            ["Failed"] = "فشل",
+            ["Cancelled"] = "ملغى",
+            ["Waiting in queue"] = "في انتظار التنزيل",
+            ["Paused; partial data is available for resume"] = "متوقف مؤقتًا؛ البيانات الجزئية محفوظة للاستكمال",
+            ["Download and validation completed"] = "اكتمل التنزيل والتحقق",
             ["Web"] = "ويب",
             ["Stop"] = "إيقاف",
             ["Vol"] = "الصوت",
@@ -247,19 +264,24 @@ namespace UniversalMediaOS.WPF.Helpers
         {
             switch (element)
             {
-                case TextBlock textBlock when BindingOperations.GetBindingExpression(textBlock, TextBlock.TextProperty) == null:
+                case TextBlock textBlock when !BindingOperations.IsDataBound(textBlock, TextBlock.TextProperty) &&
+                    // WPF owns the implicit text presenter for string content.
+                    // Writing a local Text value here disconnects future selected
+                    // content updates, even though IsDataBound reports false.
+                    !(textBlock.TemplatedParent is ContentPresenter { Content: string, ContentTemplate: null }):
                     textBlock.Text = TranslateStoredText(textBlock, textBlock.Text, arabic, OriginalTextProperty);
                     break;
 
                 case ContentControl contentControl
                     when contentControl.Content is string content &&
-                         BindingOperations.GetBindingExpression(contentControl, ContentControl.ContentProperty) == null:
+                         !BindingOperations.IsDataBound(contentControl, ContentControl.ContentProperty):
                     contentControl.Content = TranslateStoredText(contentControl, content, arabic, OriginalTextProperty);
                     break;
             }
 
             if (element is FrameworkElement frameworkElement &&
-                frameworkElement.ToolTip is string tooltip)
+                frameworkElement.ToolTip is string tooltip &&
+                !BindingOperations.IsDataBound(frameworkElement, FrameworkElement.ToolTipProperty))
             {
                 frameworkElement.ToolTip = TranslateStoredText(frameworkElement, tooltip, arabic, OriginalToolTipProperty);
             }
@@ -269,6 +291,11 @@ namespace UniversalMediaOS.WPF.Helpers
             DependencyProperty originalProperty)
         {
             string? stored = (string?)owner.GetValue(originalProperty);
+            // A selection presenter can be reused with new text. Only keep the
+            // original while the displayed value still belongs to that original.
+            if (stored != null && current != stored &&
+                (!Arabic.TryGetValue(stored, out string? previousTranslation) || current != previousTranslation))
+                stored = null;
             string original = stored ?? RestoreEnglishIfTranslated(current);
             owner.SetValue(originalProperty, original);
 
@@ -305,9 +332,12 @@ namespace UniversalMediaOS.WPF.Helpers
 
         public string this[string key] => LocalizationRuntime.Translate(key);
 
+        public string Language => LocalizationRuntime.CurrentLanguage;
+
         internal void Refresh()
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs("Item[]"));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Language)));
         }
     }
 
@@ -333,5 +363,28 @@ namespace UniversalMediaOS.WPF.Helpers
                 Mode = BindingMode.OneWay
             }.ProvideValue(serviceProvider);
         }
+    }
+
+    // Keep live job messages bound to their source and refresh on language changes.
+    [MarkupExtensionReturnType(typeof(object))]
+    public sealed class LocValueExtension(string path) : MarkupExtension
+    {
+        public override object ProvideValue(IServiceProvider serviceProvider)
+        {
+            var binding = new MultiBinding { Mode = BindingMode.OneWay, Converter = new LocalizedValueConverter() };
+            binding.Bindings.Add(new Binding(path));
+            binding.Bindings.Add(new Binding(nameof(LocalizationBindingSource.Language))
+                { Source = LocalizationBindingSource.Instance });
+            return binding.ProvideValue(serviceProvider);
+        }
+    }
+
+    public sealed class LocalizedValueConverter : IMultiValueConverter
+    {
+        public object Convert(object[] values, Type targetType, object parameter, CultureInfo culture) =>
+            values.FirstOrDefault() is string text ? LocalizationRuntime.Translate(text) : string.Empty;
+
+        public object[] ConvertBack(object value, Type[] targetTypes, object parameter, CultureInfo culture) =>
+            throw new NotSupportedException();
     }
 }

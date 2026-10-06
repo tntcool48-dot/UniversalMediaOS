@@ -82,6 +82,7 @@
                                         <DockPanel LastChildFill="True">
                                             <TextBlock DockPanel.Dock="Right"
                                                        Text="{Binding ProgressText}"
+                                                       FlowDirection="LeftToRight"
                                                        Style="{StaticResource CaptionText}"
                                                        Foreground="{StaticResource AccentPrimary}"
                                                        Margin="12,0,0,0"/>
@@ -92,14 +93,14 @@
                                         </DockPanel>
                                         <ProgressBar Minimum="0" Maximum="100" Value="{Binding Progress}"
                                                      Height="5" Margin="0,8,0,7"/>
-                                        <TextBlock Text="{Binding StatusText}"
+                                        <TextBlock Text="{helpers:LocValue StatusText}"
                                                    Style="{StaticResource CaptionText}"
                                                    Foreground="{StaticResource AccentPrimary}"/>
-                                        <TextBlock Text="{Binding StatusMessage}"
+                                        <TextBlock Text="{helpers:LocValue StatusMessage}"
                                                    Style="{StaticResource CaptionText}"
                                                    Foreground="{StaticResource TextMuted}"
                                                    TextTrimming="CharacterEllipsis"
-                                                   ToolTip="{Binding StatusMessage}"
+                                                   ToolTip="{helpers:LocValue StatusMessage}"
                                                    Margin="0,2,0,0"/>
                                     </StackPanel>
                                     <WrapPanel Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Center">
@@ -197,10 +198,12 @@
 
                                     <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="10,0,16,0">
                                         <TextBlock Text="{Binding FileName}"
+                                                   FlowDirection="LeftToRight"
                                                    Style="{StaticResource SubtitleText}"
                                                    FontWeight="SemiBold"
                                                    TextTrimming="CharacterEllipsis"/>
                                         <TextBlock Text="{Binding FileSizeText}"
+                                                   FlowDirection="LeftToRight"
                                                    Style="{StaticResource CaptionText}"
                                                    Foreground="{StaticResource TextMuted}"
                                                    Margin="0,3,0,0"/>
