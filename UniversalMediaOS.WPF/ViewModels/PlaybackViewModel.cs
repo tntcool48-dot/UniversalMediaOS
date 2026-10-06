@@ -46,6 +46,8 @@ namespace UniversalMediaOS.WPF.ViewModels
         private PlaybackProgressSession? _progressSession;
         private PlaybackProgressContext? _progressContext;
         private readonly SemaphoreSlim _resumeDatabaseLock = new(1, 1);
+        private readonly object _resumePersistenceGate = new();
+        private readonly Dictionary<long, Task> _pendingResumeSaves = new();
         private Media? _currentMedia;
         private Media? _pendingMedia;
         private DateTime _lastTimeUpdate = DateTime.MinValue;
@@ -2426,91 +2428,62 @@ namespace UniversalMediaOS.WPF.ViewModels
 
         private void QueueResumeSave(double positionSeconds, bool ended, bool force, bool synchronous)
         {
-            if (_resumePersistenceClosed || !HasResumeKey() || (_playbackEnded && !ended))
+            Task save;
+            lock (_resumePersistenceGate)
             {
-                return;
-            }
-
-            double valueToSave = ended ? 0 : positionSeconds;
-            if (!ended && valueToSave <= MinimumResumePositionSeconds)
-            {
-                return;
-            }
-
-            DateTime now = DateTime.UtcNow;
-            string mediaId = _resumeMediaId;
-            string episodeId = _resumeEpisodeId;
-            if (!ended && !force)
-            {
-                if (now - _lastResumeSaveUtc < ResumeSaveInterval)
+                if (_resumePersistenceClosed || !HasResumeKey() || (_playbackEnded && !ended))
                 {
                     return;
                 }
 
-                if (!double.IsNaN(_lastSavedResumeSeconds) &&
-                    Math.Abs(valueToSave - _lastSavedResumeSeconds) < ResumeSaveDeltaSeconds)
+                double valueToSave = ended ? 0 : positionSeconds;
+                if (!ended && valueToSave <= MinimumResumePositionSeconds)
                 {
                     return;
                 }
-            }
 
-            _lastResumeSaveUtc = now;
-            _lastSavedResumeSeconds = valueToSave;
-            long sequence = Interlocked.Increment(ref _resumeWriteSequence);
-            _latestResumeWrites.AddOrUpdate((mediaId, episodeId), sequence, (_, previous) => Math.Max(previous, sequence));
-
-            if (_progressContext != null)
-            {
-                if (_progressSession is not { } session) return;
-                var write = _playbackProgress.Capture(session, valueToSave, Math.Max(0, PlaybackDuration / 1000.0), ended);
-                if (write == null) return;
-                var save = SaveCatalogProgressAsync(write);
-                if (synchronous)
+                DateTime now = DateTime.UtcNow;
+                string mediaId = _resumeMediaId;
+                string episodeId = _resumeEpisodeId;
+                if (!ended && !force)
                 {
-                    try { save.WaitAsync(TimeSpan.FromSeconds(2)).GetAwaiter().GetResult(); }
-                    catch (TimeoutException) { AppLogger.Log("[Resume] Catalog final save is still finishing in the background.", "WARNING"); }
+                    if (now - _lastResumeSaveUtc < ResumeSaveInterval)
+                    {
+                        return;
+                    }
+
+                    if (!double.IsNaN(_lastSavedResumeSeconds) &&
+                        Math.Abs(valueToSave - _lastSavedResumeSeconds) < ResumeSaveDeltaSeconds)
+                    {
+                        return;
+                    }
                 }
-                return;
+
+                _lastResumeSaveUtc = now;
+                _lastSavedResumeSeconds = valueToSave;
+                long sequence = Interlocked.Increment(ref _resumeWriteSequence);
+                _latestResumeWrites.AddOrUpdate((mediaId, episodeId), sequence, (_, previous) => Math.Max(previous, sequence));
+
+                if (_progressContext != null)
+                {
+                    if (_progressSession is not { } session) return;
+                    var write = _playbackProgress.Capture(session, valueToSave, Math.Max(0, PlaybackDuration / 1000.0), ended);
+                    if (write == null) return;
+                    save = SaveCatalogProgressAsync(write);
+                }
+                else
+                {
+                    save = SaveResumePositionAsync(mediaId, episodeId, valueToSave, ended, sequence);
+                }
+                foreach (long finished in _pendingResumeSaves.Where(entry => entry.Value.IsCompleted).Select(entry => entry.Key).ToArray())
+                    _pendingResumeSaves.Remove(finished);
+                if (!save.IsCompleted) _pendingResumeSaves[sequence] = save;
             }
 
             if (synchronous)
             {
-                SaveResumePosition(mediaId, episodeId, valueToSave, ended, sequence);
-            }
-            else
-            {
-                _ = SaveResumePositionAsync(mediaId, episodeId, valueToSave, ended, sequence);
-            }
-        }
-
-        private void SaveResumePosition(string mediaId, string episodeId, double positionSeconds, bool clearing, long sequence)
-        {
-            if (!_resumeDatabaseLock.Wait(TimeSpan.FromSeconds(2)))
-            {
-                AppLogger.Log("[Resume] Timed out waiting to save resume state.", "WARNING");
-                return;
-            }
-
-            try
-            {
-                if (!EnsureResumeDatabaseCreated())
-                {
-                    return;
-                }
-
-                if (_latestResumeWrites.GetValueOrDefault((mediaId, episodeId)) != sequence) return;
-                _databaseContext.SaveResumeState(mediaId, episodeId, positionSeconds);
-                AppLogger.Log(clearing
-                    ? $"[Resume] Cleared saved position for media '{mediaId}', episode '{episodeId}'."
-                    : $"[Resume] Saved position {positionSeconds:0.0}s for media '{mediaId}', episode '{episodeId}'.");
-            }
-            catch (Exception ex)
-            {
-                AppLogger.Log($"[Resume] Failed to save resume state: {ex.Message}", "WARNING");
-            }
-            finally
-            {
-                _resumeDatabaseLock.Release();
+                try { save.WaitAsync(TimeSpan.FromSeconds(2)).GetAwaiter().GetResult(); }
+                catch (TimeoutException) { AppLogger.Log("[Resume] Final save is still finishing in the background.", "WARNING"); }
             }
         }
 
@@ -2529,22 +2502,21 @@ namespace UniversalMediaOS.WPF.ViewModels
 
             try
             {
-                await _resumeDatabaseLock.WaitAsync();
+                await _resumeDatabaseLock.WaitAsync().ConfigureAwait(false);
                 try
                 {
-                    if (_resumePersistenceClosed ||
-                        _latestResumeWrites.GetValueOrDefault((mediaId, episodeId)) != sequence) return;
-                    if (!await EnsureResumeDatabaseCreatedAsync())
+                    await Task.Run(() =>
                     {
-                        return;
-                    }
-
-                    if (_resumePersistenceClosed ||
-                        _latestResumeWrites.GetValueOrDefault((mediaId, episodeId)) != sequence) return;
-                    await _databaseContext.SaveResumeStateAsync(mediaId, episodeId, positionSeconds);
-                    AppLogger.Log(clearing
-                        ? $"[Resume] Cleared saved position for media '{mediaId}', episode '{episodeId}'."
-                        : $"[Resume] Saved position {positionSeconds:0.0}s for media '{mediaId}', episode '{episodeId}'.");
+                        if (_latestResumeWrites.GetValueOrDefault((mediaId, episodeId)) != sequence ||
+                            !EnsureResumeDatabaseCreated()) return;
+                        if (_latestResumeWrites.GetValueOrDefault((mediaId, episodeId)) != sequence) return;
+                        // Captured writes remain valid after the player closes. Its
+                        // database and semaphore live until every accepted save ends.
+                        _databaseContext.SaveResumeState(mediaId, episodeId, positionSeconds);
+                        AppLogger.Log(clearing
+                            ? $"[Resume] Cleared saved position for media '{mediaId}', episode '{episodeId}'."
+                            : $"[Resume] Saved position {positionSeconds:0.0}s for media '{mediaId}', episode '{episodeId}'.");
+                    }).ConfigureAwait(false);
                 }
                 finally
                 {
@@ -2571,17 +2543,29 @@ namespace UniversalMediaOS.WPF.ViewModels
             }
         }
 
-        private async Task<bool> EnsureResumeDatabaseCreatedAsync()
+        private void CloseResumePersistence()
         {
-            try
+            Task pending;
+            lock (_resumePersistenceGate)
             {
-                await _databaseContext.Database.EnsureCreatedAsync();
-                return true;
+                _resumePersistenceClosed = true;
+                pending = Task.WhenAll(_pendingResumeSaves.Values);
+                _pendingResumeSaves.Clear();
             }
+            _ = DisposeResumeResourcesAsync(pending);
+        }
+
+        private async Task DisposeResumeResourcesAsync(Task pending)
+        {
+            try { await pending.ConfigureAwait(false); }
             catch (Exception ex)
             {
-                AppLogger.Log($"[Resume] Failed to initialize resume database asynchronously: {ex.Message}", "WARNING");
-                return false;
+                AppLogger.Log($"[Resume] Pending save failed during close: {ex.Message}", "WARNING");
+            }
+            finally
+            {
+                _databaseContext.Dispose();
+                _resumeDatabaseLock.Dispose();
             }
         }
 
@@ -2938,16 +2922,14 @@ namespace UniversalMediaOS.WPF.ViewModels
 
                 Helpers.LocalizationRuntime.LanguageChanged -= LocalizationRuntime_LanguageChanged;
                 SaveCurrentResumePosition(force: true, synchronous: true);
-                _resumePersistenceClosed = true;
                 StopAndRelease(saveResume: false);
                 MediaPlayer.Dispose();
                 _libVLC.Dispose();
-                _databaseContext.Dispose();
             }
             finally
             {
+                CloseResumePersistence();
                 IsDisposed = true;
-                _resumeDatabaseLock.Dispose();
                 GC.SuppressFinalize(this);
             }
         }

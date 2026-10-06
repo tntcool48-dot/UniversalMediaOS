@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Microsoft.EntityFrameworkCore;
 using UniversalMediaOS.Core.Data;
 using UniversalMediaOS.Core.Helpers;
 using UniversalMediaOS.Core.OtherMedia;
@@ -93,28 +94,37 @@ public sealed class PlaybackProgressService
         var key = (context.WorkKey, context.UnitKey!);
         bool Current() => _owners.GetValueOrDefault(key) == write.Session.Owner &&
             _latestWrites.GetValueOrDefault(key) == write.Sequence;
+        if (!Current()) return;
+        using var database = _createDatabase();
+        // Resolve this profile's connection before yielding; a delayed worker must
+        // not pick up a subsequently changed data root or database setting.
+        _ = database.Database.GetDbConnection();
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
-            if (!Current()) return;
-            using var database = _createDatabase();
-            await database.Database.EnsureCreatedAsync().ConfigureAwait(false);
-            if (!Current()) return;
-            await database.SaveResumeStateAsync(context.WorkKey, context.UnitKey!, write.Position).ConfigureAwait(false);
-            AppLogger.Log($"[Resume] Saved position {write.Position:0.0}s for media '{context.WorkKey}', episode '{context.UnitKey}'.");
-            // The immutable observation time prevents another unit's delayed save from
-            // changing the last-unit summary. A JSON failure cannot undo SQLite progress.
-            try
+            // SQLite's async API can execute synchronously, including busy waits.
+            // Acquire ordering first so an immediate Open still waits for this save.
+            await Task.Run(async () =>
             {
-                if (context.Audiovisual is { } audiovisual && _activeWorkOwners.GetValueOrDefault(context.WorkKey) == write.Session.Owner)
-                    await _library.RecordProgressAsync(AudiovisualLibraryKey.Create(audiovisual.Identity, context.WorkKey),
-                        audiovisual.Title, audiovisual.PosterUrl, audiovisual.Unit.SeasonNumber, audiovisual.Unit.EpisodeNumber,
-                        write.Position, write.Duration, observedUtc: write.ObservedUtc).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                AppLogger.Log($"[Resume] Movie/TV library summary could not be saved: {ex.Message}", "WARNING");
-            }
+                if (!Current()) return;
+                await database.Database.EnsureCreatedAsync().ConfigureAwait(false);
+                if (!Current()) return;
+                await database.SaveResumeStateAsync(context.WorkKey, context.UnitKey!, write.Position).ConfigureAwait(false);
+                AppLogger.Log($"[Resume] Saved position {write.Position:0.0}s for media '{context.WorkKey}', episode '{context.UnitKey}'.");
+                // The immutable observation time prevents another unit's delayed save from
+                // changing the last-unit summary. A JSON failure cannot undo SQLite progress.
+                try
+                {
+                    if (context.Audiovisual is { } audiovisual && _activeWorkOwners.GetValueOrDefault(context.WorkKey) == write.Session.Owner)
+                        await _library.RecordProgressAsync(AudiovisualLibraryKey.Create(audiovisual.Identity, context.WorkKey),
+                            audiovisual.Title, audiovisual.PosterUrl, audiovisual.Unit.SeasonNumber, audiovisual.Unit.EpisodeNumber,
+                            write.Position, write.Duration, observedUtc: write.ObservedUtc).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Log($"[Resume] Movie/TV library summary could not be saved: {ex.Message}", "WARNING");
+                }
+            }).ConfigureAwait(false);
         }
         finally { _gate.Release(); }
     }

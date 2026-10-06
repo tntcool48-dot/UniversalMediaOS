@@ -68,15 +68,28 @@ public sealed class NativeShortMediaCompletionTests
                 Assert.Equal("Finished", player.PlaybackStatusText);
                 Assert.False(player.IsPlaying);
                 Assert.False(player.IsPlaybackBusy);
-                using (var completed = new DatabaseContext())
-                    Assert.Equal(0, completed.GetResumeState(work, unit));
+                await Wait(() =>
+                {
+                    using var completed = new DatabaseContext();
+                    return completed.GetResumeState(work, unit) == 0;
+                }, player);
                 int framesBeforeReplay = memory.Frames;
                 player.TogglePlayPauseCommand.Execute(null);
                 await Wait(() => player.IsPlaying && player.MediaPlayer.Time is >= 500 and < 5_000 &&
                     memory.Frames > framesBeforeReplay + 2, player);
                 player.MediaPlayer.Time = 12_000;
                 await Wait(() => player.MediaPlayer.Time >= 11_000, player);
-                player.TogglePlayPauseCommand.Execute(null);
+                // Wait for the real decoder callback, including the player's track
+                // refresh, before Stop. IsPlaying changes optimistically on click.
+                var paused = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                EventHandler<EventArgs> onPaused = (_, _) => paused.TrySetResult();
+                player.MediaPlayer.Paused += onPaused;
+                try
+                {
+                    player.TogglePlayPauseCommand.Execute(null);
+                    await paused.Task.WaitAsync(TimeSpan.FromSeconds(3));
+                }
+                finally { player.MediaPlayer.Paused -= onPaused; }
                 await Wait(() => !player.IsPlaying, player);
                 // Switching this formerly local player to a website must not
                 // grant a short browser clip local-file completion semantics.
