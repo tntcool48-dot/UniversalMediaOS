@@ -1391,7 +1391,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             }
         }
 
-        internal static bool IsCredibleCompletion(double positionSeconds, double durationSeconds)
+        internal static bool IsCredibleCompletion(double positionSeconds, double durationSeconds, bool isLocalFile = false)
         {
             if (double.IsNaN(positionSeconds) || double.IsInfinity(positionSeconds) || positionSeconds < 0 ||
                 double.IsNaN(durationSeconds) || double.IsInfinity(durationSeconds) || durationSeconds < 0)
@@ -1404,6 +1404,12 @@ namespace UniversalMediaOS.WPF.ViewModels
                 return positionSeconds >= durationSeconds * 0.85 ||
                        positionSeconds >= Math.Max(0, durationSeconds - 60);
             }
+
+            // A user-opened/downloaded local file can legitimately be short.
+            // Provider and browser sources retain the minimum-duration guard.
+            if (isLocalFile && durationSeconds > 0)
+                return positionSeconds > 0 && positionSeconds >= durationSeconds * 0.95 &&
+                       positionSeconds <= durationSeconds + 2;
 
             // LibVLC can occasionally omit length for a valid stream. Require meaningful
             // watch time before treating an unknown-length end as episode completion.
@@ -1454,7 +1460,8 @@ namespace UniversalMediaOS.WPF.ViewModels
             {
                 AppLogger.Log("Starting/resuming media player.");
                 _pauseWhenStarted = false;
-                if (!string.IsNullOrEmpty(PendingMediaPath)) PlayPending();
+                if (_playbackEnded) ReloadNativeSelection(null, restart: true);
+                else if (!string.IsNullOrEmpty(PendingMediaPath)) PlayPending();
                 else MediaPlayer.Play();
             }
         }
@@ -1874,11 +1881,12 @@ namespace UniversalMediaOS.WPF.ViewModels
             }
         }
 
-        private void ReloadNativeSelection(PlaybackQualityOption? option, bool resumeOnError = false)
+        private void ReloadNativeSelection(PlaybackQualityOption? option, bool resumeOnError = false, bool restart = false)
         {
             if (_isDisposing || IsDisposed || IsWebViewActive || string.IsNullOrWhiteSpace(_lastMediaSource)) return;
-            double positionSeconds = GetCurrentPlaybackPositionSeconds();
-            bool paused = !IsTabActive || _pauseWhenStarted || (!IsPlaying && !(resumeOnError && HasPlaybackError));
+            double positionSeconds = restart ? 0 : GetCurrentPlaybackPositionSeconds();
+            bool paused = !IsTabActive || (!restart &&
+                (_pauseWhenStarted || (!IsPlaying && !(resumeOnError && HasPlaybackError))));
             PlaybackQualityOption[] options = QualityOptions.ToArray();
             string source = option?.Url ?? _lastMediaSource;
             // No deferred continuation may replace a newer episode or a disposed player.
@@ -2001,10 +2009,13 @@ namespace UniversalMediaOS.WPF.ViewModels
                 if (_stopRequested || IsWebViewActive) return;
                 double positionSeconds = GetCurrentPlaybackPositionSeconds();
                 double durationSeconds = (MediaPlayer.Length > 0 ? MediaPlayer.Length : PlaybackDuration) / 1000.0;
-                if (!IsCredibleCompletion(positionSeconds, durationSeconds))
+                bool isLocalFile = Uri.TryCreate(_currentMedia?.Mrl, UriKind.Absolute, out var source) && source.IsFile;
+                if (!IsCredibleCompletion(positionSeconds, durationSeconds, isLocalFile))
                 {
                     AppLogger.Log($"LibVLC ended before a credible episode completion ({positionSeconds:0.0}s / {durationSeconds:0.0}s).", "WARNING");
-                    ReportPlaybackError("The stream ended before video playback began. Retry it or open the browser fallback.");
+                    ReportPlaybackError(positionSeconds > 0
+                        ? "The video ended, but completion could not be verified. Retry it or choose another source."
+                        : "The stream ended before video playback began. Retry it or open the browser fallback.");
                     return;
                 }
 
