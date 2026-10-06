@@ -108,7 +108,10 @@ public sealed class NativeShortMediaCompletionTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task RealShortVideoFinishesLocallyButRetainsTheProviderCompletionGuard(bool network)
+    public Task RealShortVideoFinishesLocallyButRetainsTheProviderCompletionGuard(bool network)
+        => OnDispatcher(() => RealShortVideoAsync(network));
+
+    private static async Task RealShortVideoAsync(bool network)
     {
         string? previousRoot = Environment.GetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable);
         string root = Path.Combine(Path.GetTempPath(), "UniversalMediaOS.Tests", "NativeCompletion-" + Guid.NewGuid().ToString("N"));
