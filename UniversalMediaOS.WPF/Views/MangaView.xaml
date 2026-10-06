@@ -202,6 +202,10 @@
                         </Style>
                     </ProgressBar.Style>
                 </ProgressBar>
+                <Button Grid.Column="2" Content="Retry website" Click="RetryMangaWebsite_Click"
+                        Style="{StaticResource SecondaryButton}" Margin="12,0,0,0"
+                        Visibility="{Binding CanRetryWebsite, Converter={StaticResource BoolToVisibility}}"
+                        ToolTip="Retry the selected chapter website."/>
             </Grid>
         </Border>
 
@@ -320,11 +324,19 @@
                 <ListBox.ItemTemplate>
                     <DataTemplate>
                         <Button Margin="0,0,0,10"
-                                Style="{StaticResource MangaActionButton}"
                                 Command="{Binding DataContext.SelectChapterCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                                CommandParameter="{Binding}"
-                                AutomationProperties.Name="{Binding ChapterNumber, StringFormat=Open chapter {0}}"
-                                ToolTip="{Binding ChapterNumber, StringFormat=Open chapter {0}}">
+                                CommandParameter="{Binding}">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource MangaActionButton}">
+                                    <Setter Property="AutomationProperties.Name" Value="{Binding ChapterNumber, StringFormat=Open chapter {0}}"/>
+                                    <Setter Property="ToolTip" Value="{Binding RelativeSource={RelativeSource Self}, Path=(AutomationProperties.Name)}"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsExternal}" Value="True">
+                                            <Setter Property="AutomationProperties.Name" Value="{Binding ChapterNumber, StringFormat=Open chapter {0} website}"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
                             <Button.Effect>
                                 <StaticResource ResourceKey="ElevatedPlane"/>
                             </Button.Effect>
@@ -340,9 +352,8 @@
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
                                     <Border Grid.Column="0" Background="#2414B8A6" CornerRadius="8" Padding="10,6" Margin="0,0,12,0">
-                                        <TextBlock Foreground="{StaticResource AccentPrimary}" FontWeight="Bold" FontSize="13">
-                                            <Run Text="Ch. "/><Run Text="{Binding ChapterNumber}"/>
-                                        </TextBlock>
+                                        <TextBlock Text="{Binding ChapterNumber, StringFormat=Ch. {0}}"
+                                                   Foreground="{StaticResource AccentPrimary}" FontWeight="Bold" FontSize="13"/>
                                     </Border>
                                     <TextBlock Grid.Column="1"
                                                Text="{Binding Title}"
@@ -350,12 +361,35 @@
                                                VerticalAlignment="Center"
                                                TextTrimming="CharacterEllipsis"/>
                                     <TextBlock Grid.Column="2"
+                                               Text="{Binding Pages, StringFormat={}{0} pages}"
                                                Foreground="{StaticResource TextMuted}"
                                                FontSize="12"
                                                VerticalAlignment="Center"
                                                Margin="12,0,0,0">
-                                        <Run Text="{Binding Pages}"/><Run Text=" pages"/>
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsExternal}" Value="True">
+                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
                                     </TextBlock>
+                                    <StackPanel Grid.Column="2" Margin="12,0,0,0" VerticalAlignment="Center">
+                                        <StackPanel.Style>
+                                            <Style TargetType="StackPanel">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsExternal}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </StackPanel.Style>
+                                        <TextBlock Text="Website only" Foreground="{StaticResource TextMuted}" FontSize="12"/>
+                                        <TextBlock Text="Open website" Foreground="{StaticResource AccentPrimary}" FontWeight="SemiBold" FontSize="12"/>
+                                    </StackPanel>
                                 </Grid>
                             </Border>
                         </Button>

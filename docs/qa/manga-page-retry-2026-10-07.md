@@ -13,3 +13,7 @@ The authored follow-up replaces only that test PNG with visible grayscale bands.
 Reused Release WPF SHA-256: C6FCF73DF2FD87D5BA8C03868EB8909AC322D2988A27347F5ED38D6B1A36D05A. Core: EF41CB41273F0AD47C81ABA7B5416E789E42F212357ED6E3A40FAA4C2EAAA9F7. This is a controlled error/recovery qualification, separate from the earlier inspected live MangaDex chapters.
 
 External-only reader fallback/return, broader titles/languages/layout/resource cycles and durable reader progress remain open. New reader labels are currently English. Books remain deferred; Arabic cartoons last.
+
+Publication: `39aa36ea604696e3f1a7f797abfa6b2c3accf2fb` pushed normally to main. [Hosted validation](https://github.com/tntcool48-dot/UniversalMediaOS/actions/runs/37546029259) is in progress. Owned test apps/processes closed; only the original Debug process 40880 remained. The branch and unrelated untracked paths remain intact.
+
+Terminal hosted result: [39aa36e / run 37546029259](https://github.com/tntcool48-dot/UniversalMediaOS/actions/runs/37546029259) passed 956 C# checks, 22 existing skips, zero failures, 978 total, in 8 minutes 22 seconds. Build had zero warnings/errors; Python scraper syntax passed. Private exact log: .artifacts/implementation/manga-page-retry-20261007/hosted-37546029259.log. This full result predates the subsequent external reader source.

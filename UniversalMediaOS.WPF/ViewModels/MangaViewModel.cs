@@ -53,6 +53,19 @@ namespace UniversalMediaOS.WPF.ViewModels
 
         // ── External WebView ─────────────────────────────────
         [ObservableProperty] private string _externalUrl = string.Empty;
+        [ObservableProperty] private bool _canRetryWebsite;
+        internal int ExternalReaderGeneration => Volatile.Read(ref _pageGeneration);
+
+        internal bool IsCurrentExternalReader(int generation, MangaChapter chapter, string url) =>
+            !_isDisposed && IsCurrentPageGeneration(generation) && CurrentViewMode == 3 &&
+            ReferenceEquals(SelectedChapter, chapter) && string.Equals(ExternalUrl, url, StringComparison.Ordinal);
+
+        internal void ReportExternalReader(int generation, MangaChapter chapter, string url, string status, bool canRetry)
+        {
+            if (!IsCurrentExternalReader(generation, chapter, url)) return;
+            ReaderStatus = status;
+            CanRetryWebsite = canRetry;
+        }
 
         // ── Breadcrumb label ─────────────────────────────────
         [ObservableProperty] private string _breadcrumb = string.Empty;
@@ -198,6 +211,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             _pageCts?.Cancel();
 
             SelectedManga = manga;
+            CanRetryWebsite = false;
             Chapters.Clear();
             PageUrls.Clear();
             CurrentViewMode = 1;
@@ -267,14 +281,16 @@ namespace UniversalMediaOS.WPF.ViewModels
             var token = linkedCts.Token;
 
             SelectedChapter = chapter;
+            CanRetryWebsite = false;
             Breadcrumb = $"{SelectedManga?.Title ?? "Manga"} \u203A Ch. {chapter.ChapterNumber}";
             ReaderStatus = string.Empty;
 
-            // If chapter has an external URL, open in WebView
-            if (!string.IsNullOrEmpty(chapter.ExternalUrl))
+            // External chapters are explicitly labelled website actions in the chapter list.
+            if (chapter.IsExternal)
             {
                 AppLogger.Log($"Chapter has externalUrl='{chapter.ExternalUrl}' — opening WebView reader.");
                 ExternalUrl = chapter.ExternalUrl;
+                ReaderStatus = "Opening website reader...";
                 CurrentViewMode = 3;
                 ClearOperation(ref _pageCts, linkedCts);
                 return;
@@ -337,6 +353,7 @@ namespace UniversalMediaOS.WPF.ViewModels
         {
             AppLogger.Log($"GoBackCommand invoked from mode={CurrentViewMode}");
             ReaderStatus = string.Empty;
+            CanRetryWebsite = false;
             switch (CurrentViewMode)
             {
                 case 3:

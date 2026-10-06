@@ -31,6 +31,7 @@ namespace UniversalMediaOS.Core.Services
         public string Title { get; set; } = string.Empty;
         public int Pages { get; set; }
         public string ExternalUrl { get; set; } = string.Empty;
+        public bool IsExternal => !string.IsNullOrWhiteSpace(ExternalUrl);
     }
 
     public sealed class IncompleteMangaChaptersException : Exception
