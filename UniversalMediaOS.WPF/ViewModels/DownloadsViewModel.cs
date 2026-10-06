@@ -96,9 +96,14 @@ namespace UniversalMediaOS.WPF.ViewModels
             {
                 // Run heavy disk I/O on a background thread to avoid blocking the UI
                 var files = await Task.Run(() =>
+                {
+                    var incomplete = LegacyTorrentReadiness.FindIncompleteFiles(downloadsPath, NativeTorrentCachePath());
+                    return
                     Directory.GetFiles(downloadsPath, "*.*", SearchOption.AllDirectories)
                         .Where(IsSupportedDownloadedFile)
                         .Where(f => !IsLibraryStagingFile(f))
+                        .Where(f => !incomplete.Contains(Path.GetFullPath(f)) ||
+                            AuthorizedMediaDownloadService.ReadLibraryPlayback(f) != null)
                         .Select(f =>
                         {
                             var fi = new FileInfo(f);
@@ -111,7 +116,8 @@ namespace UniversalMediaOS.WPF.ViewModels
                                 label = LibraryPlaybackTitle(saved);
                             return new InstalledEpisodeItem { FileName = label, FullPath = f, FileSizeText = size };
                         })
-                        .ToList());
+                        .ToList();
+                });
 
                 // Swap atomically
                 InstalledFiles.ReplaceRange(files);
@@ -218,6 +224,9 @@ namespace UniversalMediaOS.WPF.ViewModels
                 "Downloads");
         }
 
+        private static string NativeTorrentCachePath() => Path.Combine(
+            UniversalMediaOS.Core.Helpers.AppDataPaths.LocalBaseDirectory, "UniversalMediaOS", "TorrentCache");
+
         internal static bool IsSupportedDownloadedFile(string filePath)
         {
             string extension = Path.GetExtension(filePath);
@@ -258,6 +267,16 @@ namespace UniversalMediaOS.WPF.ViewModels
                 AppLogger.Log($"PlayFile command invoked. File: '{item.FileName}', FullPath: '{item.FullPath}'");
                 if (File.Exists(item.FullPath))
                 {
+                    if (!item.IsBook && AuthorizedMediaDownloadService.ReadLibraryPlayback(item.FullPath) == null &&
+                        await Task.Run(() => LegacyTorrentReadiness.FindIncompleteFiles(
+                            Path.GetFullPath(_config.GetSetting("DownloadDirectory") is { Length: > 0 } configured
+                                ? configured : GetDefaultDownloadsPath()), NativeTorrentCachePath()).Contains(Path.GetFullPath(item.FullPath))))
+                    {
+                        _dialogService.ShowErrorDialog(
+                            "This file is still a partial torrent download. Resume its queue job before playing it.", "Download Incomplete");
+                        await RefreshDownloadsAsync();
+                        return;
+                    }
                     if (item.IsBook)
                     {
                         try
