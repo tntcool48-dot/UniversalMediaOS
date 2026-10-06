@@ -177,7 +177,7 @@ public sealed class DashNativeStreamingTests
     }
 
     [Fact]
-    public void SourceReplacementAndPlayerCloseReleaseOnlyTheirOwnNativeSessions()
+    public async Task SourceReplacementAndPlayerCloseReleaseOnlyTheirOwnNativeSessions()
     {
         string? previous = Environment.GetEnvironmentVariable("UNIVERSAL_MEDIA_OS_DATA_ROOT");
         string parent = Path.Combine(Path.GetTempPath(), "UniversalMediaOS.DashSessionTests");
@@ -186,12 +186,12 @@ public sealed class DashNativeStreamingTests
         File.WriteAllText(Path.Combine(directory, "Roaming", "UniversalMediaOS", "config.json"),
             JsonSerializer.Serialize(new { DatabasePath = Path.Combine(directory, "media.db") }));
         Environment.SetEnvironmentVariable("UNIVERSAL_MEDIA_OS_DATA_ROOT", directory);
+        var progress = new PlaybackProgressService(new(Path.Combine(directory, "library.json")));
         try
         {
             using var proxy = new HlsLoopbackProxy();
-            using var db = new DatabaseContext();
-            using var first = new PlaybackViewModel(db, null, null, hlsProxy: proxy);
-            using var second = new PlaybackViewModel(db, null, null, hlsProxy: proxy);
+            using var first = new PlaybackViewModel(new DatabaseContext(), null, null, hlsProxy: proxy, playbackProgress: progress);
+            using var second = new PlaybackViewModel(new DatabaseContext(), null, null, hlsProxy: proxy, playbackProgress: progress);
             string Source(PlaybackViewModel player) => ((Media)typeof(PlaybackViewModel)
                 .GetField("_currentMedia", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(player)!).Mrl;
             first.LoadMedia("https://cdn.example/one.mpd", "One", contentType: "application/dash+xml");
@@ -214,6 +214,7 @@ public sealed class DashNativeStreamingTests
         }
         finally
         {
+            await progress.FlushAsync().WaitAsync(TimeSpan.FromSeconds(5));
             using (var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={Path.Combine(directory, "media.db")};Cache=Shared;"))
                 Microsoft.Data.Sqlite.SqliteConnection.ClearPool(connection);
             Environment.SetEnvironmentVariable("UNIVERSAL_MEDIA_OS_DATA_ROOT", previous);

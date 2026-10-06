@@ -69,16 +69,19 @@ public sealed class LiveCaptionSelectionTests(ITestOutputHelper output)
             .Patterns.RangeValue.Pattern.Value.Value ?? 0;
         bool IsPaused() => Button("Play or pause")?.FindFirstDescendant(cf => cf.ByText(arabicControls ? "تشغيل" : "Play")) != null;
         string logPath = Path.Combine(fixture.SandboxPath, "Roaming", "UniversalMediaOS", "app.log");
-        void WaitForReloadState(string label, int priorLogLength, Stopwatch selectionTimer)
+        void WaitForReloadState(string label, int priorLogLength, Stopwatch selectionTimer,
+            double minimumPosition, Func<double> maximumPosition)
         {
             Assert.True(SpinWait.SpinUntil(() =>
             {
                 if (IsPaused() != paused) return false;
-                if (!paused) return true;
-                // A selected label and the pre-start Play button do not establish
-                // a paused decoder. Require a new native pause event from reload.
+                double current = Position();
+                if (current < minimumPosition || current > maximumPosition()) return false;
+                // The old button state can outlive source replacement. Require
+                // the new decoder's state event and the restored seek together.
                 string log = ReadLog(logPath);
-                return log.Length > priorLogLength && log[priorLogLength..].Contains("LibVLC paused event fired", StringComparison.Ordinal);
+                string nativeEvent = paused ? "LibVLC paused event fired" : "LibVLC playing event fired";
+                return log.Length > priorLogLength && log[priorLogLength..].Contains(nativeEvent, StringComparison.Ordinal);
             }, TimeSpan.FromSeconds(3)), $"{label} did not restore the requested playback state.\n{ReadLog(logPath)}");
             output.WriteLine($"{label}: requested {(paused ? "paused" : "playing")} state observed after {selectionTimer.Elapsed.TotalSeconds:0.000} s.");
         }
@@ -165,7 +168,8 @@ public sealed class LiveCaptionSelectionTests(ITestOutputHelper output)
         string onLabel = arabic ? "الإنجليزية (ملف منزل)" : "English (downloaded)";
         SelectCaption(offLabel);
         Assert.True(SpinWait.SpinUntil(() => Captions()?.SelectedItem?.Text == offLabel, TimeSpan.FromSeconds(3)), ReadLog(logPath));
-        WaitForReloadState("CC Off", priorLogLength, selectionTimer);
+        WaitForReloadState("CC Off", priorLogLength, selectionTimer, position - 750,
+            () => position + (paused ? 1500 : elapsed.Elapsed.TotalMilliseconds + 2500));
         Thread.Sleep(600); // Includes another decoder time/track refresh.
         Assert.Equal(offLabel, Captions()!.SelectedItem?.Text);
         Assert.InRange(Position(), position - 750,
@@ -177,7 +181,8 @@ public sealed class LiveCaptionSelectionTests(ITestOutputHelper output)
         selectionTimer.Restart();
         SelectCaption(onLabel);
         Assert.True(SpinWait.SpinUntil(() => Captions()?.SelectedItem?.Text == onLabel, TimeSpan.FromSeconds(3)), ReadLog(logPath));
-        WaitForReloadState("English (downloaded)", priorLogLength, selectionTimer);
+        WaitForReloadState("English (downloaded)", priorLogLength, selectionTimer, position - 750,
+            () => position + (paused ? 2500 : elapsed.Elapsed.TotalMilliseconds + 3500));
         Thread.Sleep(600);
         Assert.Equal(onLabel, Captions()!.SelectedItem?.Text);
         Assert.InRange(Position(), position - 750,

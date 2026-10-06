@@ -80,18 +80,18 @@ public sealed class PlaybackProgressService
     }
 
     public async Task<(PlaybackProgressSession Session, double Position)> OpenAsync(
-        PlaybackProgressContext context, Task? precedingSaves = null)
+        PlaybackProgressContext context, Task? precedingSaves = null, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(context.WorkKey);
         ArgumentException.ThrowIfNullOrWhiteSpace(context.UnitKey);
         using var database = _createDatabase();
         // Capture the destination before a queued load yields, just as saves do.
         _ = database.Database.GetDbConnection();
-        await _gate.WaitAsync().ConfigureAwait(false);
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (precedingSaves != null) await precedingSaves.ConfigureAwait(false);
-            return await Task.Run(() => ReadOpen(database, context)).ConfigureAwait(false);
+            if (precedingSaves != null) await precedingSaves.WaitAsync(cancellationToken).ConfigureAwait(false);
+            return await Task.Run(() => ReadOpen(database, context), cancellationToken).ConfigureAwait(false);
         }
         finally { _gate.Release(); }
     }

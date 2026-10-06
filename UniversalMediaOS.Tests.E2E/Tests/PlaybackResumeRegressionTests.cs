@@ -1,8 +1,8 @@
 using System.Text.Json;
 using System.IO;
-using System.Reflection;
 using UniversalMediaOS.Core.Data;
 using UniversalMediaOS.Core.OtherMedia;
+using UniversalMediaOS.Core.Services;
 using UniversalMediaOS.WPF.ViewModels;
 using Xunit;
 
@@ -118,15 +118,16 @@ namespace UniversalMediaOS.Tests.E2E.Tests
         {
             using var sandbox = new AppDataSandbox();
             var context = Context("tt0133093");
-            using var vm = new PlaybackViewModel(new DatabaseContext());
-            vm.LoadEmbed("https://example.invalid/embed", "Same title", audiovisualContext: context);
-            vm.ReportWebPlaybackProgress(90, 600, false);
+            var progress = new PlaybackProgressService(new(Path.Combine(sandbox.Root, "library.json")));
+            var (session, _) = progress.Open(context);
+            await progress.SaveAsync(Assert.IsType<PlaybackProgressWrite>(progress.Capture(session, 90, 600, false)));
             Assert.Equal(90, await WaitForResumeStateAsync(context.WorkKey, "feature", 90));
-            long oldSequence = (long)typeof(PlaybackViewModel).GetField("_resumeWriteSequence", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(vm)!;
-            vm.ReportWebPlaybackProgress(600, 600, true);
-            // Replay the captured older save after completion to deterministically exercise reordered execution.
-            var save = typeof(PlaybackViewModel).GetMethod("SaveResumePositionAsync", BindingFlags.NonPublic | BindingFlags.Instance)!;
-            await (Task)save.Invoke(vm, [context.WorkKey, "feature", 90d, false, oldSequence])!;
+            var older = Assert.IsType<PlaybackProgressWrite>(progress.Capture(session, 180, 600, false));
+            var completion = Assert.IsType<PlaybackProgressWrite>(progress.Capture(session, 600, 600, true));
+            await progress.SaveAsync(completion);
+            // Execute the real captured observation after the newer completion,
+            // keeping the same session owner to exercise write ordering itself.
+            await progress.SaveAsync(older);
             using var verify = new DatabaseContext();
             Assert.Equal(0, verify.GetResumeState(context.WorkKey, "feature"));
         }

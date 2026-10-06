@@ -63,10 +63,16 @@ namespace UniversalMediaOS.WPF.ViewModels
         private Task<(PlaybackProgressSession? Session, double Position)> _resumeLoadRead =
             Task.FromResult<(PlaybackProgressSession?, double)>((null, 0));
         private Task<PlaybackProgressSession?> _progressSessionReady = Task.FromResult<PlaybackProgressSession?>(null);
+        private CancellationTokenSource? _resumeLoadCancellation;
+        private bool _resumeLoadHasAcceptedSave;
         internal Task ResumeLoadCompleted { get; private set; } = Task.CompletedTask;
         internal int PendingResumeSaveCount
         {
             get { lock (_resumePersistenceGate) return _pendingResumeSaves.Count(entry => !entry.Value.IsCompleted); }
+        }
+        internal int PendingResumeLoadCount
+        {
+            get { lock (_resumePersistenceGate) return _pendingResumeLoads.Count(task => !task.IsCompleted); }
         }
         private bool _resumeReadApplied = true;
         private bool _playWhenResumeLoaded;
@@ -2231,6 +2237,16 @@ namespace UniversalMediaOS.WPF.ViewModels
 
         private void ConfigureResumeState(int malId, string episodeNumber, string title, string sourceKey)
         {
+            lock (_resumePersistenceGate)
+            {
+                // A source with accepted progress still needs its read/session
+                // for that captured write. Unused superseded reads can leave
+                // the queue without touching the ordered saves around them.
+                if (!_resumeLoadHasAcceptedSave) _resumeLoadCancellation?.Cancel();
+                _resumeLoadCancellation?.Dispose();
+                _resumeLoadCancellation = null;
+                _resumeLoadHasAcceptedSave = false;
+            }
             _progressSessionReady = Task.FromResult<PlaybackProgressSession?>(null);
             _progressContext = null;
             _resumePersistenceClosed = false;
@@ -2354,7 +2370,8 @@ namespace UniversalMediaOS.WPF.ViewModels
                 // A source reload must read after the old unit's accepted saves,
                 // including a save which itself awaits that unit's first load.
                 Task preceding = Task.WhenAll(_pendingResumeSaves.Values.Concat(_pendingResumeLoads));
-                _resumeLoadRead = ReadResumePositionAsync(_progressContext, media, unit, preceding);
+                _resumeLoadCancellation = new CancellationTokenSource();
+                _resumeLoadRead = ReadResumePositionAsync(_progressContext, media, unit, preceding, _resumeLoadCancellation.Token);
                 _progressSessionReady = LoadedSessionAsync(_resumeLoadRead);
                 _pendingResumeLoads.Add(_resumeLoadRead);
                 _playbackProgress.TrackPendingPersistence(_resumeLoadRead);
@@ -2363,21 +2380,25 @@ namespace UniversalMediaOS.WPF.ViewModels
         }
 
         private async Task<(PlaybackProgressSession? Session, double Position)> ReadResumePositionAsync(
-            PlaybackProgressContext? context, string media, string unit, Task preceding)
+            PlaybackProgressContext? context, string media, string unit, Task preceding, CancellationToken cancellationToken)
         {
             try
             {
-                if (context != null) return await _playbackProgress.OpenAsync(context, preceding).ConfigureAwait(false);
+                if (context != null) return await _playbackProgress.OpenAsync(context, preceding, cancellationToken).ConfigureAwait(false);
                 _ = _databaseContext.Database.GetDbConnection(); // Freeze this player's destination before yielding.
-                await preceding.ConfigureAwait(false);
-                await _resumeDatabaseLock.WaitAsync().ConfigureAwait(false);
+                await preceding.WaitAsync(cancellationToken).ConfigureAwait(false);
+                await _resumeDatabaseLock.WaitAsync(cancellationToken).ConfigureAwait(false);
                 try
                 {
                     double position = await Task.Run(() => EnsureResumeDatabaseCreated()
-                        ? _databaseContext.GetResumeState(media, unit) : 0).ConfigureAwait(false);
+                        ? _databaseContext.GetResumeState(media, unit) : 0, cancellationToken).ConfigureAwait(false);
                     return (null, position);
                 }
                 finally { _resumeDatabaseLock.Release(); }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return (null, 0);
             }
             catch (Exception ex)
             {
@@ -2515,6 +2536,7 @@ namespace UniversalMediaOS.WPF.ViewModels
 
                 _lastResumeSaveUtc = now;
                 _lastSavedResumeSeconds = valueToSave;
+                _resumeLoadHasAcceptedSave = true;
                 long sequence = Interlocked.Increment(ref _resumeWriteSequence);
                 _latestResumeWrites.AddOrUpdate((mediaId, episodeId), sequence, (_, previous) => Math.Max(previous, sequence));
 
@@ -2678,6 +2700,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             {
                 _databaseContext.Dispose();
                 _resumeDatabaseLock.Dispose();
+                _resumeLoadCancellation?.Dispose();
             }
         }
 

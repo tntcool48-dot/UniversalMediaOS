@@ -17,6 +17,50 @@ public sealed class ResumeDispatcherContentionTests(ITestOutputHelper output)
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public void SupersededUnsavedUnitReadsDoNotAccumulateBehindALockedWriter(bool catalog)
+    {
+        using var profile = new IsolatedProfile();
+        RecoveryLayoutTests.RunSta(() =>
+        {
+            using var player = CreatePlayer(profile, catalog);
+            var (work, unit) = SaveInitial(player, profile);
+            const string nextWork = "av:fixture:show:rapid-units";
+            string latestWork = catalog ? nextWork : "42";
+            string latestUnit = catalog ? "season:1:episode:200" : "200";
+            using (var seed = new DatabaseContext()) seed.SaveResumeState(latestWork, latestUnit, 371);
+            player.PlaybackTime = 120_000;
+            int pending;
+            var elapsed = Stopwatch.StartNew();
+            using (var writer = new WriterLock(profile.ConnectionString!, work, unit, 5000))
+            {
+                for (int episode = 1; episode <= 200; episode++)
+                {
+                    player.LoadEmbed("https://fixture.invalid/" + episode, "Rapid unit fixture", episode.ToString(), malId: 42,
+                        audiovisualContext: catalog ? new(nextWork,
+                            new() { Kind = AudiovisualMediaKind.Television, ContentForm = AudiovisualContentForm.Series },
+                            new() { SeasonNumber = 1, EpisodeNumber = episode }, "Rapid unit fixture", "", new()) : null);
+                }
+                elapsed.Stop();
+                var settle = Stopwatch.StartNew();
+                PumpUntil(() => settle.Elapsed >= TimeSpan.FromMilliseconds(250));
+                pending = player.PendingResumeLoadCount;
+                Assert.False(player.ResumeLoadCompleted.IsCompleted);
+                output.WriteLine($"{(catalog ? "Catalog" : "Legacy")} 200 unsaved source changes: {pending} pending reads, {elapsed.Elapsed.TotalMilliseconds:0.000} ms.");
+            }
+            // Drain actual operations before asserting the bound, so the failing
+            // baseline still safely releases its owned profile and database.
+            WaitForResumeLoad(player);
+            Assert.True(player.TryConsumePendingWebResumePosition(out double restored));
+            Assert.Equal(371, restored);
+            AssertPersisted(work, unit, 120);
+            Assert.InRange(pending, 1, 2);
+            Assert.InRange(elapsed.Elapsed.TotalMilliseconds, 0, 500);
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public void RepeatedPausesKeepAtMostTwoAcceptedWritesForTheCurrentUnitWhileLocked(bool catalog)
     {
         using var profile = new IsolatedProfile();
@@ -108,8 +152,8 @@ public sealed class ResumeDispatcherContentionTests(ITestOutputHelper output)
                 }
                 player.ReportWebPlaybackProgress(600, 600, true, paused: true);
                 player.ReportWebPlaybackProgress(200, 600, false, paused: true);
-                player.Dispose();
                 Assert.InRange(player.PendingResumeSaveCount, 0, 2);
+                player.Dispose();
             }
             AssertPersisted(work, unit, 0);
             using var verify = new DatabaseContext();
@@ -407,6 +451,7 @@ public sealed class ResumeDispatcherContentionTests(ITestOutputHelper output)
     {
         var progress = new PlaybackProgressService(new(Path.Combine(profile.Root, "library.json")));
         database = new TrackingDatabaseContext();
+        profile.Track(progress, database);
         var player = new PlaybackViewModel(database, null, null, playbackProgress: progress);
         player.LoadEmbed("https://fixture.invalid/embed", "Contention fixture", audiovisualContext: catalog ? Context() : null);
         return player;
@@ -479,6 +524,7 @@ public sealed class ResumeDispatcherContentionTests(ITestOutputHelper output)
     {
         private readonly string? _previousRoot = Environment.GetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable);
         private readonly string _tempRoot = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "UniversalMediaOS.Tests"));
+        private readonly List<(PlaybackProgressService Progress, TrackingDatabaseContext Database)> _players = new();
         public string Root { get; }
         public string? ConnectionString { get; set; }
 
@@ -488,9 +534,21 @@ public sealed class ResumeDispatcherContentionTests(ITestOutputHelper output)
             Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, Root);
         }
 
+        public void Track(PlaybackProgressService progress, TrackingDatabaseContext database)
+            => _players.Add((progress, database));
+
         public void Dispose()
         {
-            Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, _previousRoot);
+            try
+            {
+                foreach (var (progress, database) in _players)
+                {
+                    progress.FlushAsync().WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+                    Assert.True(SpinWait.SpinUntil(() => database.Disposed, TimeSpan.FromSeconds(5)),
+                        "Player-owned storage must finish disposal before its profile is removed.");
+                }
+            }
+            finally { Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, _previousRoot); }
             if (ConnectionString != null)
             {
                 using var ownPool = new SqliteConnection(ConnectionString);
