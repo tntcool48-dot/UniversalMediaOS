@@ -75,20 +75,26 @@ namespace UniversalMediaOS.Tests.E2E.Tests
         [InlineData("tt1000002", 1, 1, 273)]
         public void ResumeSeparatesSeasonsAndSameTitleWorks(string id, int season, int episode, double expected)
         {
-            using var sandbox = new AppDataSandbox();
-            using (var seed = new DatabaseContext())
+            // xUnit may reuse a worker with a dispatcher created by an earlier
+            // WPF test. Own and pump the dispatcher that applies this read.
+            RecoveryLayoutTests.RunSta(() =>
             {
-                seed.Database.EnsureCreated();
-                seed.SaveResumeState("av:imdb:title:tt1000001", "season:1:episode:1", 91);
-                seed.SaveResumeState("av:imdb:title:tt1000001", "season:2:episode:1", 182);
-                seed.SaveResumeState("av:imdb:title:tt1000002", "season:1:episode:1", 273);
-            }
-            using var vm = new PlaybackViewModel(new DatabaseContext());
-            vm.LoadEmbed("https://example.invalid/same", "Same title", episode.ToString(),
-                audiovisualContext: Context(id, season, episode));
-            ResumeDispatcherContentionTests.WaitForResumeLoad(vm);
-            Assert.True(vm.TryConsumePendingWebResumePosition(out double actual));
-            Assert.Equal(expected, actual);
+                _ = System.Windows.Threading.Dispatcher.CurrentDispatcher;
+                using var sandbox = new AppDataSandbox();
+                using (var seed = new DatabaseContext())
+                {
+                    seed.Database.EnsureCreated();
+                    seed.SaveResumeState("av:imdb:title:tt1000001", "season:1:episode:1", 91);
+                    seed.SaveResumeState("av:imdb:title:tt1000001", "season:2:episode:1", 182);
+                    seed.SaveResumeState("av:imdb:title:tt1000002", "season:1:episode:1", 273);
+                }
+                using var vm = new PlaybackViewModel(new DatabaseContext());
+                vm.LoadEmbed("https://example.invalid/same", "Same title", episode.ToString(),
+                    audiovisualContext: Context(id, season, episode));
+                ResumeDispatcherContentionTests.WaitForResumeLoad(vm);
+                Assert.True(vm.TryConsumePendingWebResumePosition(out double actual));
+                Assert.Equal(expected, actual);
+            });
         }
 
         [Fact]
