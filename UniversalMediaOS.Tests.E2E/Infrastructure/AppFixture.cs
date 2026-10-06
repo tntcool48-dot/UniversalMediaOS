@@ -18,13 +18,15 @@ namespace UniversalMediaOS.Tests.E2E.Infrastructure
         public FlaUI.Core.AutomationElements.Window MainWindow { get; private set; }
         private readonly MockHttpServer _server;
         private readonly string? _previousDataRoot;
+        private ProcessStartInfo? _launchStartInfo;
         public string SandboxPath { get; }
 
         public AppFixture() : this(mangaPagePng: null) { }
 
         internal AppFixture(byte[]? mangaPagePng,
             Func<System.Net.HttpListenerRequest, (int Status, string Body)>? mangaChapterFeed = null,
-            Func<System.Net.HttpListenerRequest, int>? mangaPageStatus = null)
+            Func<System.Net.HttpListenerRequest, int>? mangaPageStatus = null,
+            Action<string>? initializeProfile = null)
         {
             // 1. Start Mock HTTP Server
             _server = new MockHttpServer(mangaPagePng: mangaPagePng, mangaChapterFeed: mangaChapterFeed,
@@ -103,6 +105,7 @@ namespace UniversalMediaOS.Tests.E2E.Infrastructure
             }
 
             // 4. Locate the WPF executable relative to the test binary directory
+            initializeProfile?.Invoke(SandboxPath);
             string testDir = AppDomain.CurrentDomain.BaseDirectory;
             string preferredConfiguration = testDir.Contains(
                 $"{Path.DirectorySeparatorChar}Release{Path.DirectorySeparatorChar}",
@@ -131,6 +134,7 @@ namespace UniversalMediaOS.Tests.E2E.Infrastructure
                 UseShellExecute = false
             };
             psi.Environment["UNIVERSAL_MEDIA_OS_DATA_ROOT"] = SandboxPath;
+            _launchStartInfo = psi;
 
             // Launch the application
             App = Application.Launch(psi);
@@ -184,6 +188,16 @@ namespace UniversalMediaOS.Tests.E2E.Infrastructure
                 Dispose();
                 throw;
             }
+        }
+
+        internal void Restart()
+        {
+            App.Close();
+            if (!SpinWait.SpinUntil(() => App.HasExited, TimeSpan.FromSeconds(15)))
+                throw new TimeoutException("The owned test application did not close before restart.");
+            App = Application.Launch(_launchStartInfo ?? throw new InvalidOperationException("Missing owned application launch context."));
+            MainWindow = App.GetMainWindow(Automation, TimeSpan.FromSeconds(15))
+                ?? throw new TimeoutException("The owned application main window did not return after restart.");
         }
 
         private static string? FindWpfExecutable(

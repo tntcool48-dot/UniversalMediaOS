@@ -31,7 +31,7 @@
             <Border Style="{StaticResource SurfaceCard}" Margin="8,0">
                 <StackPanel HorizontalAlignment="Center">
                     <TextBlock Text="{Binding Watching}" Foreground="{StaticResource FocusBorder}" FontSize="26" FontWeight="Black" HorizontalAlignment="Center"/>
-                    <TextBlock Text="Airing" Style="{StaticResource CaptionText}"/>
+                    <TextBlock Text="In progress" Style="{StaticResource CaptionText}"/>
                 </StackPanel>
             </Border>
             <Border Style="{StaticResource SurfaceCard}" Margin="8,0,0,0">
@@ -74,7 +74,23 @@
                             <StackPanel Grid.Column="1" Margin="12,0,0,0">
                                 <TextBlock Text="{Binding Title}" Style="{StaticResource SubtitleText}" FontWeight="Bold"/>
                                 <TextBlock Style="{StaticResource CaptionText}">
-                                    <Run Text="{Binding Kind}"/><Run Text=" - "/><Run Text="{Binding Year}"/>
+                                    <TextBlock.Text>
+                                        <MultiBinding StringFormat="{}{0} - {1}">
+                                            <Binding Path="Kind"/>
+                                            <Binding Path="Year"/>
+                                        </MultiBinding>
+                                    </TextBlock.Text>
+                                </TextBlock>
+                                <TextBlock Text="{Binding Availability}" Foreground="{StaticResource TextMuted}" FontSize="12">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Availability}" Value="">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
                                 </TextBlock>
                                 <TextBlock Text="{Binding Score, StringFormat=* {0}}" Foreground="{StaticResource Warning}" FontSize="12" Margin="0,8,0,0"/>
                             </StackPanel>

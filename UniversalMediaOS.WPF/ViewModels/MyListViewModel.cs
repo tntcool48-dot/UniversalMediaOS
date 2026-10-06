@@ -17,6 +17,7 @@ public sealed class TrackedMediaItem
     public string Year { get; init; } = string.Empty;
     public string Status { get; init; } = string.Empty;
     public string Progress { get; init; } = string.Empty;
+    public string Availability { get; init; } = string.Empty;
     public string Score { get; init; } = string.Empty;
     public string CoverImageUrl { get; init; } = string.Empty;
     public string Accent { get; init; } = "#8B5CF6";
@@ -264,8 +265,9 @@ public sealed partial class MyListViewModel : ObservableObject, IDisposable
             Title = record.Title,
             Kind = string.IsNullOrWhiteSpace(record.Kind) ? "Anime" : record.Kind,
             Year = record.Year,
-            Status = string.IsNullOrWhiteSpace(record.Status) ? "Favorite" : record.Status,
-            Progress = record.Progress,
+            Status = "Favorite",
+            Availability = string.IsNullOrWhiteSpace(record.Status) ? string.Empty : $"Availability: {record.Status}",
+            Progress = string.IsNullOrWhiteSpace(record.Progress) ? string.Empty : $"Available: {record.Progress}",
             Score = string.IsNullOrWhiteSpace(record.Rating) ? "-" : record.Rating,
             CoverImageUrl = record.CoverImageUrl,
             Accent = "#8B5CF6",

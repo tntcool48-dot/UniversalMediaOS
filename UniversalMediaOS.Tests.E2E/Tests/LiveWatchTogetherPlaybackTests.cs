@@ -53,7 +53,8 @@ public sealed class LiveWatchTogetherPlaybackTests(ITestOutputHelper output)
         Button Button(AppFixture fixture, string name) => Window(fixture).FindFirstDescendant(cf => cf.ByName(name))!.AsButton();
         double Position(AppFixture fixture) => Window(fixture).FindFirstDescendant(cf => cf.ByAutomationId("PlaybackSlider"))!
             .Patterns.RangeValue.Pattern.Value.Value;
-        bool Paused(AppFixture fixture) => Button(fixture, "Play or pause").FindFirstDescendant(cf => cf.ByText("Play")) != null;
+        bool Paused(AppFixture fixture) => Window(fixture).FindFirstDescendant(cf => cf.ByName("Play or pause"))?
+            .FindFirstDescendant(cf => cf.ByText("Play")) != null;
         string Log(AppFixture fixture)
         {
             using var stream = new FileStream(Path.Combine(fixture.SandboxPath, "Roaming", "UniversalMediaOS", "app.log"),
