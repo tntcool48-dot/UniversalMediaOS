@@ -23,4 +23,10 @@ Tested WPF DLL SHA-256: `F89A55512AD90F355CBD3C275D1ECD63515BD6D37E7FC2A15DF9226
 
 ## Remaining limits
 
+### October 6 retained-file mouse check
+
+Published source `b330d45` passed **four paused mouse-dropdown cases**, zero failures/skips, in **2 minutes 16 seconds**, against the actual retained Pilot MKV and its saved English caption metadata. Each new isolated AppFixture profile sought to the authored-cue region at 700 seconds, left the dropdown open for two seconds, clicked CC Off, waited for a new decoder pause event, and checked that Off stayed selected through another refresh. Clicking the downloaded-English choice restored that track while retaining position and pause. English/Arabic controls and restored/maximized windows all passed on the second monitor; restored bounds were **(2880, 478), 1280×800**. [Retained-file results](C:/Users/user/animeapp/UniversalMediaOS.Tests.E2E/TestResults/retained-pilot-dropdown-confirmed-2026-10-06.trx).
+
+This was actual media with isolated progress writes, not a generated-video substitute or a write to the original profile. Preservation at **09:20:10 UTC** verified all six original videos' sizes/times, metadata/caption hashes, configuration hash and four original resume rows unchanged. Selected-track/native pause/position checks passed; this run did not capture the visible cue disappearing/returning through the dropdown and does not establish the cause of the original manual report. Direct CC visual Off/on remains separately verified and human-confirmed.
+
 The existing dropdown remains available; the cause of the reported manual popup behavior is not yet established. Generated video has no spoken audio and does not qualify real provider identity, embedded captions, authored formatting, full-duration playback or release acceptance. Broader audio/quality/speed selectors, DPI/themes/RTL, resource cycles and packaged execution remain open in the sole checklist. Books remain deferred.

@@ -305,11 +305,11 @@ public sealed class SubtitleHandoffTests
     public void NativeReloadEstablishesCurrentPositionAndPauseBeforeStarting(double seconds, bool pause)
     {
         using var profile = new CaptionTestDataScope();
-        using var database = new DatabaseContext();
-        using var player = new PlaybackViewModel(database);
+        using var player = new PlaybackViewModel(new DatabaseContext());
         player.SetTabActive(false);
         player.LoadMedia("https://video.example/fixture.mp4", "Fixture",
             reloadPositionSeconds: seconds, pauseAfterReload: pause);
+        ResumeDispatcherContentionTests.WaitForResumeLoad(player);
         Assert.Equal(seconds, typeof(PlaybackViewModel).GetField("_pendingResumePositionSeconds", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(player));
         Assert.Equal(pause, typeof(PlaybackViewModel).GetField("_pauseWhenStarted", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(player));
         Assert.False(player.IsPlaying);

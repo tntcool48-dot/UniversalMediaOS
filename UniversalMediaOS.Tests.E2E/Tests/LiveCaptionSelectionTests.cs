@@ -121,6 +121,7 @@ public sealed class LiveCaptionSelectionTests(ITestOutputHelper output)
         Assert.Equal("English (downloaded)", Captions()!.SelectedItem?.Text);
         if (arabic)
         {
+            int beforeSettingsLogLength = ReadLog(logPath).Length;
             string playerTab = Window().FindAllDescendants(cf => cf.ByAutomationId("SelectTab")).Last().Name;
             Window().FindFirstDescendant(cf => cf.ByAutomationId("OpenSettings"))!.AsButton().Invoke();
             Button("Language")!.Invoke();
@@ -132,7 +133,13 @@ public sealed class LiveCaptionSelectionTests(ITestOutputHelper output)
                 "The retained native options header must use the selected Arabic language.");
             Assert.True(SpinWait.SpinUntil(() => Captions()?.SelectedItem?.Text == "الإنجليزية (ملف منزل)",
                 TimeSpan.FromSeconds(3)), "The retained caption overlay must reattach with its selected downloaded English track.\n" + ReadLog(logPath));
-            Assert.True(IsPaused(), "Returning from language settings must keep the player paused.");
+            Assert.True(SpinWait.SpinUntil(() =>
+            {
+                if (!IsPaused()) return false;
+                string log = ReadLog(logPath);
+                return log.Length > beforeSettingsLogLength &&
+                    log[beforeSettingsLogLength..].Contains("LibVLC paused event fired", StringComparison.Ordinal);
+            }, TimeSpan.FromSeconds(3)), "Returning from language settings must settle with a paused decoder and translated Play action.\n" + ReadLog(logPath));
             if (!paused) Button("Play or pause")!.Invoke();
         }
         if (!string.IsNullOrWhiteSpace(borrowedVideo))
