@@ -16,7 +16,40 @@ public sealed class PlaybackProgressService
     private readonly ConcurrentDictionary<(string Work, string Unit), long> _owners = new();
     private readonly ConcurrentDictionary<string, long> _activeWorkOwners = new();
     private readonly ConcurrentDictionary<(string Work, string Unit), long> _latestWrites = new();
+    private readonly ConcurrentDictionary<long, Task> _pendingPersistence = new();
+    private long _persistenceSequence;
     private long _sequence;
+
+    public void TrackPendingPersistence(Task operation)
+    {
+        if (operation.IsCompletedSuccessfully) return;
+        long id = Interlocked.Increment(ref _persistenceSequence);
+        var observed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _pendingPersistence[id] = observed.Task;
+        _ = ObserveAsync();
+        async Task ObserveAsync()
+        {
+            try { await operation.ConfigureAwait(false); }
+            catch (Exception ex) { AppLogger.Log($"[Resume] Accepted persistence operation failed: {ex.Message}", "WARNING"); }
+            finally
+            {
+                _pendingPersistence.TryRemove(id, out _);
+                observed.TrySetResult();
+            }
+        }
+    }
+
+    public async Task FlushAsync()
+    {
+        // Includes accepted writes owned by tabs already removed from the UI.
+        // Waiting never cancels those writes or touches native player handles.
+        while (true)
+        {
+            Task[] pending = _pendingPersistence.Values.ToArray();
+            if (pending.Length == 0) return;
+            await Task.WhenAll(pending).ConfigureAwait(false);
+        }
+    }
 
     public PlaybackProgressService(AudiovisualLibraryService library)
         : this(library, () => new DatabaseContext()) { }

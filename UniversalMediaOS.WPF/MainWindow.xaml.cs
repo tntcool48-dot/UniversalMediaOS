@@ -1,5 +1,7 @@
 using System;
+using System.ComponentModel;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Input;
@@ -67,6 +69,8 @@ namespace UniversalMediaOS.WPF
         private WindowChrome? _restoreWindowChrome;
         private readonly bool _startOnSecondaryMonitor;
         private readonly bool _maximizeOnSecondaryStartup;
+        private bool _progressClosePending;
+        private bool _progressCloseComplete;
 
         [StructLayout(LayoutKind.Sequential)]
         private struct RECT
@@ -110,11 +114,45 @@ namespace UniversalMediaOS.WPF
                 Loaded += MaximizeOnSecondaryStartup;
             }
             DataContext = viewModel;
+            Closing += MainWindow_Closing;
             SourceInitialized += MainWindow_SourceInitialized;
             WindowHelper.EnableMica(this);
             LocalizationRuntime.EnableAutoApply(this, () =>
                 viewModel.SettingsViewModel.SelectedLanguage.Equals("Arabic", StringComparison.OrdinalIgnoreCase));
             UpdateWindowStateVisuals();
+        }
+
+        private async void MainWindow_Closing(object? sender, CancelEventArgs e)
+        {
+            if (_progressCloseComplete || DataContext is not MainViewModel viewModel) return;
+            e.Cancel = true;
+            if (_progressClosePending) return;
+            _progressClosePending = true;
+            IsEnabled = false;
+            try
+            {
+                Task currentPlayers = viewModel.FlushPlaybackProgressAsync();
+                var sharedProgress = (Application.Current as App)?.Services.GetService(
+                    typeof(UniversalMediaOS.Core.Services.PlaybackProgressService)) as UniversalMediaOS.Core.Services.PlaybackProgressService;
+                await Task.WhenAll(currentPlayers, sharedProgress?.FlushAsync() ?? Task.CompletedTask)
+                    .WaitAsync(TimeSpan.FromSeconds(15));
+                UniversalMediaOS.Core.Helpers.AppLogger.Log("[Resume] Accepted playback progress drained before application close.");
+            }
+            catch (TimeoutException)
+            {
+                UniversalMediaOS.Core.Helpers.AppLogger.Log("[Resume] Application close deadline elapsed with playback progress still pending.", "WARNING");
+            }
+            catch (Exception ex)
+            {
+                UniversalMediaOS.Core.Helpers.AppLogger.Log($"[Resume] Playback progress drain failed during application close: {ex.Message}", "WARNING");
+            }
+            finally
+            {
+                _progressCloseComplete = true;
+                // Even an already-complete flush must return from the first
+                // Closing event before requesting the final close.
+                _ = Dispatcher.BeginInvoke(new Action(Close));
+            }
         }
 
         private void MaximizeOnSecondaryStartup(object sender, RoutedEventArgs e)

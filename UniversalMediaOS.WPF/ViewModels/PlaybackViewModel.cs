@@ -2342,6 +2342,7 @@ namespace UniversalMediaOS.WPF.ViewModels
                 _resumeLoadRead = ReadResumePositionAsync(_progressContext, media, unit, preceding);
                 _progressSessionReady = LoadedSessionAsync(_resumeLoadRead);
                 _pendingResumeLoads.Add(_resumeLoadRead);
+                _playbackProgress.TrackPendingPersistence(_resumeLoadRead);
                 ResumeLoadCompleted = ApplyLoadedResumeAsync(_resumeLoadRead, generation, media, unit, dispatcher);
             }
         }
@@ -2515,6 +2516,7 @@ namespace UniversalMediaOS.WPF.ViewModels
                 foreach (long finished in _pendingResumeSaves.Where(entry => entry.Value.IsCompleted).Select(entry => entry.Key).ToArray())
                     _pendingResumeSaves.Remove(finished);
                 if (!save.IsCompleted) _pendingResumeSaves[sequence] = save;
+                _playbackProgress.TrackPendingPersistence(save);
             }
 
             if (synchronous)
@@ -2547,7 +2549,16 @@ namespace UniversalMediaOS.WPF.ViewModels
                 _pendingResumeLoads.RemoveAll(task => task.IsCompleted);
                 _progressSessionReady = _playbackProgress.TakeOwnershipWhenOpenedAsync(_progressSessionReady);
                 _pendingResumeLoads.Add(_progressSessionReady);
+                _playbackProgress.TrackPendingPersistence(_progressSessionReady);
             }
+        }
+
+        internal Task FlushResumeAsync()
+        {
+            if (IsDisposed || _isDisposing) return Task.CompletedTask;
+            SaveCurrentResumePosition(force: true, synchronous: false);
+            lock (_resumePersistenceGate)
+                return Task.WhenAll(_pendingResumeSaves.Values.Concat(_pendingResumeLoads));
         }
 
         private async Task SaveLegacyProgressAfterLoadAsync(Task<(PlaybackProgressSession? Session, double Position)> read,

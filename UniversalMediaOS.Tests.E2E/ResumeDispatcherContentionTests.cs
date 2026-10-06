@@ -191,6 +191,53 @@ public sealed class ResumeDispatcherContentionTests(ITestOutputHelper output)
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ApplicationFlushIncludesAnAlreadyClosedPlayersAcceptedProgress(bool catalog)
+    {
+        using var profile = new IsolatedProfile();
+        RecoveryLayoutTests.RunSta(() =>
+        {
+            var progress = new PlaybackProgressService(new(Path.Combine(profile.Root, "library.json")));
+            using var player = new PlaybackViewModel(new DatabaseContext(), null, null, playbackProgress: progress);
+            player.LoadEmbed("https://fixture.invalid/close", "Closed player", "1", malId: 42,
+                audiovisualContext: catalog ? Context() : null);
+            var (work, unit) = SaveInitial(player, profile);
+            using (var seed = new DatabaseContext()) seed.SaveResumeState(work, "adjacent-unit", 57);
+            player.PlaybackTime = 120_000;
+            Task flush;
+            using (var writer = new WriterLock(profile.ConnectionString!, work, unit, 5000))
+            {
+                player.Dispose(); // Its own two-second wait expires; the tab has gone.
+                var elapsed = Stopwatch.StartNew();
+                flush = progress.FlushAsync();
+                elapsed.Stop();
+                Assert.False(flush.IsCompleted);
+                Assert.InRange(elapsed.Elapsed.TotalMilliseconds, 0, 500);
+            }
+            PumpUntil(() => flush.IsCompleted);
+            flush.GetAwaiter().GetResult();
+            AssertPersisted(work, unit, 120);
+            using var verify = new DatabaseContext();
+            Assert.Equal(57, verify.GetResumeState(work, "adjacent-unit"));
+        });
+    }
+
+    [Fact]
+    public async Task ACloseWaitDeadlineDoesNotCancelAcceptedPersistence()
+    {
+        using var profile = new IsolatedProfile();
+        var progress = new PlaybackProgressService(new(Path.Combine(profile.Root, "library.json")));
+        var accepted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        progress.TrackPendingPersistence(accepted.Task);
+        Task flush = progress.FlushAsync();
+        await Assert.ThrowsAsync<TimeoutException>(() => flush.WaitAsync(TimeSpan.FromMilliseconds(100)));
+        Assert.False(accepted.Task.IsCompleted);
+        accepted.SetResult();
+        await flush.WaitAsync(TimeSpan.FromSeconds(3));
+    }
+
+    [Theory]
     [InlineData(false, false)]
     [InlineData(true, false)]
     [InlineData(false, true)]

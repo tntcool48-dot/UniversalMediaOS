@@ -697,6 +697,13 @@ namespace UniversalMediaOS.WPF.ViewModels
             SelectOrAddSingleton("Settings", "Settings", "\uE713", "#8B5CF6", SettingsViewModel);
         }
 
+        internal Task FlushPlaybackProgressAsync()
+        {
+            var players = Tabs.Select(tab => tab.ContentViewModel).OfType<PlaybackViewModel>().Distinct().ToArray();
+            foreach (var player in players) player.SetTabActive(false);
+            return Task.WhenAll(players.Select(player => player.FlushResumeAsync()));
+        }
+
         public void Dispose()
         {
             if (_isDisposed)
