@@ -27,4 +27,6 @@ Application closing now pauses current players, captures their final positions a
 
 ## Remaining limits
 
+The orderly-close repair is published as **`edb2028`**. Its [bound hosted run](https://github.com/tntcool48-dot/UniversalMediaOS/actions/runs/37444842646) is in progress; no full-suite pass is claimed yet. The preceding source run's remaining callback-test cleanup failure is tracked separately in the [resume-load report](C:/Users/user/animeapp/docs/qa/resume-load-contention-2026-10-06.md).
+
 This repairs the demonstrated orderly process-close loss within the drain deadline. Forced process exit, locks beyond the **15-second** wait, bounded/coalesced queues, Windows shutdown/session-ending behavior, broader profiles/package behavior and all-provider acceptance remain open. The controlled expired-wait case does not establish durable progress after forcibly terminating the process. Books remain deferred; Arabic cartoons remain last among non-Books work.

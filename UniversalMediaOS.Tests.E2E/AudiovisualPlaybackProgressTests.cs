@@ -180,6 +180,7 @@ public sealed class AudiovisualPlaybackProgressTests : IDisposable
             dispatcher.Invoke(() => { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
             Assert.False(staleCallbackRan);
             Assert.Equal(2, player.AudiovisualContext!.Unit.SeasonNumber);
+            ResumeDispatcherContentionTests.WaitForResumeLoad(player);
         });
     }
 
