@@ -41,6 +41,7 @@ namespace UniversalMediaOS.WPF.ViewModels
     public partial class PlaybackViewModel : ObservableObject, IDisposable
     {
         private readonly LibVLC _libVLC;
+        private readonly Helpers.NativePlaybackEngine.Lease _nativeEngineLease;
         private readonly DatabaseContext _databaseContext;
         private readonly HlsLoopbackProxy? _hlsProxy;
         private readonly PlaybackProgressService _playbackProgress;
@@ -368,9 +369,14 @@ namespace UniversalMediaOS.WPF.ViewModels
             }
 
             AppLogger.Log("Initializing PlaybackViewModel and LibVLC player...");
-            LibVLCSharp.Shared.Core.Initialize();
-            _libVLC = new LibVLC(enableDebugLogs: false);
-            _mediaPlayer = new MediaPlayer(_libVLC) { Volume = Volume };
+            _nativeEngineLease = Helpers.NativePlaybackEngine.ForProcess.Acquire();
+            _libVLC = _nativeEngineLease.Engine;
+            try { _mediaPlayer = new MediaPlayer(_libVLC) { Volume = Volume }; }
+            catch
+            {
+                _nativeEngineLease.Dispose();
+                throw;
+            }
 
             _mediaPlayer.Opening += (s, e) => RunOnDispatcher(() =>
             {
@@ -3077,7 +3083,7 @@ namespace UniversalMediaOS.WPF.ViewModels
                 SaveCurrentResumePosition(force: true, synchronous: true);
                 StopAndRelease(saveResume: false);
                 MediaPlayer.Dispose();
-                _libVLC.Dispose();
+                _nativeEngineLease.Dispose();
             }
             finally
             {

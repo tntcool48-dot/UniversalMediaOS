@@ -294,6 +294,7 @@ namespace UniversalMediaOS.WPF
             _serviceProvider = null;
             _pythonServer = null;
 
+            try { NativePlaybackEngine.ShutdownProcess(); } catch { }
             try { UniversalMediaOS.Core.Helpers.AppLogger.Shutdown(); } catch { }
 
             base.OnExit(e);

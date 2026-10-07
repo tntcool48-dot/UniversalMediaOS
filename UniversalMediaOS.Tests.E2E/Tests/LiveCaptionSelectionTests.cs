@@ -94,14 +94,36 @@ public sealed class LiveCaptionSelectionTests(ITestOutputHelper output)
             }
             // Mouse input exercises the Popup's routed events and focus handling;
             // a Selection pattern alone bypasses the reported failure.
+            void Snapshot(string phase)
+            {
+                string? directory = Environment.GetEnvironmentVariable("UNIVERSAL_MEDIA_OS_CAPTION_DIAGNOSTIC_DIR");
+                if (string.IsNullOrWhiteSpace(directory)) return;
+                var caption = Captions()!;
+                string snapshot = JsonSerializer.Serialize(new
+                {
+                    Phase = phase, Choice = label, Pid = fixture.App.ProcessId,
+                    Popup = caption.Patterns.ExpandCollapse.Pattern.ExpandCollapseState.Value.ToString(),
+                    caption.IsEnabled, caption.IsOffscreen, Bounds = caption.BoundingRectangle.ToString(),
+                    Focused = caption.Properties.HasKeyboardFocus.ValueOrDefault, Selected = caption.SelectedItem?.Text,
+                    Options = Window().FindFirstDescendant(cf => cf.ByAutomationId("PlaybackOptions"))?
+                        .Patterns.ExpandCollapse.Pattern.ExpandCollapseState.Value.ToString(),
+                    Position = Position(), Paused = IsPaused()
+                });
+                output.WriteLine(snapshot);
+                Directory.CreateDirectory(directory);
+                File.AppendAllText(Path.Combine(directory, "caption-popup.jsonl"), snapshot + Environment.NewLine);
+            }
+            Snapshot("before-click");
             Captions()!.Click(moveMouse: true);
             Assert.True(SpinWait.SpinUntil(() => Captions()?.Patterns.ExpandCollapse.Pattern
                 .ExpandCollapseState.Value == ExpandCollapseState.Expanded, TimeSpan.FromSeconds(2)),
                 $"Opening {label}; enabled={Captions()!.IsEnabled}; selected={Captions()!.SelectedItem?.Text}; " +
                 $"position={Position()}; paused={IsPaused()}\n{ReadLog(logPath)}");
+            Snapshot("opened");
             // A human leaves the menu open while finding the choice. Include
             // native clock/track refreshes instead of clicking immediately.
             Thread.Sleep(2000);
+            Snapshot("after-two-second-open-interval");
             Assert.Equal(ExpandCollapseState.Expanded,
                 Captions()!.Patterns.ExpandCollapse.Pattern.ExpandCollapseState.Value);
             Captions()!.Items.Single(item => item.Text == label).Click(moveMouse: true);
