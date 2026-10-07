@@ -144,13 +144,17 @@ namespace UniversalMediaOS.WPF.Views
 
         private void TryLoadMoreIfNeeded(bool forceWhenScrollableAreaIsSmall = false)
         {
-            if (DataContext is not SearchViewModel vm)
+            if (!_isLoaded || !IsVisible || DataContext is not SearchViewModel vm)
             {
                 return;
             }
 
             _resultsScrollViewer ??= FindVisualDescendant<ScrollViewer>(ResultsList);
-            if (_resultsScrollViewer == null)
+            // Tab templates briefly report an empty extent while attaching or
+            // unloading. That is not the end of the user's catalog. Wait for a
+            // visible, measured viewport before deciding to prefetch another page.
+            if (_resultsScrollViewer == null || !_resultsScrollViewer.IsVisible ||
+                _resultsScrollViewer.ExtentHeight <= 0 || _resultsScrollViewer.ViewportHeight <= 0)
             {
                 return;
             }

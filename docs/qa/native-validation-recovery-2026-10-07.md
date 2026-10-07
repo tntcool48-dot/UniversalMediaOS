@@ -49,3 +49,8 @@ The exact published native-lifetime repair [07ad328 full hosted run](https://git
 
 
 The later test-only saved-caption observation checkpoint **a029f0956e0a7924213cf13942768a895c4717e0** also passed [exact full hosted validation](https://github.com/tntcool48-dot/UniversalMediaOS/actions/runs/37650362003): **1,030 passes / 22 existing skips / zero failures / 1,052 total**, **9 minutes 56 seconds**. Build had zero warnings/errors and Python syntax passed. Optional observation holds are disabled in ordinary CI. This does not enlarge the live/provider/resource/package scope of the preceding repair.
+
+
+## Full hosted validation of the retention repair
+
+Published checkpoint **b878a55e716baace0556f1dd566ed1223539be03** passed [run 37675327905](https://github.com/tntcool48-dot/UniversalMediaOS/actions/runs/37675327905): **1,032 passes / 22 existing skips / zero failures / 1,054 total**, in **10.5300 minutes** (about **10 minutes 32 seconds**). Build reported zero warnings/errors; Python scraper syntax passed. Both new closed-model/view collection regressions passed in this full hosted context. This does not certify broader live-provider, resource or packaged-app acceptance.

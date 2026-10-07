@@ -67,3 +67,11 @@ The related native lifetime, view collection, late-callback cleanup, paused-tab 
 
 
 The final focused UI cohort passed **17 checks / zero failures / zero skips**, in **6 minutes 46 seconds**: all ten native caption cases, retained independent native handles/close/zoom, fullscreen/PiP/owner shortcuts, and two real app-window native Watch Together reconnect/transport. [UI results](C:/Users/user/animeapp/UniversalMediaOS.Tests.E2E/TestResults/player-retention-ui-20261007.trx). Together with the separate 83-case cohort, **100 related checks passed**. Build remained zero warnings/errors; tested WPF/Core hashes are **3991ABCAD0A95C7EAD6D410352F0C400019CFF83985509C69872B6E47286E86F** / **27118E95CB8C79AD0943C225F625FFF72102E78C6649D26877393F4A0D7DA4B2**. These are scoped source/build checks. Full hosted validation of the new repair and broader live/provider/resource/package acceptance remain open. No Python source changed.
+
+
+Published normally to GitHub main as **b878a55e716baace0556f1dd566ed1223539be03**, committing only the seven owned source/test/tracker/QA files. The six unrelated original untracked paths remain untouched. [Exact full hosted validation](https://github.com/tntcool48-dot/UniversalMediaOS/actions/runs/37675327905) is confirmed **in progress** for that SHA. The latest new-repair evidence remains 100 scoped passes plus the actual finite 20-cycle/42-player collection result; no new full-suite pass is claimed.
+
+
+## Full hosted validation of the retention repair
+
+Published checkpoint **b878a55e716baace0556f1dd566ed1223539be03** passed [run 37675327905](https://github.com/tntcool48-dot/UniversalMediaOS/actions/runs/37675327905): **1,032 passes / 22 existing skips / zero failures / 1,054 total**, in **10.5300 minutes** (about **10 minutes 32 seconds**). Build reported zero warnings/errors; Python scraper syntax passed. Both new closed-model/view collection regressions passed in this full hosted context. This does not certify broader live-provider, resource or packaged-app acceptance.
