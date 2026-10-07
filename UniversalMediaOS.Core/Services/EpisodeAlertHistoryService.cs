@@ -8,6 +8,9 @@ namespace UniversalMediaOS.Core.Services
     {
         public Guid Id { get; set; } = Guid.NewGuid();
         public string Title { get; set; } = string.Empty;
+        public int AniListId { get; set; }
+        public int MalId { get; set; }
+        public string Year { get; set; } = string.Empty;
         public int PreviousEpisode { get; set; }
         public int AvailableEpisode { get; set; }
         public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
@@ -19,6 +22,10 @@ namespace UniversalMediaOS.Core.Services
 
         [JsonIgnore]
         public string CreatedAtText => CreatedAtUtc.ToLocalTime().ToString("g");
+
+        [JsonIgnore]
+        public string MediaText => !string.IsNullOrWhiteSpace(Year) ? $"Anime - {Year}"
+            : AniListId > 0 ? $"AniList {AniListId}" : MalId > 0 ? $"MAL {MalId}" : string.Empty;
     }
 
     /// <summary>
@@ -95,6 +102,9 @@ namespace UniversalMediaOS.Core.Services
                 .Select(alert => new EpisodeAlertHistoryEntry
                 {
                     Title = alert.Title.Trim(),
+                    AniListId = Math.Max(0, alert.AniListId),
+                    MalId = Math.Max(0, alert.MalId),
+                    Year = alert.Year?.Trim() ?? string.Empty,
                     PreviousEpisode = Math.Max(0, alert.PreviousEpisode),
                     AvailableEpisode = alert.AvailableEpisode,
                     CreatedAtUtc = DateTime.UtcNow
@@ -115,7 +125,7 @@ namespace UniversalMediaOS.Core.Services
                 foreach (EpisodeAlertHistoryEntry entry in added)
                 {
                     bool duplicate = _entries.Any(existing =>
-                        existing.Title.Equals(entry.Title, StringComparison.OrdinalIgnoreCase) &&
+                        SameMedia(existing, entry) &&
                         existing.AvailableEpisode == entry.AvailableEpisode);
                     if (!duplicate)
                     {
@@ -204,10 +214,22 @@ namespace UniversalMediaOS.Core.Services
         {
             Id = entry.Id,
             Title = entry.Title,
+            AniListId = entry.AniListId,
+            MalId = entry.MalId,
+            Year = entry.Year,
             PreviousEpisode = entry.PreviousEpisode,
             AvailableEpisode = entry.AvailableEpisode,
             CreatedAtUtc = entry.CreatedAtUtc
         };
+
+        private static bool SameMedia(EpisodeAlertHistoryEntry existing, EpisodeAlertHistoryEntry entry)
+        {
+            if (existing.AniListId > 0 || entry.AniListId > 0)
+                return existing.AniListId > 0 && existing.AniListId == entry.AniListId;
+            if (existing.MalId > 0 || entry.MalId > 0)
+                return existing.MalId > 0 && existing.MalId == entry.MalId;
+            return existing.Title.Equals(entry.Title, StringComparison.OrdinalIgnoreCase);
+        }
 
         private static string GetDefaultPath()
         {

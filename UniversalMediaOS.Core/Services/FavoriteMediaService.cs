@@ -22,7 +22,12 @@ namespace UniversalMediaOS.Core.Services
         public DateTime AddedAtUtc { get; set; } = DateTime.UtcNow;
     }
 
-    public sealed record NewEpisodeAlert(string Title, int PreviousEpisode, int AvailableEpisode);
+    public sealed record NewEpisodeAlert(string Title, int PreviousEpisode, int AvailableEpisode)
+    {
+        public int AniListId { get; init; }
+        public int MalId { get; init; }
+        public string Year { get; init; } = string.Empty;
+    }
     public sealed record FavoriteMediaAvailability(int AvailableEpisode, string Status);
 
     public sealed class FavoriteMediaService
@@ -165,7 +170,10 @@ namespace UniversalMediaOS.Core.Services
                                         record.Status.Contains("airing", StringComparison.OrdinalIgnoreCase);
                     if (wasReleasing && previous > 0 && available > previous)
                     {
-                        alerts.Add(new NewEpisodeAlert(record.Title, previous, available));
+                        alerts.Add(new NewEpisodeAlert(record.Title, previous, available)
+                        {
+                            AniListId = record.AniListId, MalId = record.MalId, Year = record.Year
+                        });
                     }
 
                     if (available > 0 && available != previous)

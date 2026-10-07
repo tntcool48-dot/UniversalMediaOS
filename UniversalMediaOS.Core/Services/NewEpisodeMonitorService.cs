@@ -70,17 +70,24 @@ namespace UniversalMediaOS.Core.Services
                 await using var stream = await response.Content.ReadAsStreamAsync(token);
                 using var document = await JsonDocument.ParseAsync(stream, cancellationToken: token);
 
-                if (!document.RootElement.TryGetProperty("data", out var data) ||
-                    !data.TryGetProperty("Page", out var page) ||
+                var root = document.RootElement;
+                if (root.ValueKind != JsonValueKind.Object ||
+                    (root.TryGetProperty("errors", out var errors) &&
+                     (errors.ValueKind != JsonValueKind.Array || errors.GetArrayLength() > 0)) ||
+                    !root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object ||
+                    !data.TryGetProperty("Page", out var page) || page.ValueKind != JsonValueKind.Object ||
                     !page.TryGetProperty("media", out var media) ||
                     media.ValueKind != JsonValueKind.Array)
                 {
-                    continue;
+                    throw new InvalidDataException("AniList returned an incomplete episode availability response.");
                 }
 
                 foreach (var item in media.EnumerateArray())
                 {
+                    if (item.ValueKind != JsonValueKind.Object)
+                        throw new InvalidDataException("AniList returned an incomplete episode availability item.");
                     int id = ReadInt(item, "id");
+                    if (id <= 0 || !batch.Contains(id)) continue;
                     string status = item.TryGetProperty("status", out var statusProperty) &&
                                     statusProperty.ValueKind == JsonValueKind.String
                         ? statusProperty.GetString() ?? string.Empty
@@ -95,13 +102,11 @@ namespace UniversalMediaOS.Core.Services
                         : status.Equals("FINISHED", StringComparison.OrdinalIgnoreCase)
                             ? totalEpisodes
                             : 0;
-                    if (id > 0)
-                    {
-                        available[id] = new FavoriteMediaAvailability(released, FormatStatus(status));
-                    }
+                    available[id] = new FavoriteMediaAvailability(released, FormatStatus(status));
                 }
             }
 
+            token.ThrowIfCancellationRequested();
             return _favorites.UpdateAvailability(available);
         }
 

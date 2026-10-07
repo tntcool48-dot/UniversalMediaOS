@@ -27,11 +27,12 @@ namespace UniversalMediaOS.Tests.E2E.Infrastructure
             Func<System.Net.HttpListenerRequest, (int Status, string Body)>? mangaChapterFeed = null,
             Func<System.Net.HttpListenerRequest, int>? mangaPageStatus = null,
             Action<string>? initializeProfile = null,
-            Func<System.Net.HttpListenerRequest, (int Status, string Body)>? malLibraryFeed = null)
+            Func<System.Net.HttpListenerRequest, (int Status, string Body)>? malLibraryFeed = null,
+            Func<System.Net.HttpListenerRequest, (int Status, string Body)>? aniListFeed = null)
         {
             // 1. Start Mock HTTP Server
             _server = new MockHttpServer(mangaPagePng: mangaPagePng, mangaChapterFeed: mangaChapterFeed,
-                mangaPageStatus: mangaPageStatus, malLibraryFeed: malLibraryFeed);
+                mangaPageStatus: mangaPageStatus, malLibraryFeed: malLibraryFeed, aniListFeed: aniListFeed);
             _server.Start();
 
             // 2. Setup APPDATA redirection and test environment sandbox

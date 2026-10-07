@@ -827,6 +827,17 @@
                                             </Grid.ColumnDefinitions>
                                             <StackPanel>
                                                 <TextBlock Text="{Binding Title}" Foreground="{DynamicResource TextPrimary}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{Binding MediaText}" Foreground="{DynamicResource TextMuted}" FontSize="11" Margin="0,2,0,0">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding MediaText}" Value="">
+                                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
                                                 <TextBlock Text="{Binding EpisodeText}" Foreground="{DynamicResource AccentPrimary}" FontSize="12" Margin="0,2,0,0"/>
                                             </StackPanel>
                                             <TextBlock Grid.Column="1" Text="{Binding CreatedAtText}" Foreground="{DynamicResource TextMuted}" FontSize="11" Margin="14,2,0,0"/>
