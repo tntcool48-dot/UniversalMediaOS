@@ -1,5 +1,6 @@
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Runtime.CompilerServices;
 using Microsoft.Data.Sqlite;
 using LibVLCSharp.Shared;
 using UniversalMediaOS.Core.Configuration;
@@ -13,6 +14,51 @@ namespace UniversalMediaOS.Tests.E2E;
 
 public sealed class NativeTlsCapacityProbeTests(ITestOutputHelper output)
 {
+    [Fact]
+    public void ClosedProductionPlayersAreCollectibleWhileTheSharedEngineRemainsWarm()
+    {
+        string parent = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "UniversalMediaOS.Tests"));
+        string root = Path.Combine(parent, "NativeCollectibility-" + Guid.NewGuid().ToString("N"));
+        string? previous = Environment.GetEnvironmentVariable("UNIVERSAL_MEDIA_OS_DATA_ROOT");
+        Environment.SetEnvironmentVariable("UNIVERSAL_MEDIA_OS_DATA_ROOT", root);
+        try
+        {
+            var config = new DomainHotSwapper(Path.Combine(root, "Roaming", "UniversalMediaOS", "config.json"));
+            Assert.True(config.SetSettings(new Dictionary<string, string>
+            {
+                ["DatabasePath"] = Path.Combine(root, "media_os.db"), ["AutoSyncMal"] = "false"
+            }));
+            using (var db = new DatabaseContext()) db.Database.EnsureCreated();
+            using var engine = NativePlaybackEngine.ForProcess.Acquire();
+            WeakReference[] closed = Enumerable.Range(0, 8).Select(_ => OpenAndDispose()).ToArray();
+            for (int attempt = 0; attempt < 3 && closed.Any(reference => reference.IsAlive); attempt++)
+            {
+                GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
+                GC.WaitForPendingFinalizers();
+                GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
+                Thread.Sleep(100);
+            }
+            Assert.NotEqual(IntPtr.Zero, engine.Engine.NativeReference);
+            output.WriteLine($"Closed player models still alive: {closed.Count(reference => reference.IsAlive)}/8.");
+            Assert.All(closed, reference => Assert.False(reference.IsAlive));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("UNIVERSAL_MEDIA_OS_DATA_ROOT", previous);
+            SqliteConnection.ClearAllPools();
+            Assert.StartsWith(parent + Path.DirectorySeparatorChar, Path.GetFullPath(root), StringComparison.OrdinalIgnoreCase);
+            Assert.Null(new DirectoryInfo(root).LinkTarget);
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static WeakReference OpenAndDispose()
+    {
+        using var player = new PlaybackViewModel(new DatabaseContext()) { Volume = 0 };
+        return new WeakReference(player);
+    }
+
     [Fact]
     public void NativeEngineShutdownWaitsForTheFinalIndependentPlayerLease()
     {

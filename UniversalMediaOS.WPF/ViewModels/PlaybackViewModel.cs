@@ -42,6 +42,15 @@ namespace UniversalMediaOS.WPF.ViewModels
     {
         private readonly LibVLC _libVLC;
         private readonly Helpers.NativePlaybackEngine.Lease _nativeEngineLease;
+        private readonly EventHandler<EventArgs> _nativeOpening;
+        private readonly EventHandler<MediaPlayerBufferingEventArgs> _nativeBuffering;
+        private readonly EventHandler<EventArgs> _nativePlaying;
+        private readonly EventHandler<EventArgs> _nativePaused;
+        private readonly EventHandler<EventArgs> _nativeStopped;
+        private readonly EventHandler<EventArgs> _nativeError;
+        private readonly EventHandler<MediaPlayerESAddedEventArgs> _nativeEsAdded;
+        private readonly EventHandler<MediaPlayerESDeletedEventArgs> _nativeEsDeleted;
+        private readonly EventHandler<MediaPlayerLengthChangedEventArgs> _nativeLengthChanged;
         private readonly DatabaseContext _databaseContext;
         private readonly HlsLoopbackProxy? _hlsProxy;
         private readonly PlaybackProgressService _playbackProgress;
@@ -378,14 +387,14 @@ namespace UniversalMediaOS.WPF.ViewModels
                 throw;
             }
 
-            _mediaPlayer.Opening += (s, e) => RunOnDispatcher(() =>
+            _nativeOpening = (s, e) => RunOnDispatcher(() =>
             {
                 IsPlaybackBusy = true;
                 HasPlaybackError = false;
                 PlaybackErrorText = string.Empty;
                 PlaybackStatusText = "Opening stream...";
             });
-            _mediaPlayer.Buffering += (s, e) => RunOnDispatcher(() =>
+            _nativeBuffering = (s, e) => RunOnDispatcher(() =>
             {
                 if (_stopRequested || IsWebViewActive || HasPlaybackError) return;
                 bool buffering = e.Cache < 99.5f;
@@ -405,7 +414,7 @@ namespace UniversalMediaOS.WPF.ViewModels
                     PlaybackStatusText = "Playing";
                 }
             });
-            _mediaPlayer.Playing += (s, e) =>
+            _nativePlaying = (s, e) =>
             {
                 RunOnDispatcher(() =>
                 {
@@ -423,7 +432,7 @@ namespace UniversalMediaOS.WPF.ViewModels
                     PublishPlaybackAction("play", GetCurrentPlaybackPositionSeconds());
                 });
             };
-            _mediaPlayer.Paused += (s, e) =>
+            _nativePaused = (s, e) =>
             {
                 if (_isDisposing || IsDisposed) return;
                 RunOnDispatcher(() =>
@@ -437,7 +446,7 @@ namespace UniversalMediaOS.WPF.ViewModels
                     PublishPlaybackAction("pause", GetCurrentPlaybackPositionSeconds());
                 });
             };
-            _mediaPlayer.Stopped += (s, e) => RunOnDispatcher(() =>
+            _nativeStopped = (s, e) => RunOnDispatcher(() =>
             {
                 IsPlaying = false;
                 PlaybackTime = 0;
@@ -449,10 +458,9 @@ namespace UniversalMediaOS.WPF.ViewModels
                 RefreshCaptionState();
                 AppLogger.Log($"LibVLC stopped event fired for: '{MediaTitle}'");
             });
-            _mediaPlayer.EncounteredError += (s, e) =>
+            _nativeError = (s, e) =>
                 ReportPlaybackError("The selected stream could not be played. Retry it or open the browser fallback.");
-            _mediaPlayer.TimeChanged += MediaPlayer_TimeChanged;
-            _mediaPlayer.ESAdded += (_, e) => RunOnDispatcher(() =>
+            _nativeEsAdded = (_, e) => RunOnDispatcher(() =>
             {
                 if (e.Type == TrackType.Text && _preferredCaptionKey != null)
                     _restoreCaptionSelection = true;
@@ -460,9 +468,8 @@ namespace UniversalMediaOS.WPF.ViewModels
                     _restoreAudioSelection = true;
                 RefreshCaptionState();
             });
-            _mediaPlayer.ESDeleted += (_, _) => RunOnDispatcher(RefreshCaptionState);
-            _mediaPlayer.EndReached += MediaPlayer_EndReached;
-            _mediaPlayer.LengthChanged += (s, e) => RunOnDispatcher(() =>
+            _nativeEsDeleted = (_, _) => RunOnDispatcher(RefreshCaptionState);
+            _nativeLengthChanged = (s, e) => RunOnDispatcher(() =>
             {
                 PlaybackDuration = e.Length;
                 RefreshCaptionState();
@@ -470,6 +477,18 @@ namespace UniversalMediaOS.WPF.ViewModels
                 ApplyPendingResumeSeek();
                 PauseAfterNativeStart();
             });
+
+            _mediaPlayer.Opening += _nativeOpening;
+            _mediaPlayer.Buffering += _nativeBuffering;
+            _mediaPlayer.Playing += _nativePlaying;
+            _mediaPlayer.Paused += _nativePaused;
+            _mediaPlayer.Stopped += _nativeStopped;
+            _mediaPlayer.EncounteredError += _nativeError;
+            _mediaPlayer.TimeChanged += MediaPlayer_TimeChanged;
+            _mediaPlayer.ESAdded += _nativeEsAdded;
+            _mediaPlayer.ESDeleted += _nativeEsDeleted;
+            _mediaPlayer.EndReached += MediaPlayer_EndReached;
+            _mediaPlayer.LengthChanged += _nativeLengthChanged;
 
             PlayPauseText = Helpers.LocalizationRuntime.Translate("Play");
             CaptionButtonText = Helpers.LocalizationRuntime.Translate("CC");
@@ -3082,6 +3101,20 @@ namespace UniversalMediaOS.WPF.ViewModels
                 Helpers.LocalizationRuntime.LanguageChanged -= LocalizationRuntime_LanguageChanged;
                 SaveCurrentResumePosition(force: true, synchronous: true);
                 StopAndRelease(saveResume: false);
+                // LibVLCSharp event managers hold native GCHandles until the
+                // final subscription is removed; disposing MediaPlayer alone
+                // does not release those roots in the pinned package version.
+                MediaPlayer.Opening -= _nativeOpening;
+                MediaPlayer.Buffering -= _nativeBuffering;
+                MediaPlayer.Playing -= _nativePlaying;
+                MediaPlayer.Paused -= _nativePaused;
+                MediaPlayer.Stopped -= _nativeStopped;
+                MediaPlayer.EncounteredError -= _nativeError;
+                MediaPlayer.TimeChanged -= MediaPlayer_TimeChanged;
+                MediaPlayer.ESAdded -= _nativeEsAdded;
+                MediaPlayer.ESDeleted -= _nativeEsDeleted;
+                MediaPlayer.EndReached -= MediaPlayer_EndReached;
+                MediaPlayer.LengthChanged -= _nativeLengthChanged;
                 MediaPlayer.Dispose();
                 _nativeEngineLease.Dispose();
             }

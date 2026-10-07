@@ -507,7 +507,15 @@ namespace UniversalMediaOS.WPF.Views
 
             // VideoView owns a separate foreground overlay window as well as
             // its HWND host. Unloading alone only hides that overlay.
-            try { VlcPlayer.Dispose(); }
+            try
+            {
+                // The window's keyboard-input site otherwise keeps the disposed
+                // native host and its context (this entire view) alive. Release
+                // the registration before VideoView destroys its HWND host.
+                if (VlcPlayer.Template?.FindName("PART_PlayerHost", VlcPlayer) is IKeyboardInputSink sink)
+                    sink.KeyboardInputSite?.Unregister();
+                VlcPlayer.Dispose();
+            }
             catch (Exception ex) { AppLogger.Log($"[PlaybackView] Native surface cleanup failed: {ex.Message}", "WARNING"); }
             DisposePlaybackWebView();
         }
