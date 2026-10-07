@@ -228,7 +228,7 @@ public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
         }
     }
 
-    private static Task OnDispatcher(Func<Task> test)
+    internal static Task OnDispatcher(Func<Task> test, TimeSpan? timeout = null)
     {
         var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(() =>
@@ -245,7 +245,7 @@ public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
         }) { IsBackground = true };
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
-        return completed.Task.WaitAsync(TimeSpan.FromSeconds(40));
+        return completed.Task.WaitAsync(timeout ?? TimeSpan.FromSeconds(40));
     }
 
     [Theory]
@@ -392,7 +392,7 @@ public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
         public void Dispose() => Marshal.FreeHGlobal(_buffer);
     }
 
-    private sealed class VideoServer : IDisposable
+    internal sealed class VideoServer : IDisposable
     {
         private readonly HttpListener _listener = new();
         private readonly Task _worker;

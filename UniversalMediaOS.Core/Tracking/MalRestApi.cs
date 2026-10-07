@@ -14,6 +14,7 @@ namespace UniversalMediaOS.Core.Tracking
     public class MalRestApi
     {
         private static readonly HttpClient _httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        private static readonly SemaphoreSlim AutomaticProgressGate = new(1, 1);
         private readonly string _accessToken;
         private readonly string _malApiUrl;
         private readonly MalOAuthService? _oauthService;
@@ -59,21 +60,24 @@ namespace UniversalMediaOS.Core.Tracking
                 await using var stream = await response.Content.ReadAsStreamAsync(token);
                 using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: token);
                 var root = doc.RootElement;
+                if (root.ValueKind != JsonValueKind.Object || !TryReadNonNegativeInt(root, "num_episodes", out int total))
+                    return null;
+                if (root.TryGetProperty("id", out _) &&
+                    (!TryReadNonNegativeInt(root, "id", out int returnedId) || returnedId != animeId)) return null;
 
                 var status = new MalAnimeStatus
                 {
                     AnimeId = animeId,
-                    TotalEpisodes = TryGetInt(root, "num_episodes")
+                    TotalEpisodes = total
                 };
 
-                if (root.TryGetProperty("my_list_status", out var listStatus) && listStatus.ValueKind == JsonValueKind.Object)
+                if (root.TryGetProperty("my_list_status", out var listStatus) && listStatus.ValueKind != JsonValueKind.Null)
                 {
+                    if (listStatus.ValueKind != JsonValueKind.Object ||
+                        (!TryReadNonNegativeInt(listStatus, "num_episodes_watched", out int watched) &&
+                         !TryReadNonNegativeInt(listStatus, "num_watched_episodes", out watched))) return null;
                     status.Status = TryGetString(listStatus, "status");
-                    status.WatchedEpisodes = TryGetInt(listStatus, "num_episodes_watched");
-                    if (status.WatchedEpisodes == 0)
-                    {
-                        status.WatchedEpisodes = TryGetInt(listStatus, "num_watched_episodes");
-                    }
+                    status.WatchedEpisodes = watched;
                     status.IsRewatching = TryGetBool(listStatus, "is_rewatching");
                     status.NumTimesRewatched = TryGetInt(listStatus, "num_times_rewatched");
                     status.RewatchValue = TryGetInt(listStatus, "rewatch_value");
@@ -92,7 +96,21 @@ namespace UniversalMediaOS.Core.Tracking
             }
         }
 
-        public async Task<bool> UpdateProgressAsync(int animeId, int numWatchedEpisodes, CancellationToken token = default)
+        public async Task<bool> UpdateProgressAsync(int animeId, int numWatchedEpisodes, CancellationToken token = default,
+            bool preserveHigherProgress = false)
+        {
+            if (!preserveHigherProgress)
+                return await UpdateProgressCoreAsync(animeId, numWatchedEpisodes, false, token);
+
+            // Automatic updates from independent players must read and write in
+            // order so an older episode cannot overwrite a newer accepted value.
+            await AutomaticProgressGate.WaitAsync(token);
+            try { return await UpdateProgressCoreAsync(animeId, numWatchedEpisodes, true, token); }
+            finally { AutomaticProgressGate.Release(); }
+        }
+
+        private async Task<bool> UpdateProgressCoreAsync(int animeId, int numWatchedEpisodes, bool preserveHigherProgress,
+            CancellationToken token)
         {
             string accessToken = await ResolveAccessTokenAsync(forceRefresh: false, token);
             if (string.IsNullOrEmpty(accessToken))
@@ -104,6 +122,11 @@ namespace UniversalMediaOS.Core.Tracking
             try
             {
                 var currentStatus = await GetAnimeStatusAsync(animeId, token);
+                if (preserveHigherProgress)
+                {
+                    if (currentStatus == null) return false;
+                    if (!currentStatus.IsRewatching && currentStatus.WatchedEpisodes >= numWatchedEpisodes) return true;
+                }
                 string? nextStatus = ResolveStatusForProgressUpdate(currentStatus);
 
                 var form = new List<KeyValuePair<string, string>>
@@ -184,6 +207,16 @@ namespace UniversalMediaOS.Core.Tracking
             // Preserve completed/rewatching/on-hold list state. Rewatching is carried as its own flag,
             // so forcing "watching" here can unintentionally damage a user's MAL list.
             return currentStatus.Status;
+        }
+
+        private static bool TryReadNonNegativeInt(JsonElement element, string name, out int value)
+        {
+            value = 0;
+            if (!element.TryGetProperty(name, out var property)) return false;
+            bool parsed = property.ValueKind == JsonValueKind.Number ? property.TryGetInt32(out value)
+                : property.ValueKind == JsonValueKind.String && int.TryParse(property.GetString(),
+                    NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
+            return parsed && value >= 0;
         }
 
         private static int TryGetInt(JsonElement element, string propertyName)

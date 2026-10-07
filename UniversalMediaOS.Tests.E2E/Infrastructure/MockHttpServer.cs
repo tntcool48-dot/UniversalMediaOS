@@ -18,6 +18,7 @@ namespace UniversalMediaOS.Tests.E2E.Infrastructure
         private readonly Func<HttpListenerRequest, int>? _mangaPageStatus;
         private readonly Func<HttpListenerRequest, (int Status, string Body)>? _malLibraryFeed;
         private readonly Func<HttpListenerRequest, (int Status, string Body)>? _aniListFeed;
+        private readonly Func<HttpListenerRequest, (int Status, string Body)>? _malProgressFeed;
 
         public string BaseUrl { get; }
 
@@ -25,13 +26,15 @@ namespace UniversalMediaOS.Tests.E2E.Infrastructure
             Func<HttpListenerRequest, (int Status, string Body)>? mangaChapterFeed = null,
             Func<HttpListenerRequest, int>? mangaPageStatus = null,
             Func<HttpListenerRequest, (int Status, string Body)>? malLibraryFeed = null,
-            Func<HttpListenerRequest, (int Status, string Body)>? aniListFeed = null)
+            Func<HttpListenerRequest, (int Status, string Body)>? aniListFeed = null,
+            Func<HttpListenerRequest, (int Status, string Body)>? malProgressFeed = null)
         {
             _mangaPagePng = mangaPagePng;
             _mangaChapterFeed = mangaChapterFeed;
             _mangaPageStatus = mangaPageStatus;
             _malLibraryFeed = malLibraryFeed;
             _aniListFeed = aniListFeed;
+            _malProgressFeed = malProgressFeed;
             if (port <= 0)
             {
                 using var reservation = new TcpListener(IPAddress.Loopback, 0);
@@ -93,9 +96,11 @@ namespace UniversalMediaOS.Tests.E2E.Infrastructure
                 string responseBody = "";
                 res.ContentType = "application/json";
                 if ((path == "/v2/users/@me/animelist" && _malLibraryFeed != null) ||
-                    (path == "/graphql" && _aniListFeed != null))
+                    (path == "/graphql" && _aniListFeed != null) ||
+                    (path.StartsWith("/v2/anime/") && _malProgressFeed != null))
                 {
-                    var supplied = path == "/graphql" ? _aniListFeed!(req) : _malLibraryFeed!(req);
+                    var supplied = path == "/graphql" ? _aniListFeed!(req)
+                        : path.StartsWith("/v2/anime/") ? _malProgressFeed!(req) : _malLibraryFeed!(req);
                     res.StatusCode = supplied.Status;
                     byte[] bytes = Encoding.UTF8.GetBytes(supplied.Body);
                     res.ContentLength64 = bytes.Length;

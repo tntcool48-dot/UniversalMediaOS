@@ -166,7 +166,7 @@ public sealed class ControlThemeRenderTests
         });
     }
 
-    private static ResourceDictionary LoadResources(bool dark)
+    internal static ResourceDictionary LoadResources(bool dark)
     {
         var resources = new ResourceDictionary();
         foreach (string name in new[] { "Tokens", "Controls" })

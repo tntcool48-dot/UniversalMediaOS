@@ -87,6 +87,13 @@ namespace UniversalMediaOS.WPF.ViewModels
         private int _trackingEpisodeNumber;
         private bool _malProgressSynced;
         private readonly MalOAuthService? _malOAuthService;
+        private readonly DomainHotSwapper? _malProgressConfig;
+        private readonly object _malProgressGate = new();
+        private CancellationTokenSource? _malProgressSyncCts;
+        private long _malProgressGeneration;
+        private Task _malProgressSyncTask = Task.CompletedTask;
+        internal Task PendingMalProgressSync { get { lock (_malProgressGate) return _malProgressSyncTask; } }
+        internal TimeSpan MalProgressSyncTimeout { get; init; } = TimeSpan.FromSeconds(45);
         private string _resumeMediaId = string.Empty;
         private string _resumeEpisodeId = string.Empty;
         private double _pendingResumePositionSeconds;
@@ -345,7 +352,8 @@ namespace UniversalMediaOS.WPF.ViewModels
             PlaybackSyncController? playbackSync,
             MalOAuthService? malOAuthService = null,
             HlsLoopbackProxy? hlsProxy = null,
-            PlaybackProgressService? playbackProgress = null)
+            PlaybackProgressService? playbackProgress = null,
+            DomainHotSwapper? malProgressConfig = null)
         {
             _databaseContext = databaseContext ?? throw new ArgumentNullException(nameof(databaseContext));
             _hlsProxy = hlsProxy;
@@ -353,6 +361,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             _watchTogetherClient = watchTogetherClient;
             _playbackSync = playbackSync;
             _malOAuthService = malOAuthService;
+            _malProgressConfig = malProgressConfig;
             if (_watchTogetherClient != null)
             {
                 _watchTogetherClient.MessageReceived += WatchTogetherClient_MessageReceived;
@@ -2229,10 +2238,18 @@ namespace UniversalMediaOS.WPF.ViewModels
 
         private void ConfigureTracking(int malId, string episodeNumber, string title)
         {
-            _malId = malId;
-            _trackingEpisodeNumber = ResolveEpisodeNumber(episodeNumber, title);
-            _malProgressSynced = false;
-            _lastMalProgressCheck = DateTime.MinValue;
+            int episode = ResolveEpisodeNumber(episodeNumber, title);
+            lock (_malProgressGate)
+            {
+                if (_malId == malId && _trackingEpisodeNumber == episode) return;
+                _malProgressSyncCts?.Cancel();
+                _malProgressSyncCts = null;
+                _malProgressGeneration++;
+                _malId = malId;
+                _trackingEpisodeNumber = episode;
+                _malProgressSynced = false;
+                _lastMalProgressCheck = DateTime.MinValue;
+            }
         }
 
         private void ConfigureResumeState(int malId, string episodeNumber, string title, string sourceKey)
@@ -2706,78 +2723,72 @@ namespace UniversalMediaOS.WPF.ViewModels
 
         private void TrySyncMalFromProgress(double currentMilliseconds, double durationMilliseconds, bool ended)
         {
-            if (_malProgressSynced || _malId <= 0 || _trackingEpisodeNumber <= 0)
+            lock (_malProgressGate)
             {
-                return;
+                if (_isDisposing || _malProgressSynced || _malProgressSyncCts != null ||
+                    _malId <= 0 || _trackingEpisodeNumber <= 0) return;
+
+                if (!ended)
+                {
+                    if (durationMilliseconds <= 0 || currentMilliseconds / durationMilliseconds < 0.85) return;
+                    if ((DateTime.UtcNow - _lastMalProgressCheck).TotalSeconds < 20) return;
+                }
+
+                var config = _malProgressConfig ?? (App.Current as App)?.Services?.GetService<DomainHotSwapper>();
+                if (config == null || config.GetSetting("AutoSyncMal") != "true") return;
+                var malOAuth = _malOAuthService ?? (App.Current as App)?.Services?.GetService<MalOAuthService>();
+                string accessToken = config.GetSetting("MalOAuthToken");
+                if (malOAuth != null ? !malOAuth.HasAnyToken : string.IsNullOrWhiteSpace(accessToken)) return;
+
+                // Capture the API/profile and unit before token refresh or any
+                // request can yield to a source change.
+                var mal = malOAuth != null ? new MalRestApi(malOAuth, config) : new MalRestApi(accessToken, config);
+                var operation = new CancellationTokenSource(MalProgressSyncTimeout);
+                _malProgressSyncCts = operation;
+                _lastMalProgressCheck = DateTime.UtcNow;
+                _malProgressSyncTask = SyncMalProgressAsync(mal, config, _malId, _trackingEpisodeNumber,
+                    _malProgressGeneration, operation);
             }
-
-            if (!ended)
-            {
-                if (durationMilliseconds <= 0)
-                {
-                    return;
-                }
-
-                double watchedRatio = currentMilliseconds / durationMilliseconds;
-                if (watchedRatio < 0.85)
-                {
-                    return;
-                }
-
-                if ((DateTime.Now - _lastMalProgressCheck).TotalSeconds < 20)
-                {
-                    return;
-                }
-            }
-
-            _lastMalProgressCheck = DateTime.Now;
-            _malProgressSynced = true;
-            _ = SyncMalProgressAsync();
         }
 
-        private async System.Threading.Tasks.Task SyncMalProgressAsync()
+        private async Task SyncMalProgressAsync(MalRestApi mal, DomainHotSwapper config, int malId, int episode,
+            long generation, CancellationTokenSource operation)
         {
-            try
+            using (operation)
             {
-                var config = (UniversalMediaOS.WPF.App.Current as UniversalMediaOS.WPF.App)?
-                    .Services?
-                    .GetService<DomainHotSwapper>();
-                if (config == null)
+                try
                 {
-                    AppLogger.Log("[MAL Sync] Config service unavailable; progress not synced.", "WARNING");
-                    return;
+                    for (int attempt = 1; attempt <= 3; attempt++)
+                    {
+                        operation.Token.ThrowIfCancellationRequested();
+                        if (config.GetSetting("AutoSyncMal") != "true") return;
+                        bool ok = false;
+                        try { ok = await mal.UpdateProgressAsync(malId, episode, operation.Token, preserveHigherProgress: true); }
+                        catch (OperationCanceledException) when (operation.IsCancellationRequested) { throw; }
+                        catch (Exception ex) { AppLogger.Log($"[MAL Sync] Attempt failed: {ex.GetType().Name}.", "WARNING"); }
+                        if (ok)
+                        {
+                            lock (_malProgressGate)
+                            {
+                                if (!_isDisposing && !operation.IsCancellationRequested && generation == _malProgressGeneration &&
+                                    ReferenceEquals(_malProgressSyncCts, operation)) _malProgressSynced = true;
+                            }
+                            AppLogger.Log($"[MAL Sync] Progress confirmed for anime {malId}, episode {episode}.");
+                            return;
+                        }
+                        if (attempt < 3) await Task.Delay(TimeSpan.FromSeconds(attempt == 1 ? 2 : 5), operation.Token);
+                    }
+                    AppLogger.Log($"[MAL Sync] Update failed for anime {malId}, episode {episode} after 3 attempts; playback can retry.", "WARNING");
                 }
-
-                if (config.GetSetting("AutoSyncMal") != "true")
+                catch (OperationCanceledException) when (operation.IsCancellationRequested)
                 {
-                    AppLogger.Log("[MAL Sync] Auto-sync disabled; progress not synced.");
-                    return;
+                    AppLogger.Log($"[MAL Sync] Pending update cancelled for anime {malId}, episode {episode}.");
                 }
-
-                var malOAuth = _malOAuthService ?? (UniversalMediaOS.WPF.App.Current as UniversalMediaOS.WPF.App)?
-                    .Services?
-                    .GetService<MalOAuthService>();
-                string token = malOAuth != null
-                    ? await malOAuth.GetValidAccessTokenAsync()
-                    : config.GetSetting("MalOAuthToken");
-                if (string.IsNullOrWhiteSpace(token))
+                finally
                 {
-                    AppLogger.Log("[MAL Sync] MAL connection missing; progress not synced.");
-                    return;
+                    lock (_malProgressGate)
+                        if (ReferenceEquals(_malProgressSyncCts, operation)) _malProgressSyncCts = null;
                 }
-
-                var mal = malOAuth != null
-                    ? new MalRestApi(malOAuth, config)
-                    : new MalRestApi(token, config);
-                bool ok = await mal.UpdateProgressAsync(_malId, _trackingEpisodeNumber);
-                AppLogger.Log(ok
-                    ? $"[MAL Sync] Updated anime {_malId} to episode {_trackingEpisodeNumber}."
-                    : $"[MAL Sync] Update failed for anime {_malId}, episode {_trackingEpisodeNumber}.",
-                    ok ? "INFO" : "WARNING");
-            }
-            catch (Exception ex)
-            {
-                AppLogger.Log($"[MAL Sync] Error: {ex.Message}", "WARNING");
             }
         }
 
@@ -3041,6 +3052,12 @@ namespace UniversalMediaOS.WPF.ViewModels
             }
 
             _isDisposing = true;
+            lock (_malProgressGate)
+            {
+                _malProgressSyncCts?.Cancel();
+                _malProgressSyncCts = null;
+                _malProgressGeneration++;
+            }
             AppLogger.Log("Disposing PlaybackViewModel.");
             try
             {

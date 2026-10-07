@@ -290,8 +290,11 @@ namespace UniversalMediaOS.WPF.Views
             })();
             """;
 
-        public PlaybackView()
+        public PlaybackView() : this(null) { }
+
+        internal PlaybackView(ResourceDictionary? startupResources)
         {
+            if (startupResources != null) Resources.MergedDictionaries.Add(startupResources);
             InitializeComponent();
             Loaded += PlaybackView_Loaded;
             Unloaded += PlaybackView_Unloaded;
