@@ -48,13 +48,19 @@ namespace UniversalMediaOS.WPF.ViewModels
         private readonly VoiceActorIndexService _indexService;
         private readonly BackgroundVoiceCastPrefetchService _prefetchService;
         private readonly CancellationTokenSource _lifecycleCts = new();
+        private CancellationTokenSource? _malSyncCts;
+        private bool _malSyncCancelledByUser;
+        private bool _isDisposed;
+        internal TimeSpan MalSyncTimeout { get; init; } = TimeSpan.FromMinutes(2);
         private MediaResult? _seedMedia;
 
         [ObservableProperty] private string _searchQuery = string.Empty;
         [ObservableProperty] private string _manualUrl = string.Empty;
         [ObservableProperty] private string _publicFallbackUsername = string.Empty;
         [ObservableProperty] private string _selectedMode = "Dub";
-        [ObservableProperty] private bool _isBusy;
+        [ObservableProperty]
+        [NotifyCanExecuteChangedFor(nameof(SyncLibraryCommand), nameof(SyncPublicFallbackCommand), nameof(SearchCommand), nameof(CancelMalSyncCommand))]
+        private bool _isBusy;
         [ObservableProperty] private bool _isPrefetching;
         [ObservableProperty] private string _statusText = "Sync your MAL library or search an anime to begin.";
         [ObservableProperty] private string _warningText = string.Empty;
@@ -64,6 +70,48 @@ namespace UniversalMediaOS.WPF.ViewModels
 
         public ObservableRangeCollection<VaTargetCastItemViewModel> TargetCast { get; } = new();
         public ObservableRangeCollection<VaMatchViewModel> Matches { get; } = new();
+        public bool IsSyncing => _malSyncCts != null;
+        private bool CanStartOperation() => !_isDisposed && !IsBusy;
+        private bool CanCancelMalSync() => _malSyncCts is { IsCancellationRequested: false };
+
+        [RelayCommand(CanExecute = nameof(CanCancelMalSync))]
+        private void CancelMalSync()
+        {
+            if (_malSyncCts == null) return;
+            _malSyncCancelledByUser = true;
+            _malSyncCts?.Cancel();
+            CancelMalSyncCommand.NotifyCanExecuteChanged();
+        }
+
+        private CancellationTokenSource BeginMalSync()
+        {
+            var operation = CancellationTokenSource.CreateLinkedTokenSource(_lifecycleCts.Token);
+            operation.CancelAfter(MalSyncTimeout);
+            _malSyncCts = operation;
+            _malSyncCancelledByUser = false;
+            IsBusy = true;
+            WarningText = string.Empty;
+            OnPropertyChanged(nameof(IsSyncing));
+            return operation;
+        }
+
+        private void EndMalSync(CancellationTokenSource operation)
+        {
+            if (!ReferenceEquals(_malSyncCts, operation)) return;
+            _malSyncCts = null;
+            IsBusy = false;
+            OnPropertyChanged(nameof(IsSyncing));
+        }
+
+        private void MalSyncFailed(string action, string retryAction, Exception error)
+        {
+            UniversalMediaOS.Core.Helpers.AppLogger.Log($"{action} failed: {error.GetType().Name}", "WARNING");
+            StatusText = $"{action} failed.";
+            WarningText = $"Your saved library was kept. Use {retryAction} to retry.";
+            if (action == "MAL sync" && error is System.Net.Http.HttpRequestException
+                { StatusCode: System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden })
+                WarningText = "Your saved library was kept. Reconnect MyAnimeList in Settings, then use Sync OAuth to retry.";
+        }
 
         public bool IsSubSelected
         {
@@ -131,39 +179,46 @@ namespace UniversalMediaOS.WPF.ViewModels
             StatusText = $"VA Detect mode: {SelectedMode}. Search again to refresh matches.";
         }
 
-        [RelayCommand(AllowConcurrentExecutions = false)]
+        [RelayCommand(AllowConcurrentExecutions = false, CanExecute = nameof(CanStartOperation))]
         private async Task SyncLibraryAsync()
         {
-            IsBusy = true;
-            WarningText = string.Empty;
+            if (!CanStartOperation()) return;
+            using var operation = BeginMalSync();
             StatusText = "Syncing MAL library with OAuth...";
             try
             {
-                var result = await _librarySyncService.SyncOAuthAsync(_lifecycleCts.Token);
+                var result = await _librarySyncService.SyncOAuthAsync(operation.Token);
                 WarningText = result.Warning;
-                StatusText = result.ImportedCount > 0
+                StatusText = string.IsNullOrWhiteSpace(result.Warning)
                     ? $"OAuth sync complete: {result.ImportedCount} anime imported."
                     : result.Warning;
                 await RefreshLibrarySummaryAsync();
             }
             catch (OperationCanceledException)
             {
-                StatusText = "MAL sync cancelled.";
+                StatusText = _malSyncCancelledByUser || _lifecycleCts.IsCancellationRequested
+                    ? "MAL sync cancelled." : "MAL sync timed out.";
+                WarningText = "Your saved library was kept. Use Sync OAuth to retry.";
+            }
+            catch (Exception ex)
+            {
+                MalSyncFailed("MAL sync", "Sync OAuth", ex);
             }
             finally
             {
-                IsBusy = false;
+                EndMalSync(operation);
             }
         }
 
-        [RelayCommand(AllowConcurrentExecutions = false)]
+        [RelayCommand(AllowConcurrentExecutions = false, CanExecute = nameof(CanStartOperation))]
         private async Task SyncPublicFallbackAsync()
         {
-            IsBusy = true;
+            if (!CanStartOperation()) return;
+            using var operation = BeginMalSync();
             StatusText = "Syncing MAL public list fallback...";
             try
             {
-                var result = await _librarySyncService.SyncPublicFallbackAsync(PublicFallbackUsername, _lifecycleCts.Token);
+                var result = await _librarySyncService.SyncPublicFallbackAsync(PublicFallbackUsername, operation.Token);
                 WarningText = result.Warning;
                 StatusText = result.ImportedCount > 0
                     ? $"Public fallback sync complete: {result.ImportedCount} anime imported."
@@ -172,17 +227,24 @@ namespace UniversalMediaOS.WPF.ViewModels
             }
             catch (OperationCanceledException)
             {
-                StatusText = "Public fallback sync cancelled.";
+                StatusText = _malSyncCancelledByUser || _lifecycleCts.IsCancellationRequested
+                    ? "Public fallback sync cancelled." : "Public fallback sync timed out.";
+                WarningText = "Your saved library was kept. Use Public fallback to retry.";
+            }
+            catch (Exception ex)
+            {
+                MalSyncFailed("Public fallback sync", "Public fallback", ex);
             }
             finally
             {
-                IsBusy = false;
+                EndMalSync(operation);
             }
         }
 
-        [RelayCommand(AllowConcurrentExecutions = false)]
+        [RelayCommand(AllowConcurrentExecutions = false, CanExecute = nameof(CanStartOperation))]
         private async Task SearchAsync()
         {
+            if (!CanStartOperation()) return;
             if (string.IsNullOrWhiteSpace(SearchQuery))
             {
                 StatusText = "Enter an anime title first.";
@@ -340,6 +402,8 @@ namespace UniversalMediaOS.WPF.ViewModels
 
         public void Dispose()
         {
+            if (_isDisposed) return;
+            _isDisposed = true;
             _prefetchService.ProgressChanged -= PrefetchService_ProgressChanged;
             _lifecycleCts.Cancel();
             _lifecycleCts.Dispose();

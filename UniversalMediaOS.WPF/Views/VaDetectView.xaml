@@ -112,6 +112,11 @@
                             Height="40"
                             MinWidth="132"
                             ToolTip="Sync MAL library using the OAuth token in Settings."/>
+                    <Button Content="Cancel sync"
+                            Command="{Binding CancelMalSyncCommand}"
+                            Visibility="{Binding IsSyncing, Converter={StaticResource BoolToVisibility}}"
+                            Style="{StaticResource SecondaryButton}"
+                            Height="40" Margin="8,0,0,0"/>
                 </StackPanel>
 
                 <Grid Grid.Row="1" Grid.Column="0" Margin="0,12,0,0">

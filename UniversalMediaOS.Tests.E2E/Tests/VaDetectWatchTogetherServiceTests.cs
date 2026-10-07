@@ -90,16 +90,15 @@ namespace UniversalMediaOS.Tests.E2E.Tests
         }
 
         [Fact]
-        public async Task MalPublicFallback_FailedPublicListReturnsEmptyResult()
+        public async Task MalPublicFallback_FailedPublicListIsReportedAsUnavailable()
         {
             var handler = new StubHttpHandler((_, _) =>
                 Task.FromResult(new HttpResponseMessage(HttpStatusCode.Forbidden)));
             using var httpClient = new HttpClient(handler);
             var service = new MalPublicListFallbackService(httpClient);
 
-            var entries = await service.FetchAsync("private-user");
-
-            Assert.Empty(entries);
+            var error = await Assert.ThrowsAsync<HttpRequestException>(() => service.FetchAsync("private-user"));
+            Assert.Equal(HttpStatusCode.Forbidden, error.StatusCode);
         }
 
         [Fact]

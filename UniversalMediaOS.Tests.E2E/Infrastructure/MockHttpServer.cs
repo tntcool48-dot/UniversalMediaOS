@@ -16,16 +16,19 @@ namespace UniversalMediaOS.Tests.E2E.Infrastructure
         private readonly byte[]? _mangaPagePng;
         private readonly Func<HttpListenerRequest, (int Status, string Body)>? _mangaChapterFeed;
         private readonly Func<HttpListenerRequest, int>? _mangaPageStatus;
+        private readonly Func<HttpListenerRequest, (int Status, string Body)>? _malLibraryFeed;
 
         public string BaseUrl { get; }
 
         public MockHttpServer(int port = 0, byte[]? mangaPagePng = null,
             Func<HttpListenerRequest, (int Status, string Body)>? mangaChapterFeed = null,
-            Func<HttpListenerRequest, int>? mangaPageStatus = null)
+            Func<HttpListenerRequest, int>? mangaPageStatus = null,
+            Func<HttpListenerRequest, (int Status, string Body)>? malLibraryFeed = null)
         {
             _mangaPagePng = mangaPagePng;
             _mangaChapterFeed = mangaChapterFeed;
             _mangaPageStatus = mangaPageStatus;
+            _malLibraryFeed = malLibraryFeed;
             if (port <= 0)
             {
                 using var reservation = new TcpListener(IPAddress.Loopback, 0);
@@ -86,6 +89,16 @@ namespace UniversalMediaOS.Tests.E2E.Infrastructure
                 string query = req.Url?.Query ?? "";
                 string responseBody = "";
                 res.ContentType = "application/json";
+                if (path == "/v2/users/@me/animelist" && _malLibraryFeed != null)
+                {
+                    var supplied = _malLibraryFeed(req);
+                    res.StatusCode = supplied.Status;
+                    byte[] bytes = Encoding.UTF8.GetBytes(supplied.Body);
+                    res.ContentLength64 = bytes.Length;
+                    res.OutputStream.Write(bytes, 0, bytes.Length);
+                    res.Close();
+                    return;
+                }
 
                 // Serve dummy media file
                 if (path == "/mock_video.mkv" || path.EndsWith(".mkv") || path.EndsWith(".mp4"))

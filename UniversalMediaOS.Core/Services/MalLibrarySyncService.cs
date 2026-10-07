@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.IO;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text.Json;
@@ -92,14 +93,17 @@ namespace UniversalMediaOS.Core.Services
                     string payload = await response.Content.ReadAsStringAsync(token);
                     if (!response.IsSuccessStatusCode)
                     {
-                        AppLogger.Log($"MAL OAuth library sync failed for status {status}: {(int)response.StatusCode} {payload}", "WARNING");
-                        return new MalLibrarySyncResult(0, false, $"MAL OAuth sync failed for {status}: {response.StatusCode}.", DateTime.UtcNow);
+                        AppLogger.Log($"MAL OAuth library sync failed for status {status}: {(int)response.StatusCode}", "WARNING");
+                        throw new HttpRequestException($"MAL OAuth sync failed for {status}.", null, response.StatusCode);
                     }
 
                     using var doc = JsonDocument.Parse(payload);
-                    if (!doc.RootElement.TryGetProperty("data", out var data) ||
-                        data.ValueKind != JsonValueKind.Array ||
-                        data.GetArrayLength() == 0)
+                    if (doc.RootElement.ValueKind != JsonValueKind.Object ||
+                        !doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+                    {
+                        throw new InvalidDataException("MAL returned an incomplete library response.");
+                    }
+                    if (data.GetArrayLength() == 0)
                     {
                         break;
                     }

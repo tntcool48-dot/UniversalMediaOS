@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
@@ -56,12 +57,16 @@ namespace UniversalMediaOS.Core.Services
                     if (!response.IsSuccessStatusCode)
                     {
                         AppLogger.Log($"MAL public fallback failed for status {statusName}: {(int)response.StatusCode}", "WARNING");
-                        break;
+                        throw new HttpRequestException("MAL public list could not be read.", null, response.StatusCode);
                     }
 
                     string json = await response.Content.ReadAsStringAsync(token);
                     using var doc = JsonDocument.Parse(json);
-                    if (doc.RootElement.ValueKind != JsonValueKind.Array || doc.RootElement.GetArrayLength() == 0)
+                    if (doc.RootElement.ValueKind != JsonValueKind.Array)
+                    {
+                        throw new InvalidDataException("MAL returned an incomplete public list response.");
+                    }
+                    if (doc.RootElement.GetArrayLength() == 0)
                     {
                         break;
                     }

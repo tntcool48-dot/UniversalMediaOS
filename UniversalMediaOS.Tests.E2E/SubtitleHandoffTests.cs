@@ -296,15 +296,19 @@ public sealed class SubtitleHandoffTests
     [InlineData(38.5, false)]
     public void NativeReloadEstablishesCurrentPositionAndPauseBeforeStarting(double seconds, bool pause)
     {
-        using var profile = new CaptionTestDataScope();
-        using var player = new PlaybackViewModel(new DatabaseContext());
-        player.SetTabActive(false);
-        player.LoadMedia("https://video.example/fixture.mp4", "Fixture",
-            reloadPositionSeconds: seconds, pauseAfterReload: pause);
-        ResumeDispatcherContentionTests.WaitForResumeLoad(player);
-        Assert.Equal(seconds, typeof(PlaybackViewModel).GetField("_pendingResumePositionSeconds", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(player));
-        Assert.Equal(pause, typeof(PlaybackViewModel).GetField("_pauseWhenStarted", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(player));
-        Assert.False(player.IsPlaying);
+        RecoveryLayoutTests.RunSta(() =>
+        {
+            _ = System.Windows.Threading.Dispatcher.CurrentDispatcher;
+            using var profile = new CaptionTestDataScope();
+            using var player = new PlaybackViewModel(new DatabaseContext());
+            player.SetTabActive(false);
+            player.LoadMedia("https://video.example/fixture.mp4", "Fixture",
+                reloadPositionSeconds: seconds, pauseAfterReload: pause);
+            ResumeDispatcherContentionTests.WaitForResumeLoad(player);
+            Assert.Equal(seconds, typeof(PlaybackViewModel).GetField("_pendingResumePositionSeconds", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(player));
+            Assert.Equal(pause, typeof(PlaybackViewModel).GetField("_pauseWhenStarted", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(player));
+            Assert.False(player.IsPlaying);
+        });
     }
 
     [Fact]

@@ -24,3 +24,7 @@ Published pre-batch checkpoint 39ecabd [passed full hosted validation](https://g
 ## Remaining limits
 
 These controlled fixture-provider identities qualify separation and reopening, not real Wikidata/TVmaze playback or broad provider acceptance. Personal anime tracking/MAL integration, broader My List localization, Manga progress/providers/resources, voice/notifications, real remote Watch Together and packaged-app acceptance remain open. No original profile/media files were changed. Books stay deferred; Arabic cartoons remain last among non-Books work.
+
+Published source 66c550260026291bcf6a8aa040827821ba0dd9e3 is on main. [Its exact hosted validation](https://github.com/tntcool48-dot/UniversalMediaOS/actions/runs/37549221831) is in progress; no new full-suite result is claimed. This publication checkpoint is recorded in the active workspace and will travel with the next substantive batch.
+
+The bound 66c5502 run finished failed: 965 passes/22 existing skips/one failure/988 total, 8 minutes 18 seconds, build zero warnings/errors. My List cases passed; the failure is NativeReloadEstablishesCurrentPositionAndPauseBeforeStarting (2.5 seconds, paused), timing out in WaitForResumeLoad. [Exact failed run](https://github.com/tntcool48-dot/UniversalMediaOS/actions/runs/37549221831). This remains a failed full checkpoint.
