@@ -34,6 +34,7 @@ namespace UniversalMediaOS.Core.Services
 
         private readonly DomainHotSwapper _config;
         private readonly HttpClient _httpClient;
+        internal TimeSpan FetchTimeout { get; init; } = TimeSpan.FromSeconds(45);
 
         public VoiceCastService(DomainHotSwapper config)
             : this(config, new HttpClient())
@@ -53,6 +54,9 @@ namespace UniversalMediaOS.Core.Services
             bool bypassCache = false,
             CancellationToken token = default)
         {
+            using var operation = CancellationTokenSource.CreateLinkedTokenSource(token);
+            operation.CancelAfter(FetchTimeout);
+            token = operation.Token;
             if (string.IsNullOrWhiteSpace(media.MediaKey) || string.IsNullOrWhiteSpace(media.Title))
             {
                 return new VoiceCastFetchResult(mode, string.Empty, false, true, Array.Empty<VoiceCastRecord>());
@@ -64,50 +68,69 @@ namespace UniversalMediaOS.Core.Services
             if (!bypassCache && string.IsNullOrWhiteSpace(manualUrl))
             {
                 var cached = await LoadCachedAsync(db, media.MediaKey, mode, token);
-                if (cached.Count > 0)
+                if (cached.Any(item => !item.NotFound))
                 {
-                    bool notFound = cached.All(item => item.NotFound);
-                    return new VoiceCastFetchResult(mode, cached[0].Source, true, notFound, cached.Where(item => !item.NotFound).ToList());
+                    return new VoiceCastFetchResult(mode, cached.First(item => !item.NotFound).Source, true, false,
+                        cached.Where(item => !item.NotFound).ToList());
                 }
             }
 
             IReadOnlyList<VoiceCastRecord> cast = Array.Empty<VoiceCastRecord>();
             string source = string.Empty;
             string effectiveManualUrl = manualUrl.Trim();
+            bool incomplete = false;
+            async Task<IReadOnlyList<VoiceCastRecord>> TrySource(Func<Task<IReadOnlyList<VoiceCastRecord>>> fetch)
+            {
+                try { return await fetch(); }
+                catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+                catch (CastIdentityMismatchException) { throw; }
+                catch (Exception ex)
+                {
+                    incomplete = true;
+                    AppLogger.Log($"VA cast source unavailable: {ex.GetType().Name}", "WARNING");
+                    return Array.Empty<VoiceCastRecord>();
+                }
+            }
 
             if (!string.IsNullOrWhiteSpace(effectiveManualUrl))
             {
-                cast = await FetchFromManualUrlAsync(media, mode, effectiveManualUrl, token);
+                cast = await TrySource(() => FetchFromManualUrlAsync(media, mode, effectiveManualUrl, token));
                 source = "Manual";
             }
             else if (mode == VoiceLanguageMode.Sub)
             {
-                cast = await FetchFromAniListAsync(media, mode, AniListLanguageJapanese, token);
+                cast = await TrySource(() => FetchFromAniListAsync(db, media, mode, AniListLanguageJapanese, token));
                 source = cast.Count > 0 ? "AniList Japanese" : string.Empty;
                 if (cast.Count == 0)
                 {
-                    cast = await FetchFromMalCharactersPageAsync(media, mode, token);
+                    cast = await TrySource(() => FetchFromMalCharactersPageAsync(media, mode, token));
                     source = cast.Count > 0 ? "MAL characters" : source;
                 }
             }
             else
             {
-                cast = await FetchFromAniListAsync(media, mode, AniListLanguageEnglish, token);
+                cast = await TrySource(() => FetchFromAniListAsync(db, media, mode, AniListLanguageEnglish, token));
                 source = cast.Count > 0 ? "AniList English" : string.Empty;
                 if (cast.Count == 0)
                 {
-                    cast = await FetchFromAnimeVoiceOverAsync(media, mode, token);
+                    cast = await TrySource(() => FetchFromAnimeVoiceOverAsync(media, mode, token));
                     source = cast.Count > 0 ? "AnimeVoiceOver" : source;
                 }
                 if (cast.Count == 0)
                 {
-                    cast = await FetchFromBtvaAsync(media, mode, token);
+                    cast = await TrySource(() => FetchFromBtvaAsync(media, mode, token));
                     source = cast.Count > 0 ? "BTVA" : source;
                 }
             }
 
             if (cast.Count == 0)
             {
+                token.ThrowIfCancellationRequested();
+                if (incomplete) throw new InvalidOperationException("Cast lookup was incomplete; saved cast was kept.");
+                var retained = (await LoadCachedAsync(db, media.MediaKey, mode, token)).Where(item => !item.NotFound).ToList();
+                if (retained.Count > 0)
+                    return new VoiceCastFetchResult(mode, retained[0].Source, true, false, retained)
+                        { Warning = "The lookup returned no roles. Your saved cast was kept; use Find VAs to retry." };
                 source = string.IsNullOrWhiteSpace(source) ? "Not found" : source;
                 await ReplaceCachedAsync(db, media, mode, source, Array.Empty<VoiceCastRecord>(), effectiveManualUrl, notFound: true, token);
                 return new VoiceCastFetchResult(mode, source, false, true, Array.Empty<VoiceCastRecord>());
@@ -115,7 +138,8 @@ namespace UniversalMediaOS.Core.Services
 
             await ReplaceCachedAsync(db, media, mode, source, cast, effectiveManualUrl, notFound: false, token);
             var saved = await LoadCachedAsync(db, media.MediaKey, mode, token);
-            return new VoiceCastFetchResult(mode, source, false, false, saved.Where(item => !item.NotFound).ToList());
+            return new VoiceCastFetchResult(mode, source, false, false, saved.Where(item => !item.NotFound).ToList())
+                { Warning = incomplete ? "Some cast sources were unavailable." : string.Empty };
         }
 
         public async Task<IReadOnlyList<MalLibraryEntry>> GetLibraryEntriesMissingCastAsync(
@@ -132,12 +156,13 @@ namespace UniversalMediaOS.Core.Services
                 .ToListAsync(token);
 
             return entries
-                .Where(entry => !db.VoiceCastRecords.Any(record => record.MediaKey == $"mal:{entry.MalId}" && record.LanguageMode == modeText))
+                .Where(entry => !db.VoiceCastRecords.Any(record => record.MediaKey == $"mal:{entry.MalId}" && record.LanguageMode == modeText && !record.NotFound))
                 .Take(Math.Max(1, maxItems))
                 .ToList();
         }
 
         private async Task<IReadOnlyList<VoiceCastRecord>> FetchFromAniListAsync(
+            DatabaseContext db,
             VoiceCastMedia media,
             VoiceLanguageMode mode,
             string language,
@@ -149,7 +174,8 @@ namespace UniversalMediaOS.Core.Services
                 aniListId = await ResolveAniListIdFromMalIdAsync(media.MalId, token);
                 if (aniListId > 0)
                 {
-                    await UpdateLibraryAniListIdAsync(media.MalId, aniListId, token);
+                    await UpdateLibraryAniListIdAsync(db, media.MalId, aniListId, token);
+                    media = media with { AniListId = aniListId };
                 }
             }
 
@@ -174,6 +200,7 @@ namespace UniversalMediaOS.Core.Services
                         }
                         voiceActors(language: $language) {
                           name { full }
+                          languageV2
                           image { large }
                         }
                       }
@@ -192,6 +219,7 @@ namespace UniversalMediaOS.Core.Services
                 query ($idMal: Int) {
                   Media(idMal: $idMal, type: ANIME) {
                     id
+                    idMal
                   }
                 }
                 """;
@@ -199,18 +227,21 @@ namespace UniversalMediaOS.Core.Services
             try
             {
                 using var doc = await PostAniListAsync(gql, new { idMal = malId }, token);
-                return doc.RootElement.TryGetProperty("data", out var data) &&
-                       data.TryGetProperty("Media", out var media) &&
-                       media.ValueKind == JsonValueKind.Object &&
-                       media.TryGetProperty("id", out var id) &&
-                       id.ValueKind == JsonValueKind.Number
-                    ? id.GetInt32()
-                    : 0;
+                if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object ||
+                    !data.TryGetProperty("Media", out var media)) throw new InvalidDataException("AniList mapping response was incomplete.");
+                if (media.ValueKind == JsonValueKind.Null) return 0;
+                if (media.ValueKind != JsonValueKind.Object || !media.TryGetProperty("id", out var id) ||
+                    id.ValueKind != JsonValueKind.Number || !id.TryGetInt32(out int resolvedId) || resolvedId <= 0 ||
+                    !media.TryGetProperty("idMal", out var returnedMal) || returnedMal.ValueKind != JsonValueKind.Number ||
+                    !returnedMal.TryGetInt32(out int resolvedMal)) throw new InvalidDataException("AniList mapping response was incomplete.");
+                if (resolvedMal != malId) throw new CastIdentityMismatchException();
+                return resolvedId;
             }
+            catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
             catch (Exception ex)
             {
-                AppLogger.Log($"VA Detect AniList id lookup failed for MAL {malId}: {ex.Message}", "WARNING");
-                return 0;
+                AppLogger.Log($"VA Detect AniList id lookup failed for MAL {malId}: {ex.GetType().Name}", "WARNING");
+                throw;
             }
         }
 
@@ -230,10 +261,16 @@ namespace UniversalMediaOS.Core.Services
             string json = await response.Content.ReadAsStringAsync(token);
             if (!response.IsSuccessStatusCode)
             {
-                throw new InvalidOperationException($"AniList returned {(int)response.StatusCode}: {json}");
+                throw new HttpRequestException("AniList cast request failed.", null, response.StatusCode);
             }
-
-            return JsonDocument.Parse(json);
+            var document = JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind != JsonValueKind.Object ||
+                document.RootElement.TryGetProperty("errors", out var errors) && errors.ValueKind == JsonValueKind.Array && errors.GetArrayLength() > 0)
+            {
+                document.Dispose();
+                throw new InvalidDataException("AniList cast response was incomplete.");
+            }
+            return document;
         }
 
         private static IReadOnlyList<VoiceCastRecord> ParseAniListCast(
@@ -250,8 +287,14 @@ namespace UniversalMediaOS.Core.Services
                 !characters.TryGetProperty("edges", out var edges) ||
                 edges.ValueKind != JsonValueKind.Array)
             {
-                return records;
+                throw new InvalidDataException("AniList cast response omitted its character list.");
             }
+
+            if ((media.AniListId > 0 && (!mediaElement.TryGetProperty("id", out var returnedId) ||
+                    returnedId.ValueKind != JsonValueKind.Number || returnedId.GetInt32() != media.AniListId)) ||
+                (media.MalId > 0 && mediaElement.TryGetProperty("idMal", out var returnedMal) &&
+                    returnedMal.ValueKind != JsonValueKind.Null && (returnedMal.ValueKind != JsonValueKind.Number || returnedMal.GetInt32() != media.MalId)))
+                throw new CastIdentityMismatchException();
 
             foreach (var edge in edges.EnumerateArray())
             {
@@ -272,6 +315,10 @@ namespace UniversalMediaOS.Core.Services
 
                 foreach (var va in voiceActors.EnumerateArray())
                 {
+                    string actorLanguage = TryGetString(va, "languageV2");
+                    if (string.IsNullOrWhiteSpace(actorLanguage)) actorLanguage = TryGetString(va, "language");
+                    string requestedLanguage = mode == VoiceLanguageMode.Sub ? "Japanese" : "English";
+                    if (!string.IsNullOrWhiteSpace(actorLanguage) && !actorLanguage.Equals(requestedLanguage, StringComparison.OrdinalIgnoreCase)) continue;
                     string vaName = TryGetNestedString(va, "name", "full");
                     if (string.IsNullOrWhiteSpace(character) || string.IsNullOrWhiteSpace(vaName))
                     {
@@ -356,10 +403,7 @@ namespace UniversalMediaOS.Core.Services
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
             request.Headers.UserAgent.ParseAdd(DesktopUserAgent);
             using var response = await _httpClient.SendAsync(request, token);
-            if (!response.IsSuccessStatusCode)
-            {
-                return string.Empty;
-            }
+            response.EnsureSuccessStatusCode();
 
             return await response.Content.ReadAsStringAsync(token);
         }
@@ -540,7 +584,7 @@ namespace UniversalMediaOS.Core.Services
             await db.SaveChangesAsync(token);
         }
 
-        private static async Task UpdateLibraryAniListIdAsync(int malId, int aniListId, CancellationToken token)
+        private static async Task UpdateLibraryAniListIdAsync(DatabaseContext db, int malId, int aniListId, CancellationToken token)
         {
             if (malId <= 0 || aniListId <= 0)
             {
@@ -549,8 +593,6 @@ namespace UniversalMediaOS.Core.Services
 
             try
             {
-                await using var db = new DatabaseContext();
-                db.EnsureVaDetectSchema();
                 var entry = await db.MalLibraryEntries.FirstOrDefaultAsync(item => item.MalId == malId, token);
                 if (entry != null && entry.AniListId <= 0)
                 {
@@ -558,6 +600,7 @@ namespace UniversalMediaOS.Core.Services
                     await db.SaveChangesAsync(token);
                 }
             }
+            catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
             catch (Exception ex)
             {
                 AppLogger.Log($"VA Detect failed to persist AniList id {aniListId} for MAL {malId}: {ex.Message}", "WARNING");
@@ -597,6 +640,11 @@ namespace UniversalMediaOS.Core.Services
                    property.ValueKind == JsonValueKind.String
                 ? property.GetString() ?? string.Empty
                 : string.Empty;
+        }
+
+        private sealed class CastIdentityMismatchException : Exception
+        {
+            public CastIdentityMismatchException() : base("AniList cast response did not match the requested work.") { }
         }
 
         private static string TryGetNestedString(JsonElement element, string objectName, string propertyName)

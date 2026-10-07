@@ -52,6 +52,10 @@ namespace UniversalMediaOS.WPF.ViewModels
         private bool _malSyncCancelledByUser;
         private bool _isDisposed;
         internal TimeSpan MalSyncTimeout { get; init; } = TimeSpan.FromMinutes(2);
+        internal TimeSpan CastSearchTimeout { get; init; } = TimeSpan.FromSeconds(45);
+        private CancellationTokenSource? _castSearchCts;
+        private long _castSearchGeneration;
+        private bool _castSearchCancelledByUser;
         private MediaResult? _seedMedia;
 
         [ObservableProperty] private string _searchQuery = string.Empty;
@@ -59,9 +63,12 @@ namespace UniversalMediaOS.WPF.ViewModels
         [ObservableProperty] private string _publicFallbackUsername = string.Empty;
         [ObservableProperty] private string _selectedMode = "Dub";
         [ObservableProperty]
-        [NotifyCanExecuteChangedFor(nameof(SyncLibraryCommand), nameof(SyncPublicFallbackCommand), nameof(SearchCommand), nameof(CancelMalSyncCommand))]
+        [NotifyCanExecuteChangedFor(nameof(SyncLibraryCommand), nameof(SyncPublicFallbackCommand), nameof(SearchCommand), nameof(CancelMalSyncCommand), nameof(CancelCastSearchCommand))]
         private bool _isBusy;
-        [ObservableProperty] private bool _isPrefetching;
+        [ObservableProperty]
+        [NotifyCanExecuteChangedFor(nameof(StartPrefetchCommand), nameof(StopPrefetchCommand))]
+        private bool _isPrefetching;
+        [ObservableProperty] private string _prefetchStatusText = string.Empty;
         [ObservableProperty] private string _statusText = "Sync your MAL library or search an anime to begin.";
         [ObservableProperty] private string _warningText = string.Empty;
         [ObservableProperty] private string _targetTitle = "No target selected";
@@ -71,8 +78,36 @@ namespace UniversalMediaOS.WPF.ViewModels
         public ObservableRangeCollection<VaTargetCastItemViewModel> TargetCast { get; } = new();
         public ObservableRangeCollection<VaMatchViewModel> Matches { get; } = new();
         public bool IsSyncing => _malSyncCts != null;
+        public bool IsSearching => _castSearchCts != null;
         private bool CanStartOperation() => !_isDisposed && !IsBusy;
         private bool CanCancelMalSync() => _malSyncCts is { IsCancellationRequested: false };
+        private bool CanCancelCastSearch() => _castSearchCts is { IsCancellationRequested: false };
+        private bool CanStartPrefetch() => !_isDisposed && !IsPrefetching;
+        private bool CanStopPrefetch() => !_isDisposed && IsPrefetching;
+
+        [RelayCommand(CanExecute = nameof(CanCancelCastSearch))]
+        private void CancelCastSearch()
+        {
+            if (_castSearchCts == null) return;
+            _castSearchCancelledByUser = true;
+            _castSearchCts.Cancel();
+            CancelCastSearchCommand.NotifyCanExecuteChanged();
+        }
+
+        private void InvalidateCastSearch()
+        {
+            _castSearchGeneration++;
+            _castSearchCts?.Cancel();
+            if (_castSearchCts != null) StatusText = "Selection changed. Use Find VAs to search again.";
+            CancelCastSearchCommand.NotifyCanExecuteChanged();
+            TargetCast.Clear();
+            Matches.Clear();
+            SourceText = "Source: none";
+            WarningText = string.Empty;
+        }
+
+        partial void OnSearchQueryChanged(string value) => InvalidateCastSearch();
+        partial void OnManualUrlChanged(string value) => InvalidateCastSearch();
 
         [RelayCommand(CanExecute = nameof(CanCancelMalSync))]
         private void CancelMalSync()
@@ -159,6 +194,7 @@ namespace UniversalMediaOS.WPF.ViewModels
 
         public void LoadMedia(MediaResult media)
         {
+            InvalidateCastSearch();
             _seedMedia = media;
             SearchQuery = media.OfficialTitle;
             TargetTitle = media.OfficialTitle;
@@ -174,6 +210,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             }
 
             _config.SetSetting("VaDetectDefaultMode", value.Equals("Sub", StringComparison.OrdinalIgnoreCase) ? "Sub" : "Dub");
+            InvalidateCastSearch();
             OnPropertyChanged(nameof(IsSubSelected));
             OnPropertyChanged(nameof(IsDubSelected));
             StatusText = $"VA Detect mode: {SelectedMode}. Search again to refresh matches.";
@@ -252,19 +289,31 @@ namespace UniversalMediaOS.WPF.ViewModels
             }
 
             IsBusy = true;
+            using var operation = CancellationTokenSource.CreateLinkedTokenSource(_lifecycleCts.Token);
+            operation.CancelAfter(CastSearchTimeout);
+            _castSearchCts = operation;
+            _castSearchCancelledByUser = false;
+            long generation = _castSearchGeneration;
+            string query = SearchQuery.Trim();
+            string manual = ManualUrl.Trim();
+            var mode = ResolveMode();
+            bool IsCurrent() => !_isDisposed && generation == _castSearchGeneration && ReferenceEquals(_castSearchCts, operation);
+            OnPropertyChanged(nameof(IsSearching));
+            CancelCastSearchCommand.NotifyCanExecuteChanged();
             WarningText = string.Empty;
-            TargetCast.Clear();
-            Matches.Clear();
-            StatusText = $"Searching {SelectedMode} VAs for {SearchQuery.Trim()}...";
+            StatusText = $"Searching {mode} VAs for {query}...";
 
             try
             {
                 MediaResult? media = ResolveSeedMedia();
                 if (media == null)
                 {
-                    var page = await _searchService.SearchAnimePageAsync(SearchQuery.Trim(), 1, 5, AnimeSearchFilters.Default, _lifecycleCts.Token);
+                    var page = await _searchService.SearchAnimePageAsync(query, 1, 5, AnimeSearchFilters.Default, operation.Token);
                     media = page.Results.FirstOrDefault();
                 }
+
+                operation.Token.ThrowIfCancellationRequested();
+                if (!IsCurrent()) return;
 
                 if (media == null)
                 {
@@ -273,12 +322,14 @@ namespace UniversalMediaOS.WPF.ViewModels
                 }
 
                 TargetTitle = media.OfficialTitle;
-                var mode = ResolveMode();
                 var result = await _indexService.FindMatchesAsync(
                     VoiceCastMedia.FromMediaResult(media),
                     mode,
-                    ManualUrl,
-                    _lifecycleCts.Token);
+                    manual,
+                    operation.Token);
+
+                operation.Token.ThrowIfCancellationRequested();
+                if (!IsCurrent()) return;
 
                 TargetCast.ReplaceRange(result.TargetCast.Select(item => new VaTargetCastItemViewModel
                 {
@@ -309,28 +360,45 @@ namespace UniversalMediaOS.WPF.ViewModels
                 }));
 
                 SourceText = $"Source: {result.Source}";
+                WarningText = result.Warning;
                 StatusText = result.NotFound
-                    ? $"No {SelectedMode} cast data found for {media.OfficialTitle}."
-                    : $"Found {TargetCast.Count} {SelectedMode} cast roles and {Matches.Count} familiar VA matches.";
+                    ? $"No {mode} cast data found for {media.OfficialTitle}."
+                    : $"Found {TargetCast.Count} {mode} cast roles and {Matches.Count} familiar VA matches.";
             }
             catch (OperationCanceledException)
             {
-                StatusText = "VA search cancelled.";
+                if (IsCurrent())
+                {
+                    StatusText = _castSearchCancelledByUser || _lifecycleCts.IsCancellationRequested
+                        ? "VA search cancelled." : "VA search timed out.";
+                    WarningText = "Your saved cast was kept. Use Find VAs to retry.";
+                }
             }
             catch (Exception ex)
             {
-                StatusText = $"VA search failed: {ex.Message}";
+                if (IsCurrent())
+                {
+                    UniversalMediaOS.Core.Helpers.AppLogger.Log($"VA search failed: {ex.GetType().Name}", "WARNING");
+                    StatusText = "VA search failed.";
+                    WarningText = "Your saved cast was kept. Use Find VAs to retry.";
+                }
             }
             finally
             {
-                IsBusy = false;
+                if (ReferenceEquals(_castSearchCts, operation))
+                {
+                    _castSearchCts = null;
+                    IsBusy = false;
+                    OnPropertyChanged(nameof(IsSearching));
+                    CancelCastSearchCommand.NotifyCanExecuteChanged();
+                }
             }
         }
 
-        [RelayCommand]
+        [RelayCommand(CanExecute = nameof(CanStartPrefetch))]
         private async Task StartPrefetchAsync()
         {
-            if (_prefetchService.IsRunning)
+            if (!CanStartPrefetch() || _prefetchService.IsRunning)
             {
                 return;
             }
@@ -339,7 +407,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             await _prefetchService.StartAsync(ResolveMode());
         }
 
-        [RelayCommand]
+        [RelayCommand(CanExecute = nameof(CanStopPrefetch))]
         private void StopPrefetch()
         {
             _prefetchService.Stop();
@@ -385,8 +453,9 @@ namespace UniversalMediaOS.WPF.ViewModels
         {
             void Apply()
             {
+                if (_isDisposed) return;
                 IsPrefetching = e.IsRunning;
-                StatusText = e.Message;
+                PrefetchStatusText = e.Message;
             }
 
             var dispatcher = System.Windows.Application.Current?.Dispatcher;
@@ -404,6 +473,8 @@ namespace UniversalMediaOS.WPF.ViewModels
         {
             if (_isDisposed) return;
             _isDisposed = true;
+            _castSearchGeneration++;
+            _castSearchCts?.Cancel();
             _prefetchService.ProgressChanged -= PrefetchService_ProgressChanged;
             _lifecycleCts.Cancel();
             _lifecycleCts.Dispose();

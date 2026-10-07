@@ -29,10 +29,12 @@ namespace UniversalMediaOS.Core.Services
         private readonly VoiceCastService _voiceCastService;
         private CancellationTokenSource? _cts;
         private Task? _activeTask;
+        private readonly object _gate = new();
+        private bool _disposed;
 
         public event EventHandler<VoiceCastPrefetchProgressEventArgs>? ProgressChanged;
 
-        public bool IsRunning => _activeTask is { IsCompleted: false };
+        public bool IsRunning { get { lock (_gate) return _activeTask is { IsCompleted: false }; } }
 
         public BackgroundVoiceCastPrefetchService(VoiceCastService voiceCastService)
         {
@@ -41,19 +43,28 @@ namespace UniversalMediaOS.Core.Services
 
         public Task StartAsync(VoiceLanguageMode mode, int maxItems = 40, TimeSpan? delayBetweenItems = null)
         {
-            if (IsRunning)
+            lock (_gate)
             {
+                if (_disposed || _activeTask is { IsCompleted: false }) return Task.CompletedTask;
+                var operation = new CancellationTokenSource();
+                var token = operation.Token;
+                _cts = operation;
+                _activeTask = Task.Run(async () =>
+                {
+                    try { await RunAsync(mode, Math.Max(1, maxItems), delayBetweenItems ?? TimeSpan.FromSeconds(5), token); }
+                    finally
+                    {
+                        lock (_gate) if (ReferenceEquals(_cts, operation)) _cts = null;
+                        operation.Dispose();
+                    }
+                });
                 return Task.CompletedTask;
             }
-
-            _cts = new CancellationTokenSource();
-            _activeTask = Task.Run(() => RunAsync(mode, Math.Max(1, maxItems), delayBetweenItems ?? TimeSpan.FromSeconds(5), _cts.Token));
-            return Task.CompletedTask;
         }
 
         public void Stop()
         {
-            _cts?.Cancel();
+            lock (_gate) _cts?.Cancel();
         }
 
         private async Task RunAsync(VoiceLanguageMode mode, int maxItems, TimeSpan delay, CancellationToken token)
@@ -71,22 +82,24 @@ namespace UniversalMediaOS.Core.Services
                     token.ThrowIfCancellationRequested();
                     var media = VoiceCastMedia.FromLibraryEntry(entry);
                     Raise($"Fetching {mode} VAs for {media.Title}...", processed, found, failed, true);
-                    var result = await _voiceCastService.FetchAndCacheCastAsync(media, mode, token: token);
-                    processed++;
-                    if (result.NotFound)
+                    try
+                    {
+                        var result = await _voiceCastService.FetchAndCacheCastAsync(media, mode, token: token);
+                        if (result.NotFound) failed++;
+                        else found++;
+                    }
+                    catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+                    catch (Exception ex)
                     {
                         failed++;
+                        AppLogger.Log($"VA prefetch source unavailable for MAL {media.MalId}: {ex.GetType().Name}", "WARNING");
                     }
-                    else
-                    {
-                        found++;
-                    }
-
+                    processed++;
                     Raise($"Prefetched {processed}/{entries.Count}: {media.Title}", processed, found, failed, true);
-                    await Task.Delay(delay, token);
+                    if (processed < entries.Count) await Task.Delay(delay, token);
                 }
 
-                Raise("VA prefetch complete.", processed, found, failed, false);
+                Raise($"VA prefetch complete: {found} found, {failed} unavailable.", processed, found, failed, false);
             }
             catch (OperationCanceledException)
             {
@@ -94,8 +107,8 @@ namespace UniversalMediaOS.Core.Services
             }
             catch (Exception ex)
             {
-                AppLogger.Log($"VA prefetch failed: {ex.Message}", "WARNING");
-                Raise($"VA prefetch failed: {ex.Message}", processed, found, failed, false);
+                AppLogger.Log($"VA prefetch failed: {ex.GetType().Name}", "WARNING");
+                Raise("VA prefetch failed. Your saved cast was kept; use Prefetch Missing to retry.", processed, found, failed, false);
             }
         }
 
@@ -106,8 +119,12 @@ namespace UniversalMediaOS.Core.Services
 
         public void Dispose()
         {
-            Stop();
-            _cts?.Dispose();
+            lock (_gate)
+            {
+                if (_disposed) return;
+                _disposed = true;
+                _cts?.Cancel();
+            }
         }
     }
 }

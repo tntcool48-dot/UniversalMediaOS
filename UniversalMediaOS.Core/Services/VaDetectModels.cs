@@ -74,7 +74,10 @@ namespace UniversalMediaOS.Core.Services
         string Source,
         bool FromCache,
         bool NotFound,
-        IReadOnlyList<VoiceCastRecord> Cast);
+        IReadOnlyList<VoiceCastRecord> Cast)
+    {
+        public string Warning { get; init; } = string.Empty;
+    }
 
     public sealed record VoiceActorKnownRole(
         string AnimeTitle,
@@ -100,7 +103,10 @@ namespace UniversalMediaOS.Core.Services
         string Source,
         bool NotFound,
         IReadOnlyList<VoiceCastRecord> TargetCast,
-        IReadOnlyList<VoiceActorMatch> Matches);
+        IReadOnlyList<VoiceActorMatch> Matches)
+    {
+        public string Warning { get; init; } = string.Empty;
+    }
 
     public enum WatchRoomRole
     {

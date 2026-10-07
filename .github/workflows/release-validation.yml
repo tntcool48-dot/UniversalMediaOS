@@ -34,7 +34,22 @@ jobs:
           ffprobe -version
           if ($LASTEXITCODE -ne 0) { throw 'ffprobe is unavailable on PATH.' }
       - name: Test
-        run: dotnet test UniversalMediaOS.sln -c Release --no-build --nologo
+        run: >-
+          dotnet test UniversalMediaOS.sln -c Release --no-build --nologo
+          --blame-crash --blame-crash-dump-type mini
+          --logger "trx;LogFileName=release-validation.trx"
+          --logger "console;verbosity=normal"
+      - name: Retain test and crash diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-test-diagnostics
+          path: |
+            UniversalMediaOS.Tests.E2E/TestResults/**/*.trx
+            UniversalMediaOS.Tests.E2E/TestResults/**/*Sequence.xml
+            UniversalMediaOS.Tests.E2E/TestResults/**/*.dmp
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Validate Python scraper syntax
         run: >-
           python -m py_compile

@@ -28,7 +28,8 @@ namespace UniversalMediaOS.Core.Services
             var targetFetch = await _voiceCastService.FetchAndCacheCastAsync(target, mode, manualUrl, token: token);
             if (targetFetch.NotFound || targetFetch.Cast.Count == 0)
             {
-                return new VoiceActorMatchResult(mode, targetFetch.Source, targetFetch.NotFound, targetFetch.Cast, Array.Empty<VoiceActorMatch>());
+                return new VoiceActorMatchResult(mode, targetFetch.Source, targetFetch.NotFound, targetFetch.Cast, Array.Empty<VoiceActorMatch>())
+                    { Warning = targetFetch.Warning };
             }
 
             await using var db = new DatabaseContext();
@@ -99,7 +100,7 @@ namespace UniversalMediaOS.Core.Services
                     .OrderBy(match => GroupSort(match.Group))
                     .ThenBy(match => match.RoleType == "Main" ? 0 : 1)
                     .ThenBy(match => match.VoiceActorName)
-                    .ToArray());
+                    .ToArray()) { Warning = targetFetch.Warning };
         }
 
         private static VoiceActorKnownRole? CreateKnownRole(

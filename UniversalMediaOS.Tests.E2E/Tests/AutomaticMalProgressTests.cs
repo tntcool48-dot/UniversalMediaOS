@@ -141,7 +141,12 @@ public sealed class AutomaticMalProgressTests
         {
             if (player.MediaPlayer.State == VLCState.Playing) await Pause();
             await player.FlushResumeAsync();
+            // The app closes the surface before disposing the decoder. Window
+            // Unloaded defers that cleanup and is too late for direct disposal.
+            view.CloseForTab();
+            Assert.Null(((LibVLCSharp.WPF.VideoView)view.FindName("VlcPlayer")).MediaPlayer);
             window.Close();
+            await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.ApplicationIdle);
             player.Dispose();
             await player.PendingMalProgressSync.WaitAsync(TimeSpan.FromSeconds(3));
         }
