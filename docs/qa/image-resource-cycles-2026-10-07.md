@@ -52,3 +52,11 @@ Natural private memory stayed near **293–294 MiB** over the final 40 seconds, 
 Normal shutdown returned at **20:04:52 UTC**, and the exact app process was absent afterward. No browser was initialized for this flow. Both repaired runs reused one isolated profile and ordinary Release output; no app/media copies or dumps were created. Protected original six permanent media/configuration/metadata/caption snapshots matched again. The read-only original SQLite check retained all five tables/eight resume rows with content SHA-256 **e3fd7e97b1eeb4b4dff8d38f09b04a4a8ad19dafd2a835fd1449b006778328b1**.
 
 The scoped paging repair and finite search/image workload are complete. Broader sustained search/image performance, accessibility-provider lifetime, download/reader resource cycles, live-provider/audio and packaged-app gates remain open. Books remain deferred; Arabic cartoons remain last among non-Books work.
+
+
+Published normally to GitHub main as **92fd5b5a26904b216785d416c7be6bbe6c81f49a**, committing only the six owned source/test/tracker/QA files. The six unrelated original untracked paths remain untouched. [Exact full hosted run 37679525796](https://github.com/tntcool48-dot/UniversalMediaOS/actions/runs/37679525796) is confirmed **in progress** for this SHA; no full pass for the paging change is claimed yet. The latest completed full checkpoint remains b878a55 (1,032 passes / 22 existing skips / zero failures).
+
+
+## Exact full hosted result
+
+Published paging checkpoint **92fd5b5a26904b216785d416c7be6bbe6c81f49a** passed [run 37679525796](https://github.com/tntcool48-dot/UniversalMediaOS/actions/runs/37679525796): **1,033 passes / 22 existing skips / zero failures / 1,055 total**, in **9.4572 minutes** (about **9 minutes 27 seconds**). Build reported zero warnings/errors; Python scraper syntax passed. The new SearchReturnPaging real-app regression passed in the full context (**6 seconds**). No production source changed after this tested checkpoint; the subsequent resource reports update evidence only. Broader provider/audio, transfer/cache, Manga resources and packaged-app acceptance remain open.
