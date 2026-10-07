@@ -128,6 +128,22 @@ public sealed class LiveCaptionSelectionTests(ITestOutputHelper output)
                 Captions()!.Patterns.ExpandCollapse.Pattern.ExpandCollapseState.Value);
             Captions()!.Items.Single(item => item.Text == label).Click(moveMouse: true);
         }
+        async Task HoldForVisualObservation(string phase)
+        {
+            string? directory = Environment.GetEnvironmentVariable("UNIVERSAL_MEDIA_OS_CAPTION_VISUAL_QA_DIR");
+            if (string.IsNullOrWhiteSpace(directory)) return;
+            Directory.CreateDirectory(directory);
+            string release = Path.Combine(directory, phase + "-" + Guid.NewGuid().ToString("N") + ".continue");
+            File.WriteAllText(Path.Combine(directory, "caption-visual-ready.json"), JsonSerializer.Serialize(new
+            {
+                Phase = phase, Pid = fixture.App.ProcessId,
+                Window = Window().Properties.NativeWindowHandle.Value.ToInt64(),
+                Profile = fixture.SandboxPath, Media = video, Position = Position(), Paused = IsPaused(),
+                Selected = Captions()!.SelectedItem?.Text, Release = release, Utc = DateTime.UtcNow
+            }));
+            var hold = Stopwatch.StartNew();
+            while (!File.Exists(release) && hold.Elapsed < TimeSpan.FromSeconds(60)) await Task.Delay(200);
+        }
 
         if (restoredWindow)
         {
@@ -171,17 +187,20 @@ public sealed class LiveCaptionSelectionTests(ITestOutputHelper output)
         {
             // Pilot has an authored two-line cue here; decode the seek before
             // testing the paused case. This is opt-in, not a CI media dependency.
+            long cuePosition = long.TryParse(Environment.GetEnvironmentVariable("UNIVERSAL_MEDIA_OS_QA_CAPTION_POSITION_MS"),
+                out long requestedCue) && requestedCue > 0 ? requestedCue : 700_000;
             Assert.True(Window().FindFirstDescendant(cf => cf.ByAutomationId("PlaybackSlider"))!
-                .Patterns.RangeValue.Pattern.Maximum.Value > 700_000);
+                .Patterns.RangeValue.Pattern.Maximum.Value > cuePosition);
             Window().FindFirstDescendant(cf => cf.ByAutomationId("PlaybackSlider"))!
-                .Patterns.RangeValue.Pattern.SetValue(700_000);
-            Assert.True(SpinWait.SpinUntil(() => Position() >= 700_000, TimeSpan.FromSeconds(3)));
+                .Patterns.RangeValue.Pattern.SetValue(cuePosition);
+            Assert.True(SpinWait.SpinUntil(() => Position() >= cuePosition, TimeSpan.FromSeconds(3)));
         }
         if (paused && !IsPaused())
         {
             Button("Play or pause")!.Invoke();
             Assert.True(SpinWait.SpinUntil(IsPaused, TimeSpan.FromSeconds(3)));
         }
+        await HoldForVisualObservation("before-off");
         double position = Position();
         var elapsed = Stopwatch.StartNew();
         int priorLogLength = ReadLog(logPath).Length;
@@ -199,6 +218,7 @@ public sealed class LiveCaptionSelectionTests(ITestOutputHelper output)
         Assert.Equal(paused, IsPaused());
         Assert.Equal(originalBytes, new FileInfo(video).Length);
         Assert.Equal(originalWriteTime, File.GetLastWriteTimeUtc(video));
+        await HoldForVisualObservation("off-stable");
         priorLogLength = ReadLog(logPath).Length;
         selectionTimer.Restart();
         SelectCaption(onLabel);
@@ -212,6 +232,7 @@ public sealed class LiveCaptionSelectionTests(ITestOutputHelper output)
         Assert.Equal(paused, IsPaused());
         Assert.Equal(originalBytes, new FileInfo(video).Length);
         Assert.Equal(originalWriteTime, File.GetLastWriteTimeUtc(video));
+        await HoldForVisualObservation("on-restored");
     }
 
     private static string ReadLog(string path)
