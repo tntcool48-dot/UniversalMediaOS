@@ -233,19 +233,58 @@ public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
         var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(() =>
         {
-            var dispatcher = System.Windows.Threading.Dispatcher.CurrentDispatcher;
-            SynchronizationContext.SetSynchronizationContext(new System.Windows.Threading.DispatcherSynchronizationContext(dispatcher));
-            dispatcher.BeginInvoke(async () =>
+            try
             {
-                try { await test(); completed.TrySetResult(); }
-                catch (Exception ex) { completed.TrySetException(ex); }
-                finally { dispatcher.BeginInvokeShutdown(System.Windows.Threading.DispatcherPriority.Background); }
-            });
-            System.Windows.Threading.Dispatcher.Run();
+                Exception? failure = null;
+                var dispatcher = System.Windows.Threading.Dispatcher.CurrentDispatcher;
+                SynchronizationContext.SetSynchronizationContext(new System.Windows.Threading.DispatcherSynchronizationContext(dispatcher));
+                dispatcher.BeginInvoke(async () =>
+                {
+                    try { await test(); }
+                    catch (Exception ex) { failure = ex; }
+                    finally { dispatcher.BeginInvokeShutdown(System.Windows.Threading.DispatcherPriority.Background); }
+                });
+                System.Windows.Threading.Dispatcher.Run();
+                // Native view/window cleanup can still be queued at the end of
+                // the case. Finish dispatcher shutdown before releasing xUnit.
+                if (failure == null) completed.TrySetResult();
+                else completed.TrySetException(failure);
+            }
+            catch (Exception ex) { completed.TrySetException(ex); }
         }) { IsBackground = true };
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
         return completed.Task.WaitAsync(timeout ?? TimeSpan.FromSeconds(40));
+    }
+
+    [Fact]
+    public async Task NativeDispatcherHelperWaitsForShutdownBeforeTheNextCase()
+    {
+        using var release = new ManualResetEventSlim();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task run = OnDispatcher(() =>
+        {
+            var dispatcher = System.Windows.Threading.Dispatcher.CurrentDispatcher;
+            dispatcher.ShutdownStarted += (_, _) =>
+            {
+                started.TrySetResult();
+                Assert.True(release.Wait(TimeSpan.FromSeconds(5)));
+            };
+            dispatcher.ShutdownFinished += (_, _) => finished.TrySetResult();
+            return Task.CompletedTask;
+        });
+        try
+        {
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.False(run.IsCompleted, "The next native case must not start while the previous dispatcher is shutting down.");
+        }
+        finally
+        {
+            release.Set();
+            await finished.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        }
+        await run;
     }
 
     [Theory]
@@ -392,9 +431,45 @@ public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
         public void Dispose() => Marshal.FreeHGlobal(_buffer);
     }
 
+    [Fact]
+    public async Task NativeVideoRangeRequestIsNotBlockedByAnEarlierUnreadBody()
+    {
+        const int length = 16 * 1024 * 1024;
+        var bytes = new byte[length];
+        Array.Fill(bytes, (byte)73);
+        using var server = new VideoServer(bytes);
+        using var unread = new TcpClient { ReceiveBufferSize = 4096 };
+        var uri = new Uri(server.Url);
+        await unread.ConnectAsync(uri.Host, uri.Port);
+        var stream = unread.GetStream();
+        await stream.WriteAsync(System.Text.Encoding.ASCII.GetBytes(
+            $"GET {uri.AbsolutePath} HTTP/1.1\r\nHost: {uri.Authority}\r\nConnection: close\r\n\r\n"));
+        using var reader = new StreamReader(stream, leaveOpen: true);
+        try
+        {
+            Assert.Contains("200", await reader.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(2)));
+            while (!string.IsNullOrEmpty(await reader.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(2)))) { }
+            // A demuxer can stop reading one body while requesting the MP4 index
+            // or seeking over a second connection. The first body stays unread.
+            using var client = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+            using var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, server.Url);
+            request.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(length - 1024, length - 1);
+            using var response = await client.SendAsync(request);
+            Assert.Equal(HttpStatusCode.PartialContent, response.StatusCode);
+            Assert.Equal(length - 1024, response.Content.Headers.ContentRange!.From);
+            Assert.Equal(length - 1, response.Content.Headers.ContentRange.To);
+            byte[] tail = await response.Content.ReadAsByteArrayAsync();
+            Assert.Equal(1024, tail.Length);
+            Assert.All(tail, value => Assert.Equal(73, value));
+        }
+        finally { unread.Dispose(); }
+    }
+
     internal sealed class VideoServer : IDisposable
     {
         private readonly HttpListener _listener = new();
+        private readonly CancellationTokenSource _stop = new();
+        private readonly SemaphoreSlim _responses = new(4);
         private readonly Task _worker;
         public string Url { get; }
         public VideoServer(byte[] bytes)
@@ -408,38 +483,65 @@ public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
             _listener.Start();
             _worker = Task.Run(async () =>
             {
-                while (_listener.IsListening)
+                var pending = new List<Task>();
+                try
                 {
-                    HttpListenerContext context;
-                    try { context = await _listener.GetContextAsync(); }
-                    catch (Exception exception) when (exception is HttpListenerException or ObjectDisposedException) { break; }
-                    try
+                    while (!_stop.IsCancellationRequested)
                     {
-                        var response = context.Response;
-                        response.ContentType = "video/mp4";
-                        response.Headers["Accept-Ranges"] = "bytes";
-                        int offset = 0;
-                        string? range = context.Request.Headers["Range"];
-                        if (range?.StartsWith("bytes=", StringComparison.Ordinal) == true &&
-                            int.TryParse(range[6..].Split('-')[0], NumberStyles.None, CultureInfo.InvariantCulture, out int start))
-                        {
-                            offset = Math.Clamp(start, 0, bytes.Length - 1);
-                            response.StatusCode = 206;
-                            response.Headers["Content-Range"] = $"bytes {offset}-{bytes.Length - 1}/{bytes.Length}";
-                        }
-                        response.ContentLength64 = bytes.Length - offset;
-                        if (context.Request.HttpMethod != "HEAD")
-                            await response.OutputStream.WriteAsync(bytes.AsMemory(offset));
+                        await _responses.WaitAsync(_stop.Token);
+                        HttpListenerContext context;
+                        try { context = await _listener.GetContextAsync().WaitAsync(_stop.Token); }
+                        catch { _responses.Release(); throw; }
+                        pending.RemoveAll(task => task.IsCompletedSuccessfully);
+                        pending.Add(RespondAsync(context));
                     }
-                    catch (Exception exception) when (exception is HttpListenerException or IOException or ObjectDisposedException) { }
-                    finally { context.Response.Close(); }
                 }
+                catch (Exception exception) when (exception is HttpListenerException or ObjectDisposedException or OperationCanceledException) { }
+                finally { await Task.WhenAll(pending); }
             });
+
+            async Task RespondAsync(HttpListenerContext context)
+            {
+                using var deadline = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
+                deadline.CancelAfter(TimeSpan.FromSeconds(5));
+                using var abort = deadline.Token.Register(() =>
+                {
+                    try { context.Response.Abort(); }
+                    catch (ObjectDisposedException) { }
+                });
+                try
+                {
+                    var response = context.Response;
+                    response.ContentType = "video/mp4";
+                    response.Headers["Accept-Ranges"] = "bytes";
+                    int offset = 0;
+                    string? range = context.Request.Headers["Range"];
+                    if (range?.StartsWith("bytes=", StringComparison.Ordinal) == true &&
+                        int.TryParse(range[6..].Split('-')[0], NumberStyles.None, CultureInfo.InvariantCulture, out int start))
+                    {
+                        offset = Math.Clamp(start, 0, bytes.Length - 1);
+                        response.StatusCode = 206;
+                        response.Headers["Content-Range"] = $"bytes {offset}-{bytes.Length - 1}/{bytes.Length}";
+                    }
+                    response.ContentLength64 = bytes.Length - offset;
+                    if (context.Request.HttpMethod != "HEAD")
+                        await response.OutputStream.WriteAsync(bytes.AsMemory(offset), deadline.Token);
+                }
+                catch (Exception exception) when (exception is HttpListenerException or IOException or ObjectDisposedException or OperationCanceledException) { }
+                finally
+                {
+                    context.Response.Close();
+                    _responses.Release();
+                }
+            }
         }
         public void Dispose()
         {
+            _stop.Cancel();
             _listener.Close();
             Assert.True(_worker.Wait(TimeSpan.FromSeconds(3)));
+            _responses.Dispose();
+            _stop.Dispose();
         }
     }
 }

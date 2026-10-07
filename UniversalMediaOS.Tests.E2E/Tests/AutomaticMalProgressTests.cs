@@ -28,6 +28,16 @@ public sealed class AutomaticMalProgressTests
 
     private static async Task NativeProgressAsync()
     {
+        void Phase(string phase)
+        {
+            string line = JsonSerializer.Serialize(new { Phase = phase, Pid = Environment.ProcessId, Utc = DateTime.UtcNow });
+            Console.Error.WriteLine("[Automatic MAL native] " + line);
+            string? directory = Environment.GetEnvironmentVariable("UNIVERSAL_MEDIA_OS_NATIVE_DIAGNOSTIC_DIR");
+            if (string.IsNullOrWhiteSpace(directory)) return;
+            Directory.CreateDirectory(directory);
+            File.AppendAllText(Path.Combine(directory, "automatic-mal-native-phases.jsonl"), line + Environment.NewLine);
+        }
+        Phase("profile-start");
         using var profile = new Profile();
         int attempts = 0;
         var remote = new ConcurrentDictionary<int, int>();
@@ -54,10 +64,13 @@ public sealed class AutomaticMalProgressTests
         using var replacementSource = new NativeShortMediaCompletionTests.VideoServer(File.ReadAllBytes(video));
         File.WriteAllText(caption, "1\n00:00:00,000 --> 00:01:30,000\nControlled MAL profile\nGenerated video without audio\n");
         string configPath = Path.Combine(profile.Root, "Roaming", "UniversalMediaOS", "config.json");
+        Phase("player-create");
         using var player = profile.Player(server);
+        Phase("resources-load");
         string config = File.ReadAllText(configPath);
         var resources = ControlThemeRenderTests.LoadResources(true);
         resources["BoolToVisibility"] = new System.Windows.Controls.BooleanToVisibilityConverter();
+        Phase("view-create");
         var view = new PlaybackView(resources) { DataContext = player };
         var window = new System.Windows.Window { Title = "UniversalMediaOS - automatic MAL native QA", Content = view,
             Width = 1280, Height = 720, WindowStartupLocation = System.Windows.WindowStartupLocation.Manual };
@@ -97,12 +110,15 @@ public sealed class AutomaticMalProgressTests
         }
         try
         {
+            Phase("window-show");
             window.Show();
+            Phase("first-media-load");
             player.LoadMedia(video, "Controlled anime - Ep 3", malId: 101, episodeNumber: "3", totalEpisodes: 12,
                 localCaptionPaths: [caption]);
             player.PlayPending();
             await Wait(() => player.IsPlaying && player.MediaPlayer.VoutCount > 0 && player.PlaybackDuration > 80_000,
                 "The production view must attach a real native video output and decoder clock.");
+            Phase("first-native-frame");
             player.BeginUserSeek();
             player.CommitUserSeek(80_000);
             await Wait(() => profile.Writes.Count >= 2 && Synced(player), "Real decoder progress must retry the first failed update.");
@@ -111,6 +127,7 @@ public sealed class AutomaticMalProgressTests
             await player.FlushResumeAsync();
             await Hold("native-progress-retried-correct-anime-episode");
             double position = player.PlaybackTime / 1000;
+            Phase("same-unit-source-reload");
             player.LoadMedia(replacementSource.Url, "Controlled source URL change - Ep 3", malId: 101, episodeNumber: "3", totalEpisodes: 12,
                 localCaptionPaths: [caption], reloadPositionSeconds: position, pauseAfterReload: true);
             player.PlayPending();
@@ -119,6 +136,7 @@ public sealed class AutomaticMalProgressTests
             Assert.Equal(2, profile.Writes.Count);
             Assert.True(Synced(player));
             await Hold("same-unit-reload-retained-sync-and-paused-native-position");
+            Phase("new-work-unit-load");
             player.LoadMedia(video, "Different controlled anime - Ep 4", malId: 202, episodeNumber: "4", totalEpisodes: 12,
                 localCaptionPaths: [caption]);
             player.PlayPending();
@@ -139,6 +157,7 @@ public sealed class AutomaticMalProgressTests
         }
         finally
         {
+            Phase("surface-close");
             if (player.MediaPlayer.State == VLCState.Playing) await Pause();
             await player.FlushResumeAsync();
             // The app closes the surface before disposing the decoder. Window
@@ -147,8 +166,10 @@ public sealed class AutomaticMalProgressTests
             Assert.Null(((LibVLCSharp.WPF.VideoView)view.FindName("VlcPlayer")).MediaPlayer);
             window.Close();
             await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+            Phase("decoder-dispose");
             player.Dispose();
             await player.PendingMalProgressSync.WaitAsync(TimeSpan.FromSeconds(3));
+            Phase("owner-drained");
         }
     }
 

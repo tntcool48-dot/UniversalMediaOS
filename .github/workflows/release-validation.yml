@@ -46,7 +46,7 @@ jobs:
           name: release-test-diagnostics
           path: |
             UniversalMediaOS.Tests.E2E/TestResults/**/*.trx
-            UniversalMediaOS.Tests.E2E/TestResults/**/*Sequence.xml
+            UniversalMediaOS.Tests.E2E/TestResults/**/*Sequence*.xml
             UniversalMediaOS.Tests.E2E/TestResults/**/*.dmp
           if-no-files-found: ignore
           retention-days: 7
