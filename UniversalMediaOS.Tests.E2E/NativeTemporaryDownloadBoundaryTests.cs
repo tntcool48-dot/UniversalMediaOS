@@ -26,6 +26,61 @@ public sealed class NativeTemporaryDownloadBoundaryTests
     private const long Reserve = 1024L * 1024 * 1024;
 
     [Theory]
+    [InlineData("before-metadata")]
+    [InlineData("payload-cancel")]
+    [InlineData("capacity")]
+    [InlineData("completed-owners")]
+    public async Task TemporaryEpisodeClosesNativeSessionsAcrossFailureAndFinalOwnerRelease(string mode)
+    {
+        await using var fixture = await LocalSeeder.StartAsync(mode == "completed-owners" ? 0 : 32 * 1024, seconds: 90);
+        var sessions = new List<(ClientEngine Engine, object Dht)>();
+        var service = fixture.Service(_ => mode == "capacity" ? 0 : long.MaxValue, createEngine: settings =>
+        {
+            var engine = new ClientEngine(settings);
+            sessions.Add((engine, typeof(ClientEngine).GetProperty("DhtEngine", PrivateInstance)!.GetValue(engine)!));
+            return engine;
+        });
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+        var transfer = service.DownloadAsync(1001, LocalSeeder.Title, [], 1, "Sub", message =>
+        {
+            fixture.Logs.Add(message);
+            if (mode == "before-metadata" && message.StartsWith("Checking torrent files:")) cancellation.Cancel();
+        }, cancellation.Token);
+        if (mode == "payload-cancel")
+        {
+            await Eventually(() => fixture.UploadedBytes > 0);
+            cancellation.Cancel();
+        }
+        if (mode is "before-metadata" or "payload-cancel")
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => transfer.WaitAsync(TimeSpan.FromSeconds(10)));
+        else if (mode == "capacity")
+            await Assert.ThrowsAsync<InsufficientDownloadSpaceException>(() => transfer.WaitAsync(TimeSpan.FromSeconds(10)));
+        else
+        {
+            var first = await transfer.WaitAsync(TimeSpan.FromSeconds(25));
+            var second = await service.DownloadAsync(1001, LocalSeeder.Title, [], 1, "Sub", fixture.Logs.Add, cancellation.Token);
+            Assert.Equal(first.FilePath, second.FilePath);
+            Assert.Equal(fixture.VideoBytes, new FileInfo(first.FilePath).Length);
+            first.Lease.Dispose();
+            Assert.True(File.Exists(second.FilePath));
+            second.Lease.Dispose();
+            Assert.False(File.Exists(first.FilePath));
+        }
+        fixture.AssertRetainedAndClean();
+        Assert.Single(sessions);
+        foreach (var session in sessions)
+        {
+            Assert.True(session.Engine.Disposed);
+            Assert.Empty(session.Engine.Torrents);
+            foreach (string eventName in new[] { "PeersFound", "StateChanged" })
+            {
+                var handlers = (Delegate?)session.Dht.GetType().GetField(eventName, PrivateInstance)!.GetValue(session.Dht);
+                Assert.DoesNotContain(handlers?.GetInvocationList() ?? [], handler => ReferenceEquals(handler.Target, session.Engine));
+            }
+        }
+    }
+
+    [Theory]
     [InlineData("progress")]
     [InlineData("session-cleanup")]
     public async Task RapidSeasonPauseRetainsActualProgressAndReleasesTheClosedSession(string check)
@@ -280,8 +335,9 @@ public sealed class NativeTemporaryDownloadBoundaryTests
         ];
 
         public TemporaryEpisodeWatchService Service(Func<string, long> capacity,
-            Func<string, Action<string>?, CancellationToken, Task<List<TorrentResult>>>? search = null) =>
-            new(search ?? ((_, _, _) => Task.FromResult(Candidates())), Temporary, capacity);
+            Func<string, Action<string>?, CancellationToken, Task<List<TorrentResult>>>? search = null,
+            Func<EngineSettings, ClientEngine>? createEngine = null) =>
+            new(search ?? ((_, _, _) => Task.FromResult(Candidates())), Temporary, capacity, createEngine);
 
         public void AssertRetainedAndClean()
         {

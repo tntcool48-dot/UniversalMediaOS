@@ -24,6 +24,7 @@ public sealed class TemporaryEpisodeWatchService
     private readonly Func<string, Action<string>?, CancellationToken, Task<List<TorrentResult>>> _search;
     private readonly string _root;
     private readonly Func<string, long> _availableSpace;
+    private readonly Func<EngineSettings, ClientEngine> _createEngine;
     private readonly SemaphoreSlim _transferGate = new(1, 1);
     private readonly object _sync = new();
     private readonly Dictionary<string, CacheEntry> _completed = new(StringComparer.Ordinal);
@@ -41,10 +42,12 @@ public sealed class TemporaryEpisodeWatchService
 
     internal TemporaryEpisodeWatchService(
         Func<string, Action<string>?, CancellationToken, Task<List<TorrentResult>>> search, string root,
-        Func<string, long>? availableSpace = null)
+        Func<string, long>? availableSpace = null,
+        Func<EngineSettings, ClientEngine>? createEngine = null)
     {
         _search = search;
         _availableSpace = availableSpace ?? (directory => new DriveInfo(Path.GetPathRoot(directory)!).AvailableFreeSpace);
+        _createEngine = createEngine ?? (settings => new ClientEngine(settings));
         _root = Path.GetFullPath(root);
         Directory.CreateDirectory(_root);
         CleanupOrphans();
@@ -181,89 +184,107 @@ public sealed class TemporaryEpisodeWatchService
             ListenEndPoints = new Dictionary<string, IPEndPoint> { ["ipv4"] = new(IPAddress.Any, 0) },
             CacheDirectory = Path.Combine(directory, "engine")
         };
-        using var engine = new ClientEngine(settings.ToSettings());
-        log($"Checking torrent files: {candidate.Title}");
-        // Magnet StartAsync switches directly from metadata discovery to payload
-        // transfer. Get metadata separately so no batch file starts before selection.
-        ReadOnlyMemory<byte> metadata;
-        using (var metadataLimit = CancellationTokenSource.CreateLinkedTokenSource(token))
-        {
-            metadataLimit.CancelAfter(MetadataTimeout);
-            try { metadata = await engine.DownloadMetadataAsync(MagnetLink.Parse(candidate.MagnetLink), metadataLimit.Token); }
-            catch (OperationCanceledException) when (!token.IsCancellationRequested)
-            {
-                log("Torrent metadata timed out; trying another result.");
-                return null;
-            }
-        }
-        var torrent = Torrent.Load(metadata.Span);
-        var manager = await engine.AddAsync(torrent, directory);
+        using var engine = _createEngine(settings.ToSettings());
         try
         {
-            token.ThrowIfCancellationRequested();
-            if (SeasonConflicts(title, manager.Torrent?.Name ?? string.Empty)) return null;
-            ITorrentManagerFile? video = SelectEpisodeFile(manager.Files, episode);
-            if (video == null)
+            log($"Checking torrent files: {candidate.Title}");
+            // Magnet StartAsync switches directly from metadata discovery to payload
+            // transfer. Get metadata separately so no batch file starts before selection.
+            ReadOnlyMemory<byte> metadata;
+            using (var metadataLimit = CancellationTokenSource.CreateLinkedTokenSource(token))
             {
-                log("Torrent did not contain one unambiguous file for this episode.");
-                return null;
+                metadataLimit.CancelAfter(MetadataTimeout);
+                try { metadata = await engine.DownloadMetadataAsync(MagnetLink.Parse(candidate.MagnetLink), metadataLimit.Token); }
+                catch (OperationCanceledException) when (!token.IsCancellationRequested)
+                {
+                    log("Torrent metadata timed out; trying another result.");
+                    return null;
+                }
             }
-            if (SeasonConflicts(title, video.FullPath) || !IsInside(directory, video.FullPath))
-            {
-                log("Episode file has a conflicting season or unsafe path.");
-                return null;
-            }
-            if (video.Length < 5 * 1024 * 1024 || video.Length > MaximumEpisodeBytes)
-            {
-                log("Episode file is outside the supported size range.");
-                return null;
-            }
-            string stem = Path.GetFileNameWithoutExtension(video.FullPath);
-            var sidecars = manager.Files.Where(file => CaptionExtensions.Contains(Path.GetExtension(file.FullPath), StringComparer.OrdinalIgnoreCase) &&
-                Path.GetDirectoryName(file.FullPath)?.Equals(Path.GetDirectoryName(video.FullPath), StringComparison.OrdinalIgnoreCase) == true &&
-                Path.GetFileNameWithoutExtension(file.FullPath).StartsWith(stem, StringComparison.OrdinalIgnoreCase) &&
-                file.Length <= 20 * 1024 * 1024 && IsInside(directory, file.FullPath)).ToArray();
-            CheckAvailableSpace(directory, video.Length + sidecars.Sum(file => file.Length));
-            foreach (ITorrentManagerFile file in manager.Files)
-                await manager.SetFilePriorityAsync(file, ReferenceEquals(file, video) || sidecars.Contains(file)
-                    ? Priority.Normal : Priority.DoNotDownload);
-
-            log($"Downloading only episode {episode} ({video.Length / 1024 / 1024} MiB).");
-            token.ThrowIfCancellationRequested();
-            await manager.StartAsync();
-            var deadline = DateTime.UtcNow + TransferTimeout;
-            var lastProgressAt = DateTime.UtcNow;
-            double lastProgress = manager.PartialProgress;
-            while (manager.PartialProgress < 99.999 || !video.BitField.AllTrue)
+            var torrent = Torrent.Load(metadata.Span);
+            var manager = await engine.AddAsync(torrent, directory);
+            try
             {
                 token.ThrowIfCancellationRequested();
-                CheckAvailableSpace(directory, 0);
-                if (DateTime.UtcNow >= deadline || DateTime.UtcNow - lastProgressAt >= StallTimeout)
-                    throw new TimeoutException("Temporary episode transfer stalled or exceeded two hours.");
-                if (manager.PartialProgress > lastProgress + 0.05)
+                if (SeasonConflicts(title, manager.Torrent?.Name ?? string.Empty)) return null;
+                ITorrentManagerFile? video = SelectEpisodeFile(manager.Files, episode);
+                if (video == null)
                 {
-                    lastProgress = manager.PartialProgress;
-                    lastProgressAt = DateTime.UtcNow;
-                    log($"Episode download {lastProgress:F0}% ({manager.Monitor.DownloadRate / 1024.0 / 1024.0:F1} MiB/s).");
+                    log("Torrent did not contain one unambiguous file for this episode.");
+                    return null;
                 }
-                await Task.Delay(2000, token);
-            }
+                if (SeasonConflicts(title, video.FullPath) || !IsInside(directory, video.FullPath))
+                {
+                    log("Episode file has a conflicting season or unsafe path.");
+                    return null;
+                }
+                if (video.Length < 5 * 1024 * 1024 || video.Length > MaximumEpisodeBytes)
+                {
+                    log("Episode file is outside the supported size range.");
+                    return null;
+                }
+                string stem = Path.GetFileNameWithoutExtension(video.FullPath);
+                var sidecars = manager.Files.Where(file => CaptionExtensions.Contains(Path.GetExtension(file.FullPath), StringComparer.OrdinalIgnoreCase) &&
+                    Path.GetDirectoryName(file.FullPath)?.Equals(Path.GetDirectoryName(video.FullPath), StringComparison.OrdinalIgnoreCase) == true &&
+                    Path.GetFileNameWithoutExtension(file.FullPath).StartsWith(stem, StringComparison.OrdinalIgnoreCase) &&
+                    file.Length <= 20 * 1024 * 1024 && IsInside(directory, file.FullPath)).ToArray();
+                CheckAvailableSpace(directory, video.Length + sidecars.Sum(file => file.Length));
+                foreach (ITorrentManagerFile file in manager.Files)
+                    await manager.SetFilePriorityAsync(file, ReferenceEquals(file, video) || sidecars.Contains(file)
+                        ? Priority.Normal : Priority.DoNotDownload);
 
-            await manager.StopAsync(TimeSpan.FromSeconds(2));
-            token.ThrowIfCancellationRequested();
-            CheckAvailableSpace(directory, 0);
-            string path = File.Exists(video.DownloadCompleteFullPath) ? video.DownloadCompleteFullPath : video.FullPath;
-            if (!File.Exists(path) || new FileInfo(path).Length != video.Length)
-                throw new IOException("Torrent reported completion without a complete episode file.");
-            string[] captionPaths = sidecars.Select(file => file.DownloadCompleteFullPath).Where(File.Exists).ToArray();
-            (path, captionPaths) = PublishEpisodeFiles(directory, path, episode, captionPaths);
-            string notice = await VerifyMediaAsync(path, audio, candidate.Title, captionPaths.Length > 0, token);
-            log("Episode file verified; opening native player.");
-            return (path, notice, captionPaths);
+                log($"Downloading only episode {episode} ({video.Length / 1024 / 1024} MiB).");
+                token.ThrowIfCancellationRequested();
+                await manager.StartAsync();
+                var deadline = DateTime.UtcNow + TransferTimeout;
+                var lastProgressAt = DateTime.UtcNow;
+                double lastProgress = manager.PartialProgress;
+                while (manager.PartialProgress < 99.999 || !video.BitField.AllTrue)
+                {
+                    token.ThrowIfCancellationRequested();
+                    CheckAvailableSpace(directory, 0);
+                    if (DateTime.UtcNow >= deadline || DateTime.UtcNow - lastProgressAt >= StallTimeout)
+                        throw new TimeoutException("Temporary episode transfer stalled or exceeded two hours.");
+                    if (manager.PartialProgress > lastProgress + 0.05)
+                    {
+                        lastProgress = manager.PartialProgress;
+                        lastProgressAt = DateTime.UtcNow;
+                        log($"Episode download {lastProgress:F0}% ({manager.Monitor.DownloadRate / 1024.0 / 1024.0:F1} MiB/s).");
+                    }
+                    await Task.Delay(2000, token);
+                }
+
+                await manager.StopAsync(TimeSpan.FromSeconds(2));
+                token.ThrowIfCancellationRequested();
+                CheckAvailableSpace(directory, 0);
+                string path = File.Exists(video.DownloadCompleteFullPath) ? video.DownloadCompleteFullPath : video.FullPath;
+                if (!File.Exists(path) || new FileInfo(path).Length != video.Length)
+                    throw new IOException("Torrent reported completion without a complete episode file.");
+                string[] captionPaths = sidecars.Select(file => file.DownloadCompleteFullPath).Where(File.Exists).ToArray();
+                (path, captionPaths) = PublishEpisodeFiles(directory, path, episode, captionPaths);
+                string notice = await VerifyMediaAsync(path, audio, candidate.Title, captionPaths.Length > 0, token);
+                log("Episode file verified; opening native player.");
+                return (path, notice, captionPaths);
+            }
+            finally
+            {
+                try
+                {
+                    if (manager.State != TorrentState.Stopped) await manager.StopAsync(TimeSpan.FromSeconds(2));
+                }
+                finally
+                {
+                    if (manager.State == TorrentState.Stopped)
+                        await engine.RemoveAsync(manager, RemoveMode.KeepAllData);
+                }
+            }
         }
         finally
         {
-            if (manager.State != TorrentState.Stopped) await manager.StopAsync(TimeSpan.FromSeconds(2));
+            // Detach the retired DHT callbacks even if metadata never resolves.
+            // Active discovery remains enabled; only this closed engine changes.
+            var closedSettings = new EngineSettingsBuilder(engine.Settings) { DhtEndPoint = null };
+            await engine.UpdateSettingsAsync(closedSettings.ToSettings());
         }
     }
 

@@ -1,0 +1,21 @@
+# Temporary native torrent cleanup — October 8, 2026
+
+Status: **reproduced exits repaired; finite ordinary resource qualification passed**. No original media/profile was used.
+
+Four real localhost transfer regressions reproduced retained session ownership after early cancellation before metadata, payload cancellation, capacity rejection and successful completion followed by final-owner release. Three left their stopped manager registered; early cancellation left a ClientEngine-targeted DHT subscriber on the disposed DHT object. These are direct ownership assertions, not a claim that every native object was permanently leaked.
+
+`TemporaryEpisodeWatchService` now unregisters stopped managers with KeepAllData and uses the supported final DHT-settings transition to detach callbacks even when metadata never resolves. Only the closed session changes; matching, audio, file selection, capacity and final-owner rules are preserved. An internal constructor factory defaults to the same real ClientEngine and allows the regression to inspect the actual SDK session; the public service path remains unchanged.
+
+The **78-case temporary/queue/library cohort passed, zero failures/skips, in 46 seconds**, including all four previously failing cases, real completion, immediate shared reuse, first-owner retention and final-owner deletion. The Release build and private helper each had zero warnings/errors. This component evidence does not qualify real-provider identity/audio or human player controls.
+
+An ordinary process is running twenty real payload cancellations plus one fully transferred silent-file rejection, followed by natural settling and separate diagnostic collection. The reused seed is silent: the first probe wrongly expected publication and stopped when the production readable-audio guard correctly rejected it. That failed helper run is preserved and excluded from collection acceptance. The corrected private expectation explicitly verifies the rejection cause; the separate audible regression supplies completed two-owner proof. Existing generated media and the ordinary Release directory are reused; original permanent and partial download profiles remain untouched. Full hosted checkpoint of this new temporary cleanup remains pending publication.
+
+## Finite ordinary resource result
+
+The corrected ordinary process completed **20 real payload cancellations plus one fully transferred silent-file rejection**. All **21/21 managers and engines** were collected in the separate fixed diagnostic rounds. Exact-owned heap inspection found **zero ClientEngine/TorrentManager/TemporaryEpisodeWatchService objects**. Every canceled/rejected owned directory was gone; the permanent Ready video hash stayed unchanged. No desktop queries were made in this sample.
+
+Natural 60-second sample: **203,259,904 private bytes / 1,798 handles / 31 threads**. After diagnostic collection: **196,153,344 bytes / 1,753 handles / 31 threads**. This is finite collectibility evidence, not natural return to startup or overnight stability. Shared completion/reuse/first-owner/final-owner behavior remains separately proved by the readable-audio regression, not this silent-resource sample.
+
+Tested Release Core SHA-256: **4A063DC630BEDD3A7D55FF28A4140D1DCC80D571BB91FDEE0965F2B7062A79F8**; WPF: **BD1690A08FFF7A7343537094C4F203278B41A9F8ED570CE6C7ADDE0821CA87B7**. Only the temporary service source and regression changed in this batch; no WPF/Python source changed. Owned app and seed received normal close/stop and were absent afterward. Original file/mtime/config/metadata/caption snapshots and all five SQLite table contents remain unchanged, including eight independent resume rows.
+
+Evidence: `.artifacts/implementation/torrent-resource-cycles-20261008/temporary-ordinary-final-20`. The failed earlier helper expectation remains in `temporary-ordinary-20` and is not relabeled. Broader real-provider/audio/player UI, sustained operation, qBittorrent and package acceptance stay open; Books remain deferred.
