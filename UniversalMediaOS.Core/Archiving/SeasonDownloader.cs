@@ -23,6 +23,7 @@ namespace UniversalMediaOS.Core.Archiving
         private readonly DomainHotSwapper _config;
         private readonly DualTrackerRssParser _rssParser;
         private readonly QBitLogicGate _qbit;
+        private readonly Func<string, long> _availableSpace;
         private readonly object _activeTransferLock = new();
         private string? _activeQBitInfoHash;
         private TorrentManager? _activeMonoTorrentManager;
@@ -33,10 +34,17 @@ namespace UniversalMediaOS.Core.Archiving
         // A stalled transfer is one that has made no measurable progress for this long.
         private const int StallTimeoutSeconds = 1800; // 30 minutes
         private const int MetadataTimeoutSeconds = 60;
+        private const long ReservedFreeBytes = 1024L * 1024 * 1024;
 
         public SeasonDownloader(DomainHotSwapper config)
+            : this(config, null)
+        {
+        }
+
+        internal SeasonDownloader(DomainHotSwapper config, Func<string, long>? availableSpace)
         {
             _config = config;
+            _availableSpace = availableSpace ?? (directory => new DriveInfo(Path.GetPathRoot(directory)!).AvailableFreeSpace);
             
             string dDir = _config.GetSetting("DownloadDirectory");
             _downloadDir = string.IsNullOrEmpty(dDir)
@@ -305,6 +313,7 @@ namespace UniversalMediaOS.Core.Archiving
                 log("[P2P Season Downloader] Download cancelled by user.");
                 throw;
             }
+            catch (InsufficientDownloadSpaceException) { throw; }
             catch (Exception ex)
             {
                 log($"[P2P Season Downloader] CRITICAL ERROR during batch process: {ex.Message}");
@@ -639,6 +648,7 @@ namespace UniversalMediaOS.Core.Archiving
             var downloadedFiles = new List<string>();
             try
             {
+                CheckNativeDownloadSpace(0);
                 string cacheDir = Path.Combine(
                     UniversalMediaOS.Core.Helpers.AppDataPaths.LocalBaseDirectory,
                     "UniversalMediaOS", "TorrentCache");
@@ -672,6 +682,49 @@ namespace UniversalMediaOS.Core.Archiving
 
                         try
                         {
+                            token.ThrowIfCancellationRequested();
+                            if (manager.HasMetadata)
+                                CheckNativeDownloadSpace(RequiredNativeAllocation(manager));
+                            else
+                            {
+                                // The SDK metadata API removes its own cache entries.
+                                // Its separate cache protects existing native resume data.
+                                var metadataSettings = new EngineSettingsBuilder(engine.Settings)
+                                {
+                                    CacheDirectory = Path.Combine(cacheDir, "MetadataProbe"),
+                                    AutoSaveLoadFastResume = false
+                                };
+                                using var metadataEngine = new ClientEngine(metadataSettings.ToSettings());
+                                try
+                                {
+                                    Torrent? resolved;
+                                    if (!Torrent.TryLoad(manager.MetadataPath, out resolved) || !MatchesRequestedHashes(resolved, magnet))
+                                    {
+                                        log("[MonoTorrent] Resolving torrent metadata before payload...");
+                                        using var metadataLimit = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(token);
+                                        metadataLimit.CancelAfter(TimeSpan.FromSeconds(MetadataTimeoutSeconds));
+                                        ReadOnlyMemory<byte> metadata;
+                                        try { metadata = await metadataEngine.DownloadMetadataAsync(magnet, metadataLimit.Token); }
+                                        catch (OperationCanceledException) when (!token.IsCancellationRequested)
+                                        {
+                                            log("[MonoTorrent] Metadata resolution timed out.");
+                                            return downloadedFiles;
+                                        }
+                                        resolved = Torrent.Load(metadata.Span);
+                                        if (!MatchesRequestedHashes(resolved, magnet))
+                                            throw new InvalidDataException("Resolved torrent metadata conflicts with the selected magnet hash.");
+                                    }
+                                    // This unstarted manager supplies the SDK’s escaped
+                                    // file paths; it never receives payload bytes.
+                                    var allocationManager = await metadataEngine.AddAsync(resolved, _downloadDir);
+                                    try { CheckNativeDownloadSpace(RequiredNativeAllocation(allocationManager)); }
+                                    finally { await metadataEngine.RemoveAsync(allocationManager, RemoveMode.KeepAllData); }
+                                }
+                                finally
+                                {
+                                    await metadataEngine.UpdateSettingsAsync(new EngineSettingsBuilder(metadataEngine.Settings) { DhtEndPoint = null }.ToSettings());
+                                }
+                            }
                             await manager.StartAsync();
 
                             // 1. Resolve magnet metadata
@@ -680,6 +733,7 @@ namespace UniversalMediaOS.Core.Archiving
                             while (!manager.HasMetadata)
                             {
                                 token.ThrowIfCancellationRequested();
+                                CheckNativeDownloadSpace(0);
                                 if (DateTime.UtcNow > metadataDeadline)
                                 {
                                     log("[MonoTorrent] Metadata resolution timed out.");
@@ -696,6 +750,7 @@ namespace UniversalMediaOS.Core.Archiving
                             while (manager.State != TorrentState.Seeding && manager.State != TorrentState.Stopped)
                             {
                                 token.ThrowIfCancellationRequested();
+                                CheckNativeDownloadSpace(0);
 
                                 double progress = manager.Progress;
                                 if (progress > lastProgress + 0.1)
@@ -717,6 +772,7 @@ namespace UniversalMediaOS.Core.Archiving
                                 if (progress >= 100.0) break;
                             }
 
+                            CheckNativeDownloadSpace(0);
                             if (manager.Progress >= 100.0)
                             {
                                 log("[Season Downloader] Torrent parsing success! Download complete.");
@@ -766,11 +822,38 @@ namespace UniversalMediaOS.Core.Archiving
             {
                 throw;
             }
+            catch (InsufficientDownloadSpaceException) { throw; }
             catch (Exception ex)
             {
                 log($"[MonoTorrent] Error: {ex.Message}");
             }
             return downloadedFiles;
+        }
+
+        private void CheckNativeDownloadSpace(long allocationBytes)
+        {
+            if (_availableSpace(_downloadDir) - allocationBytes < ReservedFreeBytes)
+                throw new InsufficientDownloadSpaceException("Not enough free disk space for the season download and safety reserve. Partial data was kept for resume.");
+        }
+
+        private static bool MatchesRequestedHashes(Torrent torrent, MagnetLink magnet) =>
+            (magnet.InfoHashes.V1 == null || torrent.InfoHashes.Contains(magnet.InfoHashes.V1)) &&
+            (magnet.InfoHashes.V2 == null || torrent.InfoHashes.Contains(magnet.InfoHashes.V2));
+
+        private static long RequiredNativeAllocation(TorrentManager manager)
+        {
+            long required = 0;
+            foreach (var file in manager.Files)
+            {
+                string existingPath = File.Exists(file.FullPath) ? file.FullPath : file.DownloadCompleteFullPath;
+                var existing = new FileInfo(existingPath);
+                // Regular preallocated partials already occupy their file length.
+                // Sparse files need a conservative full-size allocation estimate.
+                long allocated = existing.Exists && !existing.Attributes.HasFlag(FileAttributes.SparseFile)
+                    ? Math.Min(existing.Length, file.Length) : 0;
+                required += file.Length - allocated;
+            }
+            return required;
         }
 
         /// <summary>

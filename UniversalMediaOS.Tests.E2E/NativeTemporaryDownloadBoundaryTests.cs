@@ -25,6 +25,117 @@ public sealed class NativeTemporaryDownloadBoundaryTests
 {
     private const long Reserve = 1024L * 1024 * 1024;
 
+    [Fact]
+    public async Task PermanentSeasonResumeReusesAllocatedPartialAndPreservesItsMetadataCache()
+    {
+        await using var fixture = await LocalSeeder.StartAsync(128 * 1024, seconds: 90);
+        string? previousRoot = Environment.GetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable);
+        Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, fixture.Root);
+        try
+        {
+            bool resumed = false;
+            using var downloader = new SeasonDownloader(fixture.SeasonConfig(Path.Combine(fixture.Root, "library")),
+                _ => resumed ? Reserve + 4096 : long.MaxValue);
+            double previous = 0;
+            string? metadataPath = null;
+            byte[]? metadataHash = null;
+            (string Path, long Length)[] allocatedFiles = [];
+            for (int cycle = 0; cycle < 2; cycle++)
+            {
+                using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+                var transfer = downloader.DownloadSeasonAsync(LocalSeeder.Title, fixture.Logs.Add, token: cancellation.Token);
+                try
+                {
+                    await Eventually(() => transfer.IsCompleted || ActiveManager(downloader) is { } active &&
+                        active.Monitor.DataBytesReceived > 0 && active.Progress > previous + 0.000001,
+                        () => $"Resume cycle {cycle}: {NativeState(ActiveManager(downloader))}; {fixture.SeedState}; {string.Join(" | ", fixture.Logs.TakeLast(6))}");
+                    Assert.False(transfer.IsCompleted, $"Resume refused its existing allocation. {string.Join(" | ", fixture.Logs)}");
+                    var active = ActiveManager(downloader)!;
+                    allocatedFiles = active.Files.Select(file => (file.FullPath, file.Length)).ToArray();
+                    await downloader.PauseActiveTransferAsync();
+                    previous = active.Progress;
+                }
+                finally
+                {
+                    cancellation.Cancel();
+                    try { await transfer.WaitAsync(TimeSpan.FromSeconds(10)); }
+                    catch (OperationCanceledException) { }
+                    catch (InsufficientDownloadSpaceException) when (transfer.IsFaulted) { }
+                }
+                string cache = Path.Combine(AppDataPaths.LocalBaseDirectory, "UniversalMediaOS", "TorrentCache");
+                Assert.NotEmpty(Directory.GetFiles(cache, "*.fresume", SearchOption.AllDirectories));
+                if (cycle == 0)
+                {
+                    string ownedLibrary = Path.GetFullPath(Path.Combine(fixture.Root, "library")) + Path.DirectorySeparatorChar;
+                    foreach (var file in allocatedFiles.Where(file => File.Exists(file.Path)))
+                    {
+                        Assert.StartsWith(ownedLibrary, Path.GetFullPath(file.Path), StringComparison.OrdinalIgnoreCase);
+                        using var allocation = File.Open(file.Path, FileMode.Open, FileAccess.Write, FileShare.Read);
+                        allocation.SetLength(file.Length);
+                    }
+                    metadataPath = Assert.Single(Directory.GetFiles(Path.Combine(cache, "metadata"), "*.torrent"));
+                    metadataHash = SHA256.HashData(File.ReadAllBytes(metadataPath));
+                }
+                else Assert.Equal(metadataHash!, SHA256.HashData(File.ReadAllBytes(metadataPath!)));
+                resumed = true;
+            }
+            Assert.Equal("permanent retained sentinel", File.ReadAllText(Path.Combine(fixture.Root, "permanent.mkv")));
+        }
+        finally { Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, previousRoot); }
+    }
+
+    [Theory]
+    [InlineData("initial")]
+    [InlineData("metadata")]
+    [InlineData("falling")]
+    public async Task PermanentSeasonRejectsInsufficientSpaceBeforePayloadAndRetainsInterruptedPieces(string mode)
+    {
+        await using var fixture = await LocalSeeder.StartAsync(32 * 1024, seconds: 90);
+        string? previousRoot = Environment.GetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable);
+        Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, fixture.Root);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        Task<bool>? transfer = null;
+        try
+        {
+            string downloads = Path.Combine(fixture.Root, "library");
+            bool reserveFallen = false;
+            using var downloader = new SeasonDownloader(fixture.SeasonConfig(downloads), _ => mode switch
+            {
+                "initial" => 0,
+                "metadata" => Reserve + fixture.VideoBytes / 2,
+                _ => reserveFallen ? 0 : long.MaxValue
+            });
+            transfer = downloader.DownloadSeasonAsync(LocalSeeder.Title, fixture.Logs.Add, token: cancellation.Token);
+            await Eventually(() => transfer.IsCompleted || ActiveManager(downloader)?.Monitor.DataBytesReceived > 0);
+            if (mode == "falling")
+            {
+                reserveFallen = true;
+                await Task.WhenAny(transfer, Task.Delay(4500));
+            }
+            // Abort only the old implementation's unguarded real transfer.
+            if (!transfer.IsCompleted) cancellation.Cancel();
+            var failure = await Record.ExceptionAsync(() => transfer.WaitAsync(TimeSpan.FromSeconds(10)));
+            Assert.True(failure is InsufficientDownloadSpaceException,
+                $"Expected space failure, got {failure?.GetType().Name ?? "successful result"}. Logs: {string.Join(" | ", fixture.Logs)}");
+            Assert.Contains("space", failure!.Message, StringComparison.OrdinalIgnoreCase);
+            if (mode == "falling")
+            {
+                Assert.True(fixture.UploadedBytes > 0);
+                Assert.NotEmpty(Directory.GetFiles(downloads, "*.!mt", SearchOption.AllDirectories));
+                string cache = Path.Combine(AppDataPaths.LocalBaseDirectory, "UniversalMediaOS", "TorrentCache");
+                Assert.NotEmpty(Directory.GetFiles(cache, "*.fresume", SearchOption.AllDirectories));
+            }
+            else Assert.Equal(0, fixture.UploadedBytes);
+            Assert.Equal("permanent retained sentinel", File.ReadAllText(Path.Combine(fixture.Root, "permanent.mkv")));
+        }
+        finally
+        {
+            cancellation.Cancel();
+            if (transfer != null) try { await transfer.WaitAsync(TimeSpan.FromSeconds(10)); } catch (Exception) { }
+            Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, previousRoot);
+        }
+    }
+
     [Theory]
     [InlineData("before-metadata")]
     [InlineData("payload-cancel")]
@@ -85,7 +196,7 @@ public sealed class NativeTemporaryDownloadBoundaryTests
     [InlineData("session-cleanup")]
     public async Task RapidSeasonPauseRetainsActualProgressAndReleasesTheClosedSession(string check)
     {
-        await using var fixture = await LocalSeeder.StartAsync(32 * 1024, seconds: 90);
+        await using var fixture = await LocalSeeder.StartAsync(128 * 1024, seconds: 90);
         string? previousRoot = Environment.GetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable);
         Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, fixture.Root);
         try
@@ -105,15 +216,19 @@ public sealed class NativeTemporaryDownloadBoundaryTests
             {
                 var job = queue.Enqueue(LocalSeeder.Title, "Sub");
                 jobId = job.Id;
+                double previousProgress = 0;
                 for (int cycle = 0; cycle < 2; cycle++)
                 {
                     if (cycle > 0) Assert.True(queue.Resume(job.Id));
-                    await Eventually(() => ActiveManager(executor) is { HasMetadata: true, State: TorrentState.Downloading });
+                    await Eventually(() => job.Status is DownloadJobStatus.Failed or DownloadJobStatus.Completed ||
+                        ActiveManager(executor) is { HasMetadata: true, State: TorrentState.Downloading });
+                    Assert.True(ActiveManager(executor) is { HasMetadata: true, State: TorrentState.Downloading },
+                        $"Expected incomplete native transfer, got {job.Status}: {job.StatusMessage}");
                     var manager = ActiveManager(executor)!;
                     var engine = manager.Engine!;
                     object oldDht = typeof(ClientEngine).GetProperty("DhtEngine", PrivateInstance)!.GetValue(engine)!;
-                    double previousProgress = manager.Progress;
-                    await Eventually(() => manager.Progress > previousProgress + 0.1);
+                    await Eventually(() => manager.Monitor.DataBytesReceived > 0 && manager.Progress > previousProgress + 0.000001,
+                        () => $"Native cycle {cycle}: previous={previousProgress}; {NativeState(manager)}; {fixture.SeedState}; status={job.Status}: {job.StatusMessage}");
                     Assert.True(await queue.PauseAsync(job.Id));
                     await Eventually(() => job.Status == DownloadJobStatus.Paused && ActiveManager(executor) == null);
                     Assert.Equal(TorrentState.Stopped, manager.State);
@@ -134,6 +249,7 @@ public sealed class NativeTemporaryDownloadBoundaryTests
                         }
                         Assert.True(engine.Disposed);
                     }
+                    previousProgress = manager.Progress;
                 }
                 finalProgress = job.Progress;
                 var preserved = Directory.GetFiles(downloads, "*", SearchOption.AllDirectories)
@@ -158,6 +274,9 @@ public sealed class NativeTemporaryDownloadBoundaryTests
         var downloader = (SeasonDownloader?)typeof(SeasonDownloadJobExecutor).GetField("_activeDownloader", PrivateInstance)!.GetValue(executor);
         return downloader == null ? null : (TorrentManager?)typeof(SeasonDownloader).GetField("_activeMonoTorrentManager", PrivateInstance)!.GetValue(downloader);
     }
+
+    private static TorrentManager? ActiveManager(SeasonDownloader downloader) =>
+        (TorrentManager?)typeof(SeasonDownloader).GetField("_activeMonoTorrentManager", PrivateInstance)!.GetValue(downloader);
 
     [Theory]
     [InlineData("initial")]
@@ -259,10 +378,14 @@ public sealed class NativeTemporaryDownloadBoundaryTests
         }
     }
 
-    private static async Task Eventually(Func<bool> condition)
+    private static string NativeState(TorrentManager? manager) => manager == null ? "manager absent" :
+        $"state={manager.State}, progress={manager.Progress}, received={manager.Monitor.DataBytesReceived}, trackerTiers={manager.TrackerManager.Tiers.Count}, seeds={manager.Peers.Seeds}, leechs={manager.Peers.Leechs}, available={manager.Peers.Available}";
+
+    private static async Task Eventually(Func<bool> condition, Func<string>? state = null)
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(12));
-        while (!condition()) await Task.Delay(50, deadline.Token);
+        try { while (!condition()) await Task.Delay(50, deadline.Token); }
+        catch (OperationCanceledException) when (state != null) { throw new TimeoutException(state()); }
     }
 
     private sealed class LocalSeeder : IAsyncDisposable
@@ -272,6 +395,7 @@ public sealed class NativeTemporaryDownloadBoundaryTests
         public string Temporary => Path.Combine(Root, "temporary");
         public long VideoBytes { get; private set; }
         public long UploadedBytes => _manager!.Monitor.DataBytesSent;
+        public string SeedState => $"seed state={_manager?.State}, running={_engine?.IsRunning}, disposed={_engine?.Disposed}, sent={UploadedBytes}, peers={_manager?.Peers.Leechs}";
         public List<string> Logs { get; } = [];
         public string Origin { get; private set; } = "";
         private readonly CancellationTokenSource _lifetime = new();
@@ -320,7 +444,8 @@ public sealed class NativeTemporaryDownloadBoundaryTests
                     DhtEndPoint = null, CacheDirectory = Path.Combine(fixture.Root, "seed-cache"), MaximumUploadRate = rate,
                     ListenEndPoints = new Dictionary<string, IPEndPoint> { ["ipv4"] = new(IPAddress.Loopback, peerPort) }
                 }.ToSettings());
-                fixture._manager = await fixture._engine.AddAsync(torrent, fixture.Root);
+                fixture._manager = await fixture._engine.AddAsync(torrent, fixture.Root,
+                    new TorrentSettingsBuilder { MaximumUploadRate = rate }.ToSettings());
                 await fixture._manager.StartAsync();
                 await Eventually(() => fixture._manager.State == TorrentState.Seeding);
                 return fixture;
@@ -338,6 +463,17 @@ public sealed class NativeTemporaryDownloadBoundaryTests
             Func<string, Action<string>?, CancellationToken, Task<List<TorrentResult>>>? search = null,
             Func<EngineSettings, ClientEngine>? createEngine = null) =>
             new(search ?? ((_, _, _) => Task.FromResult(Candidates())), Temporary, capacity, createEngine);
+
+        public DomainHotSwapper SeasonConfig(string downloads)
+        {
+            var config = new DomainHotSwapper(Path.Combine(Root, "config.json"));
+            config.SetSetting("DownloadDirectory", downloads);
+            config.SetSetting("NyaaUrl", Origin + "rss?q=");
+            config.SetSetting("AnimeToshoUrl", Origin + "rss?q=");
+            config.SetSetting("QBitHost", "127.0.0.1");
+            config.SetSetting("QBitPort", new Uri(Origin).Port.ToString());
+            return config;
+        }
 
         public void AssertRetainedAndClean()
         {
@@ -387,6 +523,26 @@ public sealed class NativeTemporaryDownloadBoundaryTests
         {
             _lifetime.Cancel();
             _listener.Close();
+            if (_engine is { IsRunning: true, Disposed: false } && _manager != null)
+            {
+                // MonoTorrent 3.0.2 has one process-wide pending send queue.
+                // Leave this fixture's queued sends unlimited before its ticks stop,
+                // so a disposed rate limiter cannot block the next fixture.
+                var limitsReleased = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                int ticks = 0;
+                EventHandler<StatsUpdateEventArgs> observe = (_, _) =>
+                {
+                    if (Interlocked.Increment(ref ticks) >= 2) limitsReleased.TrySetResult();
+                };
+                _engine.StatsUpdate += observe;
+                try
+                {
+                    await _engine.UpdateSettingsAsync(new EngineSettingsBuilder(_engine.Settings) { MaximumUploadRate = 0 }.ToSettings());
+                    await _manager.UpdateSettingsAsync(new TorrentSettingsBuilder(_manager.Settings) { MaximumUploadRate = 0 }.ToSettings());
+                    await limitsReleased.Task.WaitAsync(TimeSpan.FromSeconds(3));
+                }
+                finally { _engine.StatsUpdate -= observe; }
+            }
             if (_manager != null) await _manager.StopAsync(TimeSpan.FromSeconds(2));
             _engine?.Dispose();
             if (_server != null) await _server;
