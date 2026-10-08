@@ -661,86 +661,104 @@ namespace UniversalMediaOS.Core.Archiving
                 };
                 using (var engine = new ClientEngine(settingsBuilder.ToSettings()))
                 {
-                    var magnet = MagnetLink.Parse(magnetLink);
-                    var manager = await engine.AddAsync(magnet, _downloadDir);
-                    lock (_activeTransferLock)
-                    {
-                        _activeMonoTorrentManager = manager;
-                    }
-                    
                     try
                     {
-                        await manager.StartAsync();
-
-                        // 1. Resolve magnet metadata
-                        log("[MonoTorrent] Resolving torrent metadata...");
-                        var metadataDeadline = DateTime.UtcNow.AddSeconds(MetadataTimeoutSeconds);
-                        while (!manager.HasMetadata)
+                        var magnet = MagnetLink.Parse(magnetLink);
+                        var manager = await engine.AddAsync(magnet, _downloadDir);
+                        lock (_activeTransferLock)
                         {
-                            token.ThrowIfCancellationRequested();
-                            if (DateTime.UtcNow > metadataDeadline)
-                            {
-                                log("[MonoTorrent] Metadata resolution timed out.");
-                                return downloadedFiles;
-                            }
-                            await Task.Delay(1000, token);
+                            _activeMonoTorrentManager = manager;
                         }
 
-                        log($"[MonoTorrent] Starting download: \"{manager.Torrent?.Name ?? "Torrent"}\"");
-
-                        // 2. Download loop
-                        double lastProgress = manager.Progress;
-                        var lastProgressAt = DateTime.UtcNow;
-                        while (manager.State != TorrentState.Seeding && manager.State != TorrentState.Stopped)
+                        try
                         {
-                            token.ThrowIfCancellationRequested();
+                            await manager.StartAsync();
 
-                            double progress = manager.Progress;
-                            if (progress > lastProgress + 0.1)
+                            // 1. Resolve magnet metadata
+                            log("[MonoTorrent] Resolving torrent metadata...");
+                            var metadataDeadline = DateTime.UtcNow.AddSeconds(MetadataTimeoutSeconds);
+                            while (!manager.HasMetadata)
                             {
-                                lastProgress = progress;
-                                lastProgressAt = DateTime.UtcNow;
+                                token.ThrowIfCancellationRequested();
+                                if (DateTime.UtcNow > metadataDeadline)
+                                {
+                                    log("[MonoTorrent] Metadata resolution timed out.");
+                                    return downloadedFiles;
+                                }
+                                await Task.Delay(1000, token);
                             }
 
-                            if (DateTime.UtcNow - lastProgressAt > TimeSpan.FromSeconds(StallTimeoutSeconds))
+                            log($"[MonoTorrent] Starting download: \"{manager.Torrent?.Name ?? "Torrent"}\"");
+
+                            // 2. Download loop
+                            double lastProgress = manager.Progress;
+                            var lastProgressAt = DateTime.UtcNow;
+                            while (manager.State != TorrentState.Seeding && manager.State != TorrentState.Stopped)
                             {
-                                log("[MonoTorrent] Download stalled with no measurable progress. Partial files were left in place for resume.");
-                                return downloadedFiles;
+                                token.ThrowIfCancellationRequested();
+
+                                double progress = manager.Progress;
+                                if (progress > lastProgress + 0.1)
+                                {
+                                    lastProgress = progress;
+                                    lastProgressAt = DateTime.UtcNow;
+                                }
+
+                                if (DateTime.UtcNow - lastProgressAt > TimeSpan.FromSeconds(StallTimeoutSeconds))
+                                {
+                                    log("[MonoTorrent] Download stalled with no measurable progress. Partial files were left in place for resume.");
+                                    return downloadedFiles;
+                                }
+
+                                progressUpdate?.Invoke(progress * 0.95); // leave 5% for validation visual feedback
+                                log($"[MonoTorrent] Progress: {progress:F1}% | Speed: {manager.Monitor.DownloadRate / 1024.0 / 1024.0:F2} MB/s | State: {manager.State}");
+
+                                await Task.Delay(3000, token);
+                                if (progress >= 100.0) break;
                             }
 
-                            progressUpdate?.Invoke(progress * 0.95); // leave 5% for validation visual feedback
-                            log($"[MonoTorrent] Progress: {progress:F1}% | Speed: {manager.Monitor.DownloadRate / 1024.0 / 1024.0:F2} MB/s | State: {manager.State}");
+                            if (manager.Progress >= 100.0)
+                            {
+                                log("[Season Downloader] Torrent parsing success! Download complete.");
 
-                            await Task.Delay(3000, token);
-                            if (progress >= 100.0) break;
+                                foreach (var f in manager.Files)
+                                {
+                                    string fullPath = f.FullPath;
+                                    downloadedFiles.Add(fullPath);
+                                }
+                            }
                         }
-
-                        if (manager.Progress >= 100.0)
+                        finally
                         {
-                            log("[Season Downloader] Torrent parsing success! Download complete.");
-
-                            foreach (var f in manager.Files)
+                            try
                             {
-                                string fullPath = f.FullPath;
-                                downloadedFiles.Add(fullPath);
+                                // Stop flushes pieces and fast-resume data. A quick pause
+                                // can happen before the three-second progress report.
+                                if (manager.State != TorrentState.Stopped)
+                                    await manager.StopAsync();
+                                if (manager.HasMetadata)
+                                    progressUpdate?.Invoke(manager.Progress * 0.95);
+                            }
+                            finally
+                            {
+                                lock (_activeTransferLock)
+                                {
+                                    if (ReferenceEquals(_activeMonoTorrentManager, manager))
+                                        _activeMonoTorrentManager = null;
+                                }
+                                if (manager.State == TorrentState.Stopped)
+                                    await engine.RemoveAsync(manager, RemoveMode.KeepAllData);
                             }
                         }
                     }
                     finally
                     {
-                        // Stop gracefully — MonoTorrent will persist .resume files organically.
-                        // Do NOT delete partial files; they allow resuming interrupted downloads.
-                        if (manager.State != TorrentState.Stopped)
-                        {
-                            await manager.StopAsync();
-                        }
-                        lock (_activeTransferLock)
-                        {
-                            if (ReferenceEquals(_activeMonoTorrentManager, manager))
-                            {
-                                _activeMonoTorrentManager = null;
-                            }
-                        }
+                        // MonoTorrent 3.0.2 Dispose leaves the DHT event subscribers
+                        // attached to its timer-owned DHT object. The supported
+                        // settings transition detaches them before disposal.
+                        // DHT remains enabled throughout the active transfer.
+                        var closedSettings = new EngineSettingsBuilder(engine.Settings) { DhtEndPoint = null };
+                        await engine.UpdateSettingsAsync(closedSettings.ToSettings());
                     }
                 }
             }
