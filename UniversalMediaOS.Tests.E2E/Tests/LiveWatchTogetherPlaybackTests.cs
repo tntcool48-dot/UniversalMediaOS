@@ -48,8 +48,13 @@ public sealed class LiveWatchTogetherPlaybackTests(ITestOutputHelper output)
         long bytes = new FileInfo(video).Length;
         DateTime timestamp = File.GetLastWriteTimeUtc(video);
 
-        Window Window(AppFixture fixture) => fixture.App.GetAllTopLevelWindows(fixture.Automation)
-            .Single(window => window.Name == AppFixture.ExpectedMainWindowTitle);
+        Window Window(AppFixture fixture)
+        {
+            Assert.False(fixture.App.HasExited, $"Owned Watch Together app {fixture.App.ProcessId} exited.");
+            var window = fixture.MainWindow;
+            Assert.Equal(fixture.App.ProcessId, window.Properties.ProcessId.Value);
+            return window;
+        }
         Button Button(AppFixture fixture, string name) => Window(fixture).FindFirstDescendant(cf => cf.ByName(name))!.AsButton();
         double Position(AppFixture fixture) => Window(fixture).FindFirstDescendant(cf => cf.ByAutomationId("PlaybackSlider"))!
             .Patterns.RangeValue.Pattern.Value.Value;
