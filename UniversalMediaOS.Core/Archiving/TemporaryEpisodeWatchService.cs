@@ -111,6 +111,7 @@ public sealed class TemporaryEpisodeWatchService
                 }
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
                 catch (InsufficientDownloadSpaceException) { throw; }
+                catch (NativeTorrentStorageException) { throw; }
                 catch (Exception ex)
                 {
                     log($"Torrent candidate failed: {ex.Message}");
@@ -242,6 +243,7 @@ public sealed class TemporaryEpisodeWatchService
                 while (manager.PartialProgress < 99.999 || !video.BitField.AllTrue)
                 {
                     token.ThrowIfCancellationRequested();
+                    NativeTorrentStorageException.ThrowIfFailed(manager);
                     CheckAvailableSpace(directory, 0);
                     if (DateTime.UtcNow >= deadline || DateTime.UtcNow - lastProgressAt >= StallTimeout)
                         throw new TimeoutException("Temporary episode transfer stalled or exceeded two hours.");
@@ -254,6 +256,7 @@ public sealed class TemporaryEpisodeWatchService
                     await Task.Delay(2000, token);
                 }
 
+                NativeTorrentStorageException.ThrowIfFailed(manager);
                 await manager.StopAsync(TimeSpan.FromSeconds(2));
                 token.ThrowIfCancellationRequested();
                 CheckAvailableSpace(directory, 0);

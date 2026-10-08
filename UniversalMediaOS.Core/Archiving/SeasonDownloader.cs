@@ -314,6 +314,7 @@ namespace UniversalMediaOS.Core.Archiving
                 throw;
             }
             catch (InsufficientDownloadSpaceException) { throw; }
+            catch (NativeTorrentStorageException) { throw; }
             catch (Exception ex)
             {
                 log($"[P2P Season Downloader] CRITICAL ERROR during batch process: {ex.Message}");
@@ -733,6 +734,7 @@ namespace UniversalMediaOS.Core.Archiving
                             while (!manager.HasMetadata)
                             {
                                 token.ThrowIfCancellationRequested();
+                                NativeTorrentStorageException.ThrowIfFailed(manager);
                                 CheckNativeDownloadSpace(0);
                                 if (DateTime.UtcNow > metadataDeadline)
                                 {
@@ -750,6 +752,7 @@ namespace UniversalMediaOS.Core.Archiving
                             while (manager.State != TorrentState.Seeding && manager.State != TorrentState.Stopped)
                             {
                                 token.ThrowIfCancellationRequested();
+                                NativeTorrentStorageException.ThrowIfFailed(manager);
                                 CheckNativeDownloadSpace(0);
 
                                 double progress = manager.Progress;
@@ -772,6 +775,7 @@ namespace UniversalMediaOS.Core.Archiving
                                 if (progress >= 100.0) break;
                             }
 
+                            NativeTorrentStorageException.ThrowIfFailed(manager);
                             CheckNativeDownloadSpace(0);
                             if (manager.Progress >= 100.0)
                             {
@@ -823,6 +827,7 @@ namespace UniversalMediaOS.Core.Archiving
                 throw;
             }
             catch (InsufficientDownloadSpaceException) { throw; }
+            catch (NativeTorrentStorageException) { throw; }
             catch (Exception ex)
             {
                 log($"[MonoTorrent] Error: {ex.Message}");

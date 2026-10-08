@@ -26,6 +26,104 @@ public sealed class NativeTemporaryDownloadBoundaryTests
     private const long Reserve = 1024L * 1024 * 1024;
 
     [Fact]
+    public async Task TemporaryEpisodeFileSharingFailureStopsProviderRotationAndCleansOnRestart()
+    {
+        await using var fixture = await LocalSeeder.StartAsync(128 * 1024, seconds: 90);
+        ClientEngine? engine = null;
+        TorrentManager? manager = null;
+        FileStream? blocker = null;
+        var service = fixture.Service(_ => long.MaxValue, createEngine: settings => engine = new ClientEngine(settings));
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        Task<TemporaryEpisodeWatchResult>? transfer = null;
+        try
+        {
+            transfer = service.DownloadAsync(1001, LocalSeeder.Title, [], 1, "Sub", message =>
+            {
+                fixture.Logs.Add(message);
+                if (!message.StartsWith("Downloading only episode")) return;
+                manager = Assert.Single(engine!.Torrents);
+                string partial = manager.Files.Single(file => file.Path.EndsWith(".mkv", StringComparison.OrdinalIgnoreCase)).FullPath;
+                Assert.StartsWith(fixture.Temporary + Path.DirectorySeparatorChar, partial, StringComparison.OrdinalIgnoreCase);
+                Directory.CreateDirectory(Path.GetDirectoryName(partial)!);
+                File.WriteAllBytes(partial, []);
+                blocker = File.Open(partial, FileMode.Open, FileAccess.Read, FileShare.Read);
+            }, cancellation.Token);
+            await Eventually(() => transfer.IsCompleted || manager?.State == TorrentState.Error);
+            await Task.WhenAny(transfer, Task.Delay(4500));
+            if (!transfer.IsCompleted) cancellation.Cancel();
+            var failure = await Record.ExceptionAsync(async () =>
+            {
+                var unexpected = await transfer.WaitAsync(TimeSpan.FromSeconds(10));
+                unexpected.Lease.Dispose();
+            });
+            Assert.IsType<NativeTorrentStorageException>(failure);
+            Assert.Contains("write", failure!.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Single(fixture.Logs, message => message.StartsWith("Checking torrent files:"));
+            Assert.True(engine!.Disposed);
+            Assert.Empty(engine.Torrents);
+        }
+        finally
+        {
+            blocker?.Dispose();
+            cancellation.Cancel();
+            if (transfer != null) try { await transfer.WaitAsync(TimeSpan.FromSeconds(10)); } catch (Exception) { }
+            _ = fixture.Service(_ => long.MaxValue); // Production restart cleanup after the OS blocker releases.
+        }
+        fixture.AssertRetainedAndClean();
+    }
+
+    [Theory]
+    [InlineData("read")]
+    [InlineData("write")]
+    public async Task PermanentSeasonFileSharingFailureEndsPromptlyAndRetainsRetryablePieces(string operation)
+    {
+        await using var fixture = await LocalSeeder.StartAsync(128 * 1024, seconds: 90);
+        string? previousRoot = Environment.GetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable);
+        Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, fixture.Root);
+        try
+        {
+            string downloads = Path.Combine(fixture.Root, "library");
+            var executor = new SeasonDownloadJobExecutor(fixture.SeasonConfig(downloads));
+            using var queue = new DownloadQueueService(Path.Combine(fixture.Root, "queue.json"), executor);
+            var job = queue.Enqueue(LocalSeeder.Title, "Sub");
+            await Eventually(() => ActiveManager(executor) is { State: TorrentState.Downloading } active &&
+                active.Monitor.DataBytesReceived > 0 && active.Progress > 0);
+            var first = ActiveManager(executor)!;
+            string partial = first.Files.Single(file => file.Path.EndsWith(".mkv", StringComparison.OrdinalIgnoreCase)).FullPath;
+            await queue.PauseAsync(job.Id);
+            await Eventually(() => job.Status == DownloadJobStatus.Paused && ActiveManager(executor) == null);
+            double previous = first.Progress;
+            byte[] partialHash = SHA256.HashData(File.ReadAllBytes(partial));
+            string metadata = Assert.Single(Directory.GetFiles(Path.Combine(AppDataPaths.LocalBaseDirectory,
+                "UniversalMediaOS", "TorrentCache", "metadata"), "*.torrent"));
+            byte[] metadataHash = SHA256.HashData(File.ReadAllBytes(metadata));
+            using (var blocker = File.Open(partial, FileMode.Open, FileAccess.Read,
+                operation == "read" ? FileShare.None : FileShare.Read))
+            {
+                Assert.True(queue.Resume(job.Id));
+                await Eventually(() => job.Status == DownloadJobStatus.Failed && ActiveManager(executor) == null,
+                    () => $"Blocked {operation}: {job.Status}; {NativeState(ActiveManager(executor))}; error={ActiveManager(executor)?.Error?.Reason}; {job.StatusMessage}");
+                Assert.Contains(operation, job.StatusMessage, StringComparison.OrdinalIgnoreCase);
+                Assert.True(job.CanRetry);
+            }
+            Assert.Equal(partialHash, SHA256.HashData(File.ReadAllBytes(partial)));
+            Assert.Equal(metadataHash, SHA256.HashData(File.ReadAllBytes(metadata)));
+            Assert.True(queue.Retry(job.Id));
+            await Eventually(() => ActiveManager(executor) is { State: TorrentState.Downloading } resumed &&
+                resumed.Monitor.DataBytesReceived > 0 && resumed.Progress > previous + 0.000001,
+                () => $"Unlocked retry: {job.Status}; {NativeState(ActiveManager(executor))}; {job.StatusMessage}");
+            var final = ActiveManager(executor)!;
+            await queue.PauseAsync(job.Id);
+            await Eventually(() => job.Status == DownloadJobStatus.Paused && ActiveManager(executor) == null);
+            Assert.Equal(final.Progress * 0.95, job.Progress, precision: 8);
+            Assert.Equal("permanent retained sentinel", File.ReadAllText(Path.Combine(fixture.Root, "permanent.mkv")));
+            Assert.NotEmpty(Directory.GetFiles(Path.Combine(AppDataPaths.LocalBaseDirectory,
+                "UniversalMediaOS", "TorrentCache", "fastresume"), "*.fresume"));
+        }
+        finally { Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, previousRoot); }
+    }
+
+    [Fact]
     public async Task PermanentSeasonResumeReusesAllocatedPartialAndPreservesItsMetadataCache()
     {
         await using var fixture = await LocalSeeder.StartAsync(128 * 1024, seconds: 90);
