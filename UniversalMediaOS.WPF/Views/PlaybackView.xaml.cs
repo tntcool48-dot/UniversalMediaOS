@@ -354,6 +354,9 @@ namespace UniversalMediaOS.WPF.Views
         private readonly List<InjectedCookieState> _injectedCookies = new();
         private int _volumeBeforeMute = 100;
         private int _controlsRevealVersion;
+        private IntPtr _surfaceMonitor;
+        private DpiScale _surfaceDpi;
+        private bool _displayRefreshQueued;
         private bool _controlsKeyboardInteraction;
         private readonly DispatcherTimer _controlsHideTimer = new() { Interval = TimeSpan.FromSeconds(3) };
 
@@ -385,6 +388,9 @@ namespace UniversalMediaOS.WPF.Views
             {
                 _surfaceWindow.Activated += SurfaceWindow_Activated;
                 _surfaceWindow.PreviewKeyDown += SurfaceWindow_PreviewKeyDown;
+                _surfaceWindow.LocationChanged += SurfaceWindow_DisplayChanged;
+                _surfaceWindow.SizeChanged += SurfaceWindow_DisplayChanged;
+                RememberSurfaceDisplay();
             }
             _controlsHideTimer.Tick -= ControlsHideTimer_Tick;
             _controlsHideTimer.Tick += ControlsHideTimer_Tick;
@@ -455,6 +461,38 @@ namespace UniversalMediaOS.WPF.Views
             if (IsVisible) ShowControlsTemporarily();
         }
 
+        private void RememberSurfaceDisplay()
+        {
+            if (_surfaceWindow == null) return;
+            _surfaceMonitor = MonitorFromWindow(new WindowInteropHelper(_surfaceWindow).Handle, MONITOR_DEFAULTTONEAREST);
+            _surfaceDpi = VisualTreeHelper.GetDpi(_surfaceWindow);
+        }
+
+        private void SurfaceWindow_DisplayChanged(object? sender, EventArgs e)
+        {
+            if (_displayRefreshQueued || _surfaceWindow?.WindowState == WindowState.Minimized) return;
+            _displayRefreshQueued = true;
+            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
+            {
+                _displayRefreshQueued = false;
+                if (_closedForTab || _webViewDisposed || _surfaceWindow == null ||
+                    _surfaceWindow.WindowState == WindowState.Minimized) return;
+                IntPtr previousMonitor = _surfaceMonitor;
+                DpiScale previousDpi = _surfaceDpi;
+                RememberSurfaceDisplay();
+                bool changed = previousMonitor != IntPtr.Zero &&
+                    (previousMonitor != _surfaceMonitor || previousDpi.DpiScaleX != _surfaceDpi.DpiScaleX ||
+                     previousDpi.DpiScaleY != _surfaceDpi.DpiScaleY);
+                if (changed && IsLoaded && IsVisible &&
+                    DataContext is ViewModels.PlaybackViewModel { IsTabActive: true, IsWebViewActive: false } vm)
+                {
+                    AttachNativeVideoSurface(vm);
+                    vm.RedrawPausedNativeFrame();
+                    UpdateControlsLayout();
+                }
+            }));
+        }
+
         private void SurfaceWindow_PreviewKeyDown(object sender, KeyEventArgs e)
         {
             // Activating the owner can restore its previous keyboard focus,
@@ -485,8 +523,11 @@ namespace UniversalMediaOS.WPF.Views
             {
                 _surfaceWindow.Activated -= SurfaceWindow_Activated;
                 _surfaceWindow.PreviewKeyDown -= SurfaceWindow_PreviewKeyDown;
+                _surfaceWindow.LocationChanged -= SurfaceWindow_DisplayChanged;
+                _surfaceWindow.SizeChanged -= SurfaceWindow_DisplayChanged;
             }
             _surfaceWindow = null;
+            _surfaceMonitor = IntPtr.Zero;
             Interlocked.Increment(ref _webNavigationGeneration);
             _controlsHideTimer.Stop();
             _pendingBrowserResumeSeconds = null;

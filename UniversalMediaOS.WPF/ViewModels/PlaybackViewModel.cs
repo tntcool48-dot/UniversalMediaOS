@@ -1985,6 +1985,21 @@ namespace UniversalMediaOS.WPF.ViewModels
             PlayPending();
         }
 
+        internal bool RedrawPausedNativeFrame()
+        {
+            if (_isDisposing || IsDisposed || IsWebViewActive || !IsTabActive || IsPlaying ||
+                IsSeekingFromSlider || MediaPlayer.State != VLCState.Paused || !MediaPlayer.IsSeekable)
+                return false;
+            long position = MediaPlayer.Time;
+            if (position < 0) return false;
+            // Moving a paused Direct3D surface between displays can leave it
+            // black. Seek the existing input to its own clock to decode another
+            // frame, without starting playback or publishing a user seek.
+            MediaPlayer.Time = position;
+            AppLogger.Log($"[PlaybackView] Redrew paused native frame at {position} ms after display change.");
+            return true;
+        }
+
         internal static IReadOnlyList<PlaybackQualityOption> ParseHlsQualityOptions(string manifest)
         {
             if (string.IsNullOrWhiteSpace(manifest) ||

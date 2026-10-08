@@ -161,6 +161,85 @@ public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
     public Task NativeStartWaitsForItsLockedResumeThenDecodesAtTheSavedPosition()
         => OnDispatcher(NativeLockedResumeAsync);
 
+    [Fact]
+    public Task PausedDisplayRedrawDecodesAnotherFrameWithoutResumeOrSourceReplacement()
+        => OnDispatcher(async () =>
+        {
+            string? previous = Environment.GetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable);
+            string root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "UniversalMediaOS.Tests", "NativeDisplayRedraw-" + Guid.NewGuid().ToString("N")));
+            Directory.CreateDirectory(root);
+            Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, root);
+            string? connectionString = null;
+            PlaybackProgressService? progress = null;
+            try
+            {
+                string video = Path.Combine(root, "redraw.mp4"), caption = Path.Combine(root, "redraw.en.srt");
+                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                var encoded = await new PreparationProcessRunner().RunAsync("ffmpeg", ["-nostdin", "-hide_banner", "-v", "error",
+                    "-f", "lavfi", "-i", "testsrc=size=160x90:rate=25", "-t", "90", "-c:v", "mpeg4", "-y", video], deadline.Token);
+                Assert.Equal(0, encoded.ExitCode);
+                File.WriteAllText(caption, "1\n00:00:00,000 --> 00:01:30,000\nFirst line\nSecond line\n");
+                byte[] original = await File.ReadAllBytesAsync(video);
+                using (var seed = new DatabaseContext())
+                {
+                    seed.Database.EnsureCreated();
+                    connectionString = seed.Database.GetConnectionString();
+                }
+                progress = new(new AudiovisualLibraryService());
+                using var memory = new MemoryVideo();
+                using var player = new PlaybackViewModel(new DatabaseContext(), null, null, playbackProgress: progress);
+                memory.Attach(player.MediaPlayer);
+                player.Volume = 0;
+                player.LoadMedia(video, "Redraw fixture", localCaptionPaths: [caption]);
+                player.PlayPending();
+                await Wait(() => player.IsPlaying && memory.Frames >= 2 && player.MediaPlayer.IsSeekable &&
+                    player.SelectedCaption?.Label == "English (downloaded)", player);
+                Assert.False(player.RedrawPausedNativeFrame());
+                player.MediaPlayer.Time = 10_000;
+                await Wait(() => player.MediaPlayer.Time >= 9_900, player);
+                player.TogglePlayPauseCommand.Execute(null);
+                await Wait(() => !player.IsPlaying && player.MediaPlayer.State == VLCState.Paused, player);
+                await Task.Delay(200);
+                long position = player.MediaPlayer.Time;
+                string selected = player.SelectedCaption!.Key;
+                int frames = memory.Frames, unexpectedStarts = 0, remoteActions = 0;
+                player.MediaPlayer.Playing += (_, _) => Interlocked.Increment(ref unexpectedStarts);
+                player.WebPlaybackCommandRequested += (_, _) => remoteActions++;
+                Assert.True(player.RedrawPausedNativeFrame());
+                await Wait(() => memory.Frames > frames, player);
+                await Task.Delay(200);
+                Assert.Equal(VLCState.Paused, player.MediaPlayer.State);
+                Assert.False(player.IsPlaying);
+                Assert.InRange(player.MediaPlayer.Time, position - 100, position + 100);
+                Assert.Equal(video, player.SourceInput);
+                Assert.Equal(selected, player.SelectedCaption!.Key);
+                Assert.Equal(0, unexpectedStarts);
+                Assert.Equal(0, remoteActions);
+                player.SetTabActive(false);
+                Assert.False(player.RedrawPausedNativeFrame());
+                player.SetTabActive(true);
+                player.LoadEmbed("https://example.invalid/fixture", "Web guard fixture");
+                Assert.False(player.RedrawPausedNativeFrame());
+                player.Dispose();
+                Assert.False(player.RedrawPausedNativeFrame());
+                Assert.Equal(original, await File.ReadAllBytesAsync(video));
+            }
+            finally
+            {
+                if (progress != null) await progress.FlushAsync().WaitAsync(TimeSpan.FromSeconds(5));
+                Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, previous);
+                if (connectionString != null)
+                {
+                    using var connection = new Microsoft.Data.Sqlite.SqliteConnection(connectionString);
+                    Microsoft.Data.Sqlite.SqliteConnection.ClearPool(connection);
+                }
+                string parent = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "UniversalMediaOS.Tests")) + Path.DirectorySeparatorChar;
+                Assert.StartsWith(parent, root, StringComparison.OrdinalIgnoreCase);
+                Assert.Null(new DirectoryInfo(root).LinkTarget);
+                if (Directory.Exists(root)) Directory.Delete(root, true);
+            }
+        });
+
     private static async Task NativeLockedResumeAsync()
     {
         string? previous = Environment.GetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable);

@@ -59,22 +59,38 @@ public sealed class LiveCaptionSelectionTests(ITestOutputHelper output)
         Assert.NotNull(AuthorizedMediaDownloadService.ReadLibraryPlayback(video));
         long originalBytes = new FileInfo(video).Length;
         DateTime originalWriteTime = File.GetLastWriteTimeUtc(video);
-        Window Window() => fixture.App.GetAllTopLevelWindows(fixture.Automation)
-            .Single(window => window.Properties.Name.ValueOrDefault == AppFixture.ExpectedMainWindowTitle);
+        IntPtr ownedHandle = new(fixture.MainWindow.Properties.NativeWindowHandle.Value);
+        Window Window()
+        {
+            Assert.False(fixture.App.HasExited, $"Owned caption app {fixture.App.ProcessId} exited.");
+            // Reacquire the owned provider root after native overlay reloads;
+            // keep its original HWND instead of enumerating windows by title.
+            var window = fixture.Automation.FromHandle(ownedHandle).AsWindow();
+            Assert.Equal(fixture.App.ProcessId, window.Properties.ProcessId.Value);
+            return window;
+        }
         bool arabicControls = false;
         Button? Button(string name) => Window().FindFirstDescendant(cf => cf.ByName(
             arabicControls && name == "Toggle subtitles" ? "تبديل الترجمة" : name))?.AsButton();
         ComboBox? Captions() => Window().FindFirstDescendant(cf => cf.ByName(arabicControls ? "مسار الترجمة" : "Subtitle track"))?.AsComboBox();
         double Position() => Window().FindFirstDescendant(cf => cf.ByAutomationId("PlaybackSlider"))?
             .Patterns.RangeValue.Pattern.Value.Value ?? 0;
-        bool IsPaused() => Button("Play or pause")?.FindFirstDescendant(cf => cf.ByText(arabicControls ? "تشغيل" : "Play")) != null;
+        bool? ReadPauseState(Button? button)
+        {
+            if (button == null) return null;
+            if (button.FindFirstDescendant(cf => cf.ByText(arabicControls ? "تشغيل" : "Play")) != null) return true;
+            if (button.FindFirstDescendant(cf => cf.ByText(arabicControls ? "إيقاف مؤقت" : "Pause")) != null) return false;
+            return null;
+        }
+        bool? PauseState() => ReadPauseState(Button("Play or pause"));
+        bool IsPaused() => PauseState() == true;
         string logPath = Path.Combine(fixture.SandboxPath, "Roaming", "UniversalMediaOS", "app.log");
         void WaitForReloadState(string label, int priorLogLength, Stopwatch selectionTimer,
             double minimumPosition, Func<double> maximumPosition)
         {
             Assert.True(SpinWait.SpinUntil(() =>
             {
-                if (IsPaused() != paused) return false;
+                if (PauseState() != paused) return false;
                 double current = Position();
                 if (current < minimumPosition || current > maximumPosition()) return false;
                 // The old button state can outlive source replacement. Require
@@ -113,11 +129,14 @@ public sealed class LiveCaptionSelectionTests(ITestOutputHelper output)
                 Directory.CreateDirectory(directory);
                 File.AppendAllText(Path.Combine(directory, "caption-popup.jsonl"), snapshot + Environment.NewLine);
             }
+            ComboBox? readyCaption = null;
+            Assert.True(SpinWait.SpinUntil(() => (readyCaption = Captions()) is { IsEnabled: true, IsOffscreen: false },
+                TimeSpan.FromSeconds(3)), $"The caption control did not reattach before selecting {label}.\n{ReadLog(logPath)}");
             Snapshot("before-click");
-            Captions()!.Click(moveMouse: true);
+            readyCaption!.Click(moveMouse: true);
             Assert.True(SpinWait.SpinUntil(() => Captions()?.Patterns.ExpandCollapse.Pattern
                 .ExpandCollapseState.Value == ExpandCollapseState.Expanded, TimeSpan.FromSeconds(2)),
-                $"Opening {label}; enabled={Captions()!.IsEnabled}; selected={Captions()!.SelectedItem?.Text}; " +
+                $"Opening {label}; enabled={Captions()?.IsEnabled}; selected={Captions()?.SelectedItem?.Text}; " +
                 $"position={Position()}; paused={IsPaused()}\n{ReadLog(logPath)}");
             Snapshot("opened");
             // A human leaves the menu open while finding the choice. Include
@@ -165,7 +184,10 @@ public sealed class LiveCaptionSelectionTests(ITestOutputHelper output)
             int beforeSettingsLogLength = ReadLog(logPath).Length;
             string playerTab = Window().FindAllDescendants(cf => cf.ByAutomationId("SelectTab")).Last().Name;
             Window().FindFirstDescendant(cf => cf.ByAutomationId("OpenSettings"))!.AsButton().Invoke();
-            Button("Language")!.Invoke();
+            Button? language = null;
+            Assert.True(SpinWait.SpinUntil(() => (language = Button("Language"))?.IsEnabled == true,
+                TimeSpan.FromSeconds(3)), "The opened Settings language action did not become available.");
+            language!.Invoke();
             Window().FindFirstDescendant(cf => cf.ByControlType(ControlType.ComboBox))!.AsComboBox().Select("Arabic");
             arabicControls = true;
             Window().FindAllDescendants(cf => cf.ByAutomationId("SelectTab")).Single(tab => tab.Name == playerTab).AsButton().Invoke();
@@ -174,14 +196,16 @@ public sealed class LiveCaptionSelectionTests(ITestOutputHelper output)
                 "The retained native options header must use the selected Arabic language.");
             Assert.True(SpinWait.SpinUntil(() => Captions()?.SelectedItem?.Properties.Name.ValueOrDefault == "الإنجليزية (ملف منزل)",
                 TimeSpan.FromSeconds(3)), "The retained caption overlay must reattach with its selected downloaded English track.\n" + ReadLog(logPath));
+            Button? returnedTransport = null;
             Assert.True(SpinWait.SpinUntil(() =>
             {
-                if (!IsPaused()) return false;
+                returnedTransport = Button("Play or pause");
+                if (ReadPauseState(returnedTransport) != true) return false;
                 string log = ReadLog(logPath);
                 return log.Length > beforeSettingsLogLength &&
                     log[beforeSettingsLogLength..].Contains("LibVLC paused event fired", StringComparison.Ordinal);
             }, TimeSpan.FromSeconds(3)), "Returning from language settings must settle with a paused decoder and translated Play action.\n" + ReadLog(logPath));
-            if (!paused) Button("Play or pause")!.Invoke();
+            if (!paused) returnedTransport!.Invoke();
         }
         if (!string.IsNullOrWhiteSpace(borrowedVideo))
         {
@@ -195,9 +219,17 @@ public sealed class LiveCaptionSelectionTests(ITestOutputHelper output)
                 .Patterns.RangeValue.Pattern.SetValue(cuePosition);
             Assert.True(SpinWait.SpinUntil(() => Position() >= cuePosition, TimeSpan.FromSeconds(3)));
         }
-        if (paused && !IsPaused())
+        Button? observedTransport = null;
+        bool? observedPause = null;
+        Assert.True(SpinWait.SpinUntil(() =>
         {
-            Button("Play or pause")!.Invoke();
+            observedTransport = Button("Play or pause");
+            observedPause = ReadPauseState(observedTransport);
+            return observedPause.HasValue;
+        }, TimeSpan.FromSeconds(3)), "The native transport must expose its actual pause state before a toggle.");
+        if (paused && observedPause == false)
+        {
+            observedTransport!.Invoke();
             Assert.True(SpinWait.SpinUntil(IsPaused, TimeSpan.FromSeconds(3)));
         }
         await HoldForVisualObservation("before-off");
