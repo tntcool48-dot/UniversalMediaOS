@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Threading.Tasks;
 using System.Windows.Controls;
+using System.Windows.Interop;
 using Microsoft.Web.WebView2.Core;
 using UniversalMediaOS.Core.Helpers;
 using UniversalMediaOS.Core.Services;
@@ -29,8 +30,11 @@ namespace UniversalMediaOS.WPF.Views
             public ulong? NavigationId { get; set; }
         }
 
-        public MangaView()
+        public MangaView() : this(null) { }
+
+        internal MangaView(System.Windows.ResourceDictionary? resources)
         {
+            if (resources != null) Resources.MergedDictionaries.Add(resources);
             InitializeComponent();
             DataContextChanged += MangaView_DataContextChanged;
             Loaded += MangaView_Loaded;
@@ -81,6 +85,9 @@ namespace UniversalMediaOS.WPF.Views
             }
             try
             {
+                // Even an uninitialized hidden browser registers with the parent
+                // HWND. Dispose alone leaves that site holding the closed reader.
+                ((IKeyboardInputSink)MangaWebReader).KeyboardInputSite?.Unregister();
                 MangaWebReader.Dispose();
             }
             catch (Exception ex)

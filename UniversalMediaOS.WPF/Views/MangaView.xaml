@@ -406,6 +406,7 @@
                  ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                  ScrollViewer.CanContentScroll="True"
                  VirtualizingPanel.IsVirtualizing="True"
+                 VirtualizingPanel.ScrollUnit="Pixel"
                  VirtualizingPanel.VirtualizationMode="Recycling"
                  VirtualizingPanel.CacheLength="1"
                  VirtualizingPanel.CacheLengthUnit="Page">

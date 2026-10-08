@@ -1,0 +1,39 @@
+# Manga reader cleanup and tall-page scrolling — October 7, 2026
+
+This batch repairs two demonstrated reader faults. Books remain deferred; native torrent transfer/cache resources and broader release acceptance remain open.
+
+## Problems and fixes
+
+A 20-cycle production-command workload closed 40 native reader tabs plus one reader with three delayed page requests. All **41 reader models and views remained alive** after natural 60-second settling and separate collection. ClrMD traced every pair through the still-open main window’s HwndSource keyboard-input site → hidden, uninitialized WebView2 → MangaView → model. A hidden-parent regression independently retained all four readers and four models without any desktop observer. Final Manga tab cleanup now unregisters that input site before browser disposal. Retained tabs keep their view; navigation handlers and pending work continue to use their existing final-close cleanup.
+
+The final tall page was also unreadable below the viewport: at 100% logical scroll, its 2,399-pixel image ended at screen y=3,133 while the reader ended at y=1,230. The new real-app regression failed on that boundary. The native page list now uses pixel scrolling while retaining recycling and virtualization, allowing its lower panels to be reached.
+
+## Verification
+
+The final related Manga, request/image and lifecycle cohort passed **55 checks / zero failures / zero skips**, **1 minute 26 seconds**, including the two new regressions and independent retained-reader/background-close checks. The final three-case repair cohort passed **three checks**, zero failures/skips, in **48 seconds**; it is a subset, not three additional unique checks. Build and private helper build: zero warnings/errors.
+
+- [Final related results](C:/Users/user/animeapp/UniversalMediaOS.Tests.E2E/TestResults/manga-reader-image-lifecycle-final-20261007.trx)
+- [Valid collection baseline failure](C:/Users/user/animeapp/UniversalMediaOS.Tests.E2E/TestResults/manga-collectibility-before-valid-20261007.trx)
+- [Tall-page baseline failure](C:/Users/user/animeapp/UniversalMediaOS.Tests.E2E/TestResults/manga-tall-page-before-20261007.trx)
+
+The first repaired three-case checkpoint passed scrolling/retention but retained its final reader/model in the collection case (six of eight collected). The isolated case passed. Collection measurement was changed to fixed rounds without pre-collection IsAlive polling; the final combined three-case and 55-case checkpoints passed. The failed checkpoint remains failed. An initial private probe required original PNG pixel dimensions; production decode resizes them to 1,000 × 2,666, so its cycle-one stop is excluded. The initial collection fixture lacked Typography/Elevation resources; that setup failure is also excluded from the valid product baseline.
+
+## Finite resource workload
+
+Owned isolated profiles use authored MangaDex-shaped localhost responses and 600 × 1,600 grey-band PNGs, decoded by the production loader. Each of 20 cycles opens two independent native Manga tabs for exact chapters 1 and 2, scrolls the first to its final-page bottom, switches four times, returns through Anime, closes the background reader while retaining the first, then closes the first. Work/chapter/page URLs, view instances and independent offsets remain checked. A final chapter-3 reader closes while three page requests have delayed headers; loader Active/Pending must drain, and the owned server responses must finish. Forty-one distinct closed reader models/views are recorded; these retained reader views are unique instances.
+
+On the **1920 × 1040 second-monitor window**, fresh held before/after phases qualified chapter 2 at its top at **20:42:16–17 UTC**, then chapter 1’s light final grey bands and actual final-page bottom after background close at **20:42:40 UTC**. The exact process/executable/launch timestamp and held phases were checked. Chapter 1’s held pixel offset and ScrollableHeight both equaled **1,824**; chapter 2’s offset was zero. These are production command/layout and actual rendered component checks, not newly qualified human button input or live-provider acceptance.
+
+The repaired observed sample passed all 20 cycles and canceled three pending image requests in **102.133 ms**, with loader Active/Pending zero. After 60-second settling and three fixed diagnostic collection rounds, **38/41 models and views collected**. A trace found only accessibility-provider paths for the two directly inspected reader pairs (ScrollProviderWrapper/ListBox peer and InteropAutomationProvider/HwndHost peer); the third pair had no reported reachable path. The repaired keyboard-input root was absent. This observed sample is **not** an all-reader collection pass and exited normally at **20:46:01 UTC**.
+
+The first repaired ordinary sample collected 40/41 pairs; its trace reported no reachable path for the remaining pair. That sample is retained as incomplete. Before the final ordinary follow-up, the private helper explicitly clears its last closed-tab local and prevents resource sampling from being inlined, avoiding diagnostic-owned targets; fixed collection rounds yield the dispatcher between them. The final ordinary workload omits all desktop queries. The final ordinary 20-cycle sample also collected **40/41 models and views**; six diagnostic Gen2 collections left one pair alive. The trace again found no reachable path for that pair, and no keyboard-input root. Closing three delayed page requests drained Active/Pending in **102.847 ms**. This is **not** an all-reader collection pass; the remaining pair must be isolated with a short workload rather than repeating 20 cycles.
+
+## Preservation and limits
+
+Protected six original media/configuration/metadata/caption snapshots match, and every original SQLite table value/eight resume rows retains content SHA-256 **e3fd7e97b1eeb4b4dff8d38f09b04a4a8ad19dafd2a835fd1449b006778328b1**. The localhost fixture creates no media copies or browser process. Existing Release outputs and the small existing ClrMD tool are reused, with no heap dump. Private helpers/profiles stay under `.artifacts/implementation/manga-resource-cycles-20261007` and must be excluded from packaging.
+
+Tested Release WPF SHA-256: **86F3B08DBDDE59C1F041D2E6C5A45BF89DDEB938CDA222B8945F8A2E60A7B3F3**; Core: **EEB8DCB65199229C4757A19D1F3CACEC1BF6C9AAA93971B7F7EEAF2CF8424498**. Python production source is unchanged. The latest passing full hosted checkpoint remains paging repair 92fd5b5 (1,033 passes/22 existing skips); this new Manga source still requires publication and full hosted validation.
+
+Finite localhost native-reader results do not qualify real external providers, every chapter/page format, durable Manga progress/restart, initialized website browser resources, sustained/all-provider operation or packaged release. Native torrent transfer/cache cycles are next; Books remain open and Arabic cartoons stay last among non-Books work.
+
+Final ordinary natural samples: [{"phase":"settle-20","privateBytes":287678464,"handles":1720,"threads":30,"cpuSeconds":12.71875},{"phase":"settle-60","privateBytes":287633408,"handles":1711,"threads":26,"cpuSeconds":12.734375}]. Natural memory remains above startup; this finite check does not guarantee return to startup or sustained stability. Normal shutdown returned at **20:51:59 UTC**; all five exact owned probe processes and profile-matched browser children were absent afterward. Both owned localhost servers ended with their apps. The remaining one-pair reference, broader live/progress/website/sustained/package gates stay open.
