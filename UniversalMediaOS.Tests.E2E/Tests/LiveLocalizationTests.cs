@@ -44,6 +44,8 @@ public sealed class LiveLocalizationTests
             cf.ByName("تحديث").And(cf.ByControlType(ControlType.Button)))!.Properties.HelpText.ValueOrDefault);
         Assert.NotNull(downloads.FindFirstDescendant(cf => cf.ByText("فتح المجلد")));
         Assert.Null(downloads.FindFirstDescendant(cf => cf.ByText("Open folder")));
+        Assert.True(SpinWait.SpinUntil(() => downloads.FindFirstDescendant(cf => cf.ByText("تشغيل")) != null,
+            TimeSpan.FromSeconds(3)), "Arabic file actions must appear after the asynchronous download-folder refresh.");
         Assert.NotNull(downloads.FindFirstDescendant(cf => cf.ByText("حذف")));
         Assert.NotNull(downloads.FindFirstDescendant(cf => cf.ByText("تشغيل")));
         Assert.NotNull(downloads.FindFirstDescendant(cf => cf.ByText("Local episode.mkv")));
@@ -57,6 +59,7 @@ public sealed class LiveLocalizationTests
         Assert.Equal("Rescan the download folder and refresh this list.", downloads.FindFirstDescendant(cf =>
             cf.ByName("Refresh").And(cf.ByControlType(ControlType.Button)))!.Properties.HelpText.ValueOrDefault);
         Assert.Null(Window().FindFirstDescendant(cf => cf.ByText("فتح المجلد")));
-        Assert.NotNull(Window().FindFirstDescendant(cf => cf.ByText("Play")));
+        Assert.True(SpinWait.SpinUntil(() => downloads.FindFirstDescendant(cf => cf.ByText("Play")) != null,
+            TimeSpan.FromSeconds(3)), "English file actions must appear after the asynchronous download-folder refresh.");
     }
 }

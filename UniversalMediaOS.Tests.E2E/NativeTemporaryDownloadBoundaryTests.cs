@@ -330,7 +330,8 @@ public sealed class NativeTemporaryDownloadBoundaryTests
                     Assert.True(await queue.PauseAsync(job.Id));
                     await Eventually(() => job.Status == DownloadJobStatus.Paused && ActiveManager(executor) == null);
                     Assert.Equal(TorrentState.Stopped, manager.State);
-                    Assert.InRange(manager.Progress, 0.1, 99);
+                    Assert.True(manager.Progress > previousProgress && manager.Progress < 100,
+                        "Pause must retain new verified pieces without completing the fixture.");
                     Assert.NotEmpty(Directory.GetFiles(downloads, "*.!mt", SearchOption.AllDirectories));
                     Assert.NotEmpty(Directory.GetFiles(engine.Settings.FastResumeCacheDirectory));
                     Assert.NotEmpty(Directory.GetFiles(engine.Settings.MetadataCacheDirectory));
