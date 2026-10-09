@@ -17,6 +17,62 @@ MEDIA = 'https://cdn.example/master.m3u8'
 
 
 class NativeFrameTests(unittest.TestCase):
+    def test_verified_resolve_requests_item_evidence_without_duplicate_provider_targets(self):
+        with patch.object(av, 'do_extract', return_value={'error': 'all_sources_failed'}) as extract, patch('builtins.print'):
+            self.assertEqual(0, av.main(['av.py', 'resolve-verified', ROOT]))
+        self.assertEqual((ROOT, 'sub', 34), extract.call_args.args)
+        self.assertEqual({'include_alternatives': False, 'require_item_evidence': True}, extract.call_args.kwargs)
+
+    def test_strict_static_native_keeps_searching_for_independent_item_evidence(self):
+        native = dict(av.stream_result(MEDIA), media_validated=True)
+        matched = dict(native, evidence={'Origin': 'ProviderItem', 'Identity': {'ImdbId': 'tt0903747'},
+            'Unit': {'SeasonNumber': 1, 'EpisodeNumber': 1}})
+        for required in (False, True):
+            with self.subTest(required=required), patch.object(av, 'compatible_mirror_targets', return_value=[]), \
+                 patch.object(av, 'static_waterfall', return_value=(native, [ROOT])), \
+                 patch.object(av, 'browser_waterfall', return_value=matched) as browser:
+                result = av.do_extract(ROOT, include_alternatives=False, require_item_evidence=required)
+            self.assertEqual(matched if required else native, result)
+            self.assertEqual(1 if required else 0, browser.call_count)
+
+    def test_strict_browser_continues_past_native_without_evidence_and_closes_its_owner(self):
+        native = dict(av.stream_result(MEDIA), media_validated=True)
+        matched = dict(native, evidence={'Origin': 'ProviderItem', 'Identity': {'ImdbId': 'tt0903747'},
+            'Unit': {'SeasonNumber': 1, 'EpisodeNumber': 1}})
+        child = 'https://player.example/embed/tv/tt0903747/1/1'
+        page = Mock(url=ROOT)
+        with patch.object(av, 'launch_browser', return_value=page), patch.object(av, 'close_browser') as close, \
+             patch.object(av, 'browser_target', side_effect=[(native, [child], None), (matched, [], None)]) as target:
+            result = av.browser_waterfall([ROOT], time.monotonic()+5, require_item_evidence=True)
+        self.assertEqual(matched, result)
+        self.assertEqual(2, target.call_count)
+        close.assert_called_once_with(page)
+
+    def test_strict_browser_exhaustion_retains_unknown_instead_of_inventing_evidence(self):
+        native = dict(av.stream_result(MEDIA), media_validated=True)
+        page = Mock(url=ROOT)
+        with patch.object(av, 'launch_browser', return_value=page), patch.object(av, 'close_browser') as close, \
+             patch.object(av, 'browser_target', return_value=(native, [], None)):
+            result = av.browser_waterfall([ROOT], time.monotonic()+5, require_item_evidence=True)
+        self.assertEqual(native, result)
+        self.assertNotIn('evidence', result)
+        close.assert_called_once_with(page)
+
+    def test_captions_alone_do_not_stop_a_strict_frame_scan(self):
+        first = {'url': MEDIA}
+        second = {'url': 'https://cdn.example/second.m3u8'}
+        captions_only = dict(first, media_validated=True, subtitles=[{'language': 'en'}])
+        matched = dict(second, media_validated=True, evidence={'Origin': 'ProviderItem',
+            'Identity': {'ImdbId': 'tt0903747'}, 'Unit': {'SeasonNumber': 1, 'EpisodeNumber': 1}})
+        page = Mock(url=ROOT)
+        page.get_frames.return_value = []
+        with patch.object(av, 'start_listener'), \
+             patch.object(av, 'browser_dom_scan', side_effect=[(first, []), (second, [])]), \
+             patch.object(av, 'validated_stream', side_effect=lambda candidate, deadline: candidate), \
+             patch.object(av, 'enrich_native_result', side_effect=[captions_only, matched]):
+            result = av.scan_embedded_players(page, ROOT, time.monotonic()+5, require_item_evidence=True)
+        self.assertEqual(matched, result)
+
     def test_coordinated_resolve_keeps_mirrors_without_duplicating_queued_providers(self):
         mirror, other = 'https://mirror.example/embed/tv/tt0903747/1/1', 'https://other.example/embed/tv/tt0903747/1/1'
         for mode, expected in [('resolve', [ROOT, mirror]), ('extract', [ROOT, other, mirror])]:

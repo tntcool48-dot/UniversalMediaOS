@@ -9,6 +9,21 @@ namespace UniversalMediaOS.Tests.E2E;
 
 public sealed class ScraperAudiovisualNativeTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task StrictDownloadEvidenceRequirementReachesEachOwnedExtraction(bool required)
+    {
+        using var fixture = new Fixture((_, _) => Task.FromResult<AudiovisualScraperStreamResult?>(Native() with
+        { Evidence = new() { Origin = SourceEvidenceOrigin.ProviderItem, Identity = Film, Unit = AudiovisualUnit.Feature } }));
+        var sources = new List<AudiovisualSource>();
+        await foreach (var source in fixture.Provider.FindSourceCandidatesAsync(new()
+        { Identity = Film, RequireVerifiedSource = required })) sources.Add(source);
+        Assert.NotEmpty(sources);
+        Assert.NotEmpty(fixture.Engine.ItemEvidenceRequirements);
+        Assert.All(fixture.Engine.ItemEvidenceRequirements, value => Assert.Equal(required, value));
+    }
+
     [Fact]
     public async Task ExcludedFailedMediaDoesNotCancelAnotherIndependentlyVerifiedProvider()
     {
@@ -355,6 +370,12 @@ public sealed class ScraperAudiovisualNativeTests
             Query = query;
             return Task.FromResult(Results);
         }
-        public override Task<AudiovisualScraperStreamResult?> ResolveAsync(string embedUrl, CancellationToken token = default) => resolve(embedUrl, token);
+        public List<bool> ItemEvidenceRequirements { get; } = [];
+        public override Task<AudiovisualScraperStreamResult?> ResolveAsync(string embedUrl, CancellationToken token = default,
+            bool requireItemEvidence = false)
+        {
+            ItemEvidenceRequirements.Add(requireItemEvidence);
+            return resolve(embedUrl, token);
+        }
     }
 }

@@ -81,7 +81,8 @@ namespace UniversalMediaOS.Core.OtherMedia
                 .DistinctBy(result => result.Url, StringComparer.OrdinalIgnoreCase));
             var pending = new List<Task<(AudiovisualScraperSearchResult Result, AudiovisualScraperStreamResult? Stream)>>();
             async Task<(AudiovisualScraperSearchResult, AudiovisualScraperStreamResult?)> ResolveCandidateAsync(AudiovisualScraperSearchResult result) =>
-                (result, await _engine.ResolveAsync(result.Url, alternatives.Token).ConfigureAwait(false));
+                (result, await _engine.ResolveAsync(result.Url, alternatives.Token,
+                    requireItemEvidence: request.RequireVerifiedSource).ConfigureAwait(false));
             try
             {
                 while (pending.Count > 0 || queued.Count > 0)

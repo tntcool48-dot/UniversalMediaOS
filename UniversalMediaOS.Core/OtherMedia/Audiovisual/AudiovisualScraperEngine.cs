@@ -94,11 +94,13 @@ namespace UniversalMediaOS.Core.OtherMedia
 
         public virtual async Task<AudiovisualScraperStreamResult?> ResolveAsync(
             string embedUrl,
-            CancellationToken token = default)
+            CancellationToken token = default,
+            bool requireItemEvidence = false)
         {
             try
             {
-                string stdout = await RunScraperAsync(token, 45000, "resolve", embedUrl);
+                string stdout = await RunScraperAsync(token, 45000,
+                    requireItemEvidence ? "resolve-verified" : "resolve", embedUrl);
                 if (string.IsNullOrWhiteSpace(stdout)) return null;
 
                 var result = JsonSerializer.Deserialize<AudiovisualScraperStreamResult>(stdout);

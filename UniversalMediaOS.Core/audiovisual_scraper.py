@@ -1194,7 +1194,7 @@ def click_player_controls(page, referer, deadline):
     return None
 
 
-def scan_embedded_players(page, requested, deadline):
+def scan_embedded_players(page, requested, deadline, require_item_evidence=False):
     # Inspect loaded frames in place. Navigating their signed URLs as top-level
     # pages loses parent/referrer context and can turn a playable iframe into 404.
     queue = deque([(page, 0)])
@@ -1220,9 +1220,12 @@ def scan_embedded_players(page, requested, deadline):
             if result:
                 result = enrich_native_result(result, document, requested, deadline)
                 if result:
-                    if result.get('evidence') or result.get('subtitles'):
+                    if result.get('evidence') or (result.get('subtitles') and not require_item_evidence):
                         return result
                     first_native = first_native or result
+                    if require_item_evidence:
+                        rejected.add(candidate['url'])
+                        continue
                     break
                 if first_native and first_native['url'] == candidate['url']:
                     first_native = None
@@ -1235,7 +1238,7 @@ def scan_embedded_players(page, requested, deadline):
             if result:
                 result = enrich_native_result(result, document, requested, deadline)
                 if result:
-                    if result.get('evidence') or result.get('subtitles'):
+                    if result.get('evidence') or (result.get('subtitles') and not require_item_evidence):
                         return result
                     first_native = first_native or result
                 else:
@@ -1248,7 +1251,7 @@ def scan_embedded_players(page, requested, deadline):
     return first_native
 
 
-def browser_target(page, url, deadline, requested=None):
+def browser_target(page, url, deadline, requested=None, require_item_evidence=False):
     requested = requested or url
     start_listener(page)
     # A navigation timeout can still leave a usable loaded document to inspect.
@@ -1256,15 +1259,16 @@ def browser_target(page, url, deadline, requested=None):
     current = getattr(page, "url", "") or url
     if not compatible_player_page(current, requested):
         return None, [], None
-    result = scan_embedded_players(page, requested, deadline)
-    if result:
+    result = (scan_embedded_players(page, requested, deadline, require_item_evidence=True)
+              if require_item_evidence else scan_embedded_players(page, requested, deadline))
+    if result and (not require_item_evidence or result.get('evidence')):
         return result, [], None
     _, frames = browser_dom_scan(page, current)
     page_html = attempt(lambda: page.html, "")
     frames = list(dict.fromkeys(frame for frame in frames + extract_child_pages(page_html, current)
         if is_player_page(frame) and compatible_player_page(frame, requested)))
-    fallback = None
-    if re.search(r"<(?:video|iframe|embed)\b|player|jwplayer|videojs", page_html, re.I):
+    fallback = result
+    if not fallback and re.search(r"<(?:video|iframe|embed)\b|player|jwplayer|videojs", page_html, re.I):
         fallback = stream_result(
             current,
             current,
@@ -1275,7 +1279,7 @@ def browser_target(page, url, deadline, requested=None):
     return None, frames, fallback
 
 
-def browser_waterfall(targets, deadline):
+def browser_waterfall(targets, deadline, require_item_evidence=False):
     if time.monotonic() >= deadline:
         return None
     page = launch_browser()
@@ -1288,13 +1292,18 @@ def browser_waterfall(targets, deadline):
             if url in visited or depth > 4 or not compatible_player_page(url, targets[0]):
                 continue
             visited.add(url)
-            outcome = attempt(lambda url=url: browser_target(page, url, deadline, targets[0]))
+            outcome = attempt(lambda url=url: browser_target(page, url, deadline, targets[0], require_item_evidence=True)
+                              if require_item_evidence else browser_target(page, url, deadline, targets[0]))
             if not outcome:
                 continue
             result, frames, candidate_fallback = outcome
-            if result:
+            if result and (not require_item_evidence or result.get('evidence')):
                 return result
-            fallback = fallback or candidate_fallback
+            if result:
+                candidate_fallback = result
+            if candidate_fallback and (fallback is None or
+                    (fallback.get('requires_webview') and not candidate_fallback.get('requires_webview'))):
+                fallback = candidate_fallback
             for frame in reversed(frames[:4]):
                 child = normalize_url(frame, getattr(page, "url", "") or url)
                 if child and child not in visited:
@@ -1355,7 +1364,8 @@ def embed_alternate_targets(url):
     return [candidate for candidate in candidates if candidate != url]
 
 
-def do_extract(url, audio_preference="sub", budget_seconds=34, include_alternatives=True):
+def do_extract(url, audio_preference="sub", budget_seconds=34, include_alternatives=True,
+               require_item_evidence=False):
     budget = attempt(lambda: float(budget_seconds), 34.0)
     deadline = time.monotonic() + max(12.0, min(budget, 34.0))
     if is_media_url(url):
@@ -1366,12 +1376,16 @@ def do_extract(url, audio_preference="sub", budget_seconds=34, include_alternati
             targets.append(target)
     # Reserve most of the operation for the actual interactive player.
     result, browser_targets = static_waterfall(targets, min(deadline, time.monotonic() + 5))
-    if result:
+    if result and (not require_item_evidence or result.get('evidence')):
         return result
+    unverified_native = result
     if time.monotonic() >= deadline:
-        return {"error": "all_sources_failed"}
-    result = attempt(lambda: browser_waterfall(browser_targets, deadline))
-    return result or {"error": "all_sources_failed"}
+        return unverified_native or {"error": "all_sources_failed"}
+    result = attempt(lambda: browser_waterfall(browser_targets or targets, deadline, require_item_evidence=True)
+                     if require_item_evidence else browser_waterfall(browser_targets, deadline))
+    if result and (not require_item_evidence or result.get('evidence') or not result.get('requires_webview')):
+        return result
+    return unverified_native or result or {"error": "all_sources_failed"}
 
 
 def main(argv):
@@ -1391,11 +1405,12 @@ def main(argv):
         audio = argv[3] if len(argv) > 3 else "sub"
         budget = argv[4] if len(argv) > 4 else 34
         output = do_extract(argument, audio, budget)
-    elif mode == "resolve":
+    elif mode in ("resolve", "resolve-verified"):
         budget = argv[3] if len(argv) > 3 else 34
         # The C# source coordinator already queues the other providers. Keep this
         # candidate's own mirrors without crawling the same alternatives twice.
-        output = do_extract(argument, "sub", budget, include_alternatives=False)
+        output = do_extract(argument, "sub", budget, include_alternatives=False,
+                            require_item_evidence=mode == "resolve-verified")
     else:
         output = {"error": f"unknown mode: {mode}"}
     print(json.dumps(output, ensure_ascii=True))
