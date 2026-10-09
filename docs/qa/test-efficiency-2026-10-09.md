@@ -6,6 +6,8 @@ The updated workflow ignores changes consisting entirely of Markdown under `docs
 
 Local work uses focused regressions for a concrete fault, with one relevant cohort when shared behavior or unresolved risk warrants it. A passed scope is not repeated without a code change, new evidence or unresolved concern. Coherent changes are batched before publishing. Full source/release checkpoints and necessary physical/package acceptance remain required; a focused pass is not substituted for them. No broad media suite is needed for this workflow/prose change.
 
+The progress follow-up keeps that policy: six of the original 23 grouped gates are closed; 17 remain, including two deferred Books gates, so the current objective has 15 open groups. Group counts are not an overall implementation percentage. A one-off live seek diagnostic was corrected after it paused before a known duration and therefore had not committed a seek; one readiness-qualified run then narrowed the failure. Its temporary network case was removed from the normal suite, and only the existing Release build was refreshed after removal. No passed catalog/player cohort or full local suite was repeated for this diagnostic/docs batch. [Exact observations and limits](C:/Users/user/animeapp/docs/qa/live-hls-paused-seek-2026-10-09.md).
+
 ## Preceding failed source checkpoint
 
 Published `366826fc48749b1f42c5fc42e47a3cde56f43a24` [hosted validation](https://github.com/tntcool48-dot/UniversalMediaOS/actions/runs/37794197262) completed with **1,045 passes, four failures and 22 existing skips; 1,071 total**, **11.3070 minutes** of test execution. Build passed; Python syntax did not run after the failed test step. The four failures are:
