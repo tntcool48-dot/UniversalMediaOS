@@ -57,8 +57,11 @@ public sealed class SecondaryMonitorRestoreTests(ITestOutputHelper output)
         window.FindFirstDescendant(cf => cf.ByName("Maximize or Restore"))!.AsButton().Invoke();
         AssertRestoredOnStartupMonitor();
         pattern.SetWindowVisualState(WindowVisualState.Minimized);
-        Assert.True(SpinWait.SpinUntil(() => pattern.WindowVisualState.Value == WindowVisualState.Minimized,
-            TimeSpan.FromSeconds(3)));
+        bool minimized = SpinWait.SpinUntil(() => pattern.WindowVisualState.Value == WindowVisualState.Minimized,
+            TimeSpan.FromSeconds(3));
+        Assert.True(minimized,
+            $"Minimize was not observed: UIA state={pattern.WindowVisualState.Value}, " +
+            $"native IsIconic={IsIconic(handle)}, bounds={window.BoundingRectangle}, secondary available={hasSecondary}.");
         pattern.SetWindowVisualState(WindowVisualState.Normal);
         AssertRestoredOnStartupMonitor();
     }
@@ -70,6 +73,10 @@ public sealed class SecondaryMonitorRestoreTests(ITestOutputHelper output)
     private struct MonitorInfo { public int Size; public Rect Monitor, Work; public int Flags; }
 
     private delegate bool MonitorCallback(IntPtr monitor, IntPtr hdc, IntPtr rect, IntPtr data);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsIconic(IntPtr window);
 
     [DllImport("user32.dll")]
     private static extern IntPtr MonitorFromWindow(IntPtr window, int flags);

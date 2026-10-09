@@ -338,14 +338,16 @@ namespace UniversalMediaOS.WPF.ViewModels
         public ObservableCollection<PlaybackQualityOption> QualityOptions { get; } = new();
 
         public bool CanGoToPreviousEpisode =>
+            !IsDisposed && !_isDisposing &&
             !IsEpisodeNavigationBusy &&
-            _episodeContext != null &&
-            ResolveEpisodeNumber(_currentEpisodeNumber, MediaTitle) > _episodeContext.FirstEpisode;
+            TryGetNavigationEpisode(out int episode) &&
+            episode > _episodeContext!.FirstEpisode;
 
         public bool CanGoToNextEpisode =>
+            !IsDisposed && !_isDisposing &&
             !IsEpisodeNavigationBusy &&
-            _episodeContext != null &&
-            ResolveEpisodeNumber(_currentEpisodeNumber, MediaTitle) < _episodeContext.LastEpisode;
+            TryGetNavigationEpisode(out int episode) &&
+            episode < _episodeContext!.LastEpisode;
 
         public bool NativeControlsEnabled => !IsWebViewActive;
 
@@ -789,6 +791,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             string? validatedHlsVariant = null)
         {
             if (_isDisposing || IsDisposed) return;
+            CancelEpisodeNavigation();
             if (localCaptionPaths != null)
             {
                 string mediaDirectory = Path.GetDirectoryName(Path.GetFullPath(urlOrPath)) ?? string.Empty;
@@ -1234,6 +1237,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             IReadOnlyDictionary<string, string>? requestHeaders = null,
             AudiovisualPlaybackContext? audiovisualContext = null)
         {
+            if (_isDisposing || IsDisposed) return;
             IReadOnlyDictionary<string, string> capturedHeaders = CopyRequestHeaders(requestHeaders);
             string effectiveReferer = FirstNonEmpty(referer, FindHeader(capturedHeaders, "Referer"));
             string effectiveUserAgent = FirstNonEmpty(userAgent, FindHeader(capturedHeaders, "User-Agent"));
@@ -1552,13 +1556,15 @@ namespace UniversalMediaOS.WPF.ViewModels
         [RelayCommand(AllowConcurrentExecutions = false, CanExecute = nameof(CanGoToPreviousEpisode))]
         private Task PreviousEpisodeAsync()
         {
-            return NavigateToEpisodeAsync(ResolveEpisodeNumber(_currentEpisodeNumber, MediaTitle) - 1);
+            return TryGetNavigationEpisode(out int episode)
+                ? NavigateToEpisodeAsync(episode - 1) : Task.CompletedTask;
         }
 
         [RelayCommand(AllowConcurrentExecutions = false, CanExecute = nameof(CanGoToNextEpisode))]
         private Task NextEpisodeAsync()
         {
-            return NavigateToEpisodeAsync(ResolveEpisodeNumber(_currentEpisodeNumber, MediaTitle) + 1);
+            return TryGetNavigationEpisode(out int episode)
+                ? NavigateToEpisodeAsync(episode + 1) : Task.CompletedTask;
         }
 
         [RelayCommand]
@@ -1783,28 +1789,54 @@ namespace UniversalMediaOS.WPF.ViewModels
             return (long)requestedMilliseconds;
         }
 
+        private bool TryGetNavigationEpisode(out int episode)
+        {
+            episode = 0;
+            // A title cannot establish a provider unit for a special, an
+            // unknown unit or a source outside this entry's numbered range.
+            return _episodeContext != null &&
+                int.TryParse(_currentEpisodeNumber, NumberStyles.None, CultureInfo.InvariantCulture, out episode) &&
+                episode >= _episodeContext.FirstEpisode && episode <= _episodeContext.LastEpisode;
+        }
+
+        private void CancelEpisodeNavigation()
+        {
+            CancellationTokenSource? pending = _episodeNavigationCts;
+            if (pending == null) return;
+            _episodeNavigationCts = null;
+            pending.Cancel();
+            IsEpisodeNavigationBusy = false;
+            // The asynchronous operation owns disposal after its resolver
+            // returns; cancellation must not invalidate its captured token.
+        }
+
         private async Task NavigateToEpisodeAsync(int episode)
         {
             EpisodePlaybackContext? context = _episodeContext;
-            if (context == null || episode < context.FirstEpisode || episode > context.LastEpisode)
+            if (_isDisposing || IsDisposed || context == null || episode < context.FirstEpisode || episode > context.LastEpisode)
             {
                 return;
             }
 
-            _episodeNavigationCts?.Cancel();
-            _episodeNavigationCts?.Dispose();
+            CancelEpisodeNavigation();
             var cts = new CancellationTokenSource();
             _episodeNavigationCts = cts;
+            CancellationToken token = cts.Token;
+            int generation = Volatile.Read(ref _playbackGeneration);
+            bool IsCurrent() => !_isDisposing && !IsDisposed && !token.IsCancellationRequested &&
+                ReferenceEquals(_episodeNavigationCts, cts) && ReferenceEquals(_episodeContext, context) &&
+                generation == Volatile.Read(ref _playbackGeneration);
             IsEpisodeNavigationBusy = true;
             HasPlaybackError = false;
             PlaybackErrorText = string.Empty;
             IsPlaybackBusy = true;
             PlaybackStatusText = $"Resolving episode {episode}...";
+            bool resolutionAccepted = false;
 
             try
             {
-                ResolvedEpisodePlayback? resolved = await context.ResolveAsync(episode, cts.Token);
-                cts.Token.ThrowIfCancellationRequested();
+                ResolvedEpisodePlayback? resolved = await context.ResolveAsync(episode, token);
+                if (!IsCurrent()) return;
                 if (resolved == null || string.IsNullOrWhiteSpace(resolved.Source))
                 {
                     ReportPlaybackError(context.AudioPreference == "dub"
@@ -1813,6 +1845,12 @@ namespace UniversalMediaOS.WPF.ViewModels
                     return;
                 }
 
+                // The completed lookup is no longer pending when its source
+                // is handed to the player. Do not cancel its token as part of
+                // that same successful load.
+                resolutionAccepted = true;
+                _episodeNavigationCts = null;
+                IsEpisodeNavigationBusy = false;
                 string episodeNumber = episode.ToString(CultureInfo.InvariantCulture);
                 if (resolved.IsWebView)
                 {
@@ -1840,12 +1878,14 @@ namespace UniversalMediaOS.WPF.ViewModels
                     PlayPending();
                 }
             }
-            catch (OperationCanceledException) when (cts.IsCancellationRequested)
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
                 // A newer navigation request or tab disposal superseded this one.
             }
             catch (Exception ex)
             {
+                if (!IsCurrent() && !resolutionAccepted) return;
+                if (_isDisposing || IsDisposed) return;
                 AppLogger.Log($"Episode {episode} navigation failed: {ex.Message}", "ERROR");
                 ReportPlaybackError($"Episode {episode} could not be opened: {ex.Message}");
             }
@@ -1853,8 +1893,10 @@ namespace UniversalMediaOS.WPF.ViewModels
             {
                 if (ReferenceEquals(_episodeNavigationCts, cts))
                 {
+                    _episodeNavigationCts = null;
                     IsEpisodeNavigationBusy = false;
                 }
+                cts.Dispose();
             }
         }
 
@@ -1866,7 +1908,8 @@ namespace UniversalMediaOS.WPF.ViewModels
             }
 
             _autoAdvanceRequested = true;
-            int nextEpisode = ResolveEpisodeNumber(_currentEpisodeNumber, MediaTitle) + 1;
+            if (!TryGetNavigationEpisode(out int currentEpisode)) return;
+            int nextEpisode = currentEpisode + 1;
             RunOnDispatcher(() => _ = NavigateToEpisodeAsync(nextEpisode));
         }
 
@@ -2061,6 +2104,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             AppLogger.Log("Releasing media player stream resources...");
             try
             {
+                CancelEpisodeNavigation();
                 Interlocked.Increment(ref _startupWatchGeneration);
                 _stopRequested = true;
                 if (saveResume)
@@ -3108,9 +3152,7 @@ namespace UniversalMediaOS.WPF.ViewModels
 
                 DeactivateWatchTogetherPlayback();
 
-                _episodeNavigationCts?.Cancel();
-                _episodeNavigationCts?.Dispose();
-                _episodeNavigationCts = null;
+                CancelEpisodeNavigation();
                 Interlocked.Increment(ref _qualityDiscoveryGeneration);
 
                 Helpers.LocalizationRuntime.LanguageChanged -= LocalizationRuntime_LanguageChanged;
