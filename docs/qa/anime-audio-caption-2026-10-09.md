@@ -18,6 +18,8 @@ The desktop tool exposed the three caption choices. Its indexed click was reject
 
 No source change or automated regression suite was needed for this physical/evidence batch. Standard Release build locations were reused. Books remain deferred, live catalog DASH remains open, and no grouped gate closes from these partial observations.
 
+A bounded keyboard follow-up refreshed the existing player at Paused/02:21/21%. The native selector index was again unavailable to the tool; Shift-Tab reached the main window's Refresh control rather than the native caption selector. The screenshot still showed English / Signs & Songs with playback options open. This remains a tool limitation, not evidence of an app selection fault or a committed Dialogue choice. Human spoken-audio/caption checks and final-owner cleanup remain pending; further identical input retries were stopped.
+
 ## Preceding source checkpoint
 
 The configured-provider repair **186f79a4fbb90e8e5c5f48b29a9e4f1142b862e9** has now passed its [single full hosted checkpoint](https://github.com/tntcool48-dot/UniversalMediaOS/actions/runs/37918423297): **1,071 passes / 22 existing skips / zero failures / 1,093 total**, test execution **9 minutes 53 seconds**, a zero-warning/error build and passing Python syntax. No broad local suite was repeated. This checkpoint is separate from the actual anime availability/audio/caption limits above.
