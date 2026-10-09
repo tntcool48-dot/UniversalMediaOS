@@ -650,6 +650,14 @@ namespace UniversalMediaOS.WPF.Views
         private void PlaybackRoot_PreviewMouseDown(object sender, MouseButtonEventArgs e)
         {
             _controlsKeyboardInteraction = false;
+            if (e.ChangedButton == MouseButton.Left && e.OriginalSource is Visual visual &&
+                (ReferenceEquals(visual, PlaybackSlider) || PlaybackSlider.IsAncestorOf(visual)))
+            {
+                // Slider's move-to-point class handler updates the binding and
+                // handles the event before its own instance handler can run.
+                // Begin at the overlay ancestor so that update stays a preview.
+                PlaybackSlider_PreviewMouseLeftButtonDown(PlaybackSlider, e);
+            }
             if (!IsBrowserInput(e.OriginalSource as DependencyObject) &&
                 !IsControlsInput(e.OriginalSource as DependencyObject)) FocusPlaybackSurface();
             ShowControlsTemporarily();
@@ -1010,6 +1018,7 @@ namespace UniversalMediaOS.WPF.Views
 
         private void PlaybackSlider_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
+            if (_seekMouseDown) return;
             if (DataContext is ViewModels.PlaybackViewModel vm)
             {
                 _seekMouseDown = true;
@@ -1033,13 +1042,13 @@ namespace UniversalMediaOS.WPF.Views
 
         private void CommitPlaybackSliderSeek()
         {
+            if (!_seekMouseDown) return;
+            _seekMouseDown = false;
             if (DataContext is ViewModels.PlaybackViewModel vm)
             {
                 vm.CommitUserSeek(PlaybackSlider.Value);
                 ShowControlsTemporarily();
             }
-
-            _seekMouseDown = false;
         }
 
         private void FullscreenButton_Click(object sender, System.Windows.RoutedEventArgs e)
