@@ -117,6 +117,70 @@ class AnimeCandidateMatchingTests(unittest.TestCase):
         self.assertIn(url, scraper.episode_url_candidates(url, '2'))
 
 
+class AnimeNonstandardEpisodeTests(unittest.TestCase):
+    def test_fractional_or_range_labels_do_not_claim_an_integer_episode(self):
+        for label in ('Episode 13.5', 'Ep-13.5', 'S01E13.5', 'Episode 13-14'):
+            with self.subTest(label=label):
+                self.assertEqual(set(), scraper.episode_claims(label))
+        for suffix in ('/episode-13.5', '?ep=13.5', '?episode=13-14'):
+            with self.subTest(suffix=suffix):
+                self.assertEqual(set(), scraper.episode_claims('https://provider.example/watch/entry' + suffix, is_url=True))
+
+    def test_nonstandard_provider_units_are_not_rewritten_into_numbered_routes(self):
+        for suffix in ('/episode-13.5', '/ep-13-14', '?ep=13.5', '?episode=13-14'):
+            with self.subTest(suffix=suffix):
+                self.assertEqual([], scraper.episode_url_candidates('https://provider.example/watch/entry' + suffix, '13'))
+
+    def test_fractional_selected_unit_rejects_even_a_matching_work_id_and_title(self):
+        for label in ('Episode 13.5', '13.5', 'Episode 13-14'):
+            with self.subTest(label=label):
+                found = scraper.check_episode_identity({
+                    'url': 'https://provider.example/watch/mushoku/ep-13',
+                    'heading': QUERY, 'title': QUERY + ' Episode 13',
+                    'active_episodes': [label], 'primary_ids': {'mal': '52991'},
+                }, QUERY, '13', catalog_ids={'mal': 52991})
+                self.assertEqual('conflict', found['status'])
+                self.assertTrue(found['catalog_id_match'])
+                self.assertTrue(found['observed_unmapped_units'])
+
+    def test_a_fractional_selected_unit_stops_before_native_stream_capture(self):
+        page = Mock(html='<h1>' + QUERY + '</h1>')
+        page.get.return_value = True
+        page.run_js.return_value = {
+            'url': 'https://provider.example/watch/mushoku/ep-13',
+            'heading': QUERY, 'title': QUERY + ' Episode 13.5',
+            'active_episodes': ['Episode 13.5'],
+        }
+        with patch.object(scraper, 'player_page_unavailable', return_value=False), \
+             patch.object(scraper, 'wait_for_dynamic_player', return_value={}), \
+             patch.object(scraper, 'listen_for_media') as listen, \
+             patch.object(scraper, 'stage_b_network_sniff') as sniff:
+            self.assertIsNone(scraper.extract_from_mirror('', BASE, page, query=QUERY, episode_id='13'))
+        listen.assert_not_called()
+        sniff.assert_not_called()
+
+
+class AnimeSubtitleFranchiseIdentityTests(unittest.TestCase):
+    SPECIAL = 'Mushoku Tensei: Jobless Reincarnation Cour 2 - Eris the Goblin Slayer'
+
+    def test_subtitle_words_cannot_override_a_different_primary_franchise_without_ids(self):
+        found = scraper.check_episode_identity({
+            'url': 'https://provider.example/watch/goblin-slayer/ep-1',
+            'heading': 'Goblin Slayer', 'title': self.SPECIAL + ' Episode 1',
+            'active_episodes': ['Episode 1'],
+        }, self.SPECIAL, '1')
+        self.assertEqual('conflict', found['status'])
+
+    def test_a_catalog_alias_can_establish_the_primary_title_without_the_english_prefix(self):
+        alias = 'Jobless Reincarnation Part 2 - Eris the Goblin Slayer'
+        found = scraper.check_episode_identity({
+            'url': 'https://provider.example/watch/entry/ep-1',
+            'heading': alias, 'title': alias + ' Episode 1',
+            'active_episodes': ['Episode 1'],
+        }, self.SPECIAL, '1', title_aliases=[alias])
+        self.assertEqual('consistent', found['status'])
+
+
 class AnimePageIdentityTests(unittest.TestCase):
     def identity(self, **changes):
         result = {'url': 'https://provider.example/watch/mushoku-tensei-season-3/ep-1',

@@ -19,6 +19,15 @@ public sealed class TemporaryEpisodeWatchTests
     [InlineData("Frieren - 01-02.mkv", 1, false)]
     [InlineData("Frieren - 01 - 02.mkv", 1, false)]
     [InlineData("Frieren Season 1.mkv", 1, false)]
+    [InlineData("Mushoku Tensei - 13.5.mkv", 13, false)]
+    [InlineData("Mushoku Tensei Episode 13.5", 13, false)]
+    [InlineData("Mushoku Tensei S01E13.5.mkv", 13, false)]
+    [InlineData("Mushoku Tensei - 13,5.mkv", 13, false)]
+    [InlineData("Mushoku Tensei - 13_5.mkv", 13, false)]
+    [InlineData("Mushoku Tensei S01E13~14.mkv", 13, false)]
+    [InlineData("Mushoku Tensei S01E13 - 14.mkv", 13, false)]
+    [InlineData("Mushoku Tensei Episode 13a.mkv", 13, false)]
+    [InlineData("Frieren - 01v2.mkv", 1, true)]
     public void EpisodeFileRequiresOneExplicitMatchingEpisode(string name, int episode, bool expected)
     {
         Assert.Equal(expected, TemporaryEpisodeWatchService.EpisodeMatches(name, episode));

@@ -1,0 +1,21 @@
+# Anime special units and primary identity — October 9, 2026
+
+The scraper normalized `Episode 13.5` into integer Episode 13 and could rewrite only the integer prefix of a fractional route. Four regressions reproduced **13 failed subtest assertions**. It now preserves complete unit tokens, keeps fractional/ranged/suffixed units separate from integer claims, records `observed_unmapped_units`, rejects their use as an ordinary requested integer and declines guessed rewrites. A matching work ID cannot waive a conflicting unit. Integer evidence remains integer-valued. The one related candidate/native-policy scope passed **62 checks** in 0.016 seconds.
+
+A live lookup also returned unrelated Goblin Slayer cards for an Eris subtitle. Existing observed-ID guards rejected them. A new no-ID regression then reproduced a false **consistent** result when that wrong primary heading shared subtitle words with a copied matching page title. A clear multiword franchise prefix before a catalog title's colon now remains required for that title's evidence; explicit catalog aliases still provide their own evidence. The new negative/alias scope initially had one failure/one pass; the final related primary-identity/alias/synonym scope passed **36 checks** in 0.008 seconds. The unchanged unit/native-policy scope was not repeated. No full local C#/Python suite ran.
+
+## Actual second-monitor journey
+
+The existing isolated fresh profile opened package C# source **e88da4b** with the unit-guard script SHA-256 **6F9D5150DF4E56D0506AA0616FD3E10D5B508CB5F745DF4B65C5889A0777B6BD**. Catalog search returned seven Mushoku Tensei entries. Selecting **Mushoku Tensei: Jobless Reincarnation Cour 2 - Eris the Goblin Slayer**, **AniList 141534 / MAL 50360**, showed the separate entry and **Episode 1 of 1**. The Dub badge lookup reported an identity conflict as Unknown; it supplied no Dub/audio proof.
+
+The normal **Stream episode → Stream** choice used EverythingMoe/The Index automatically. Its existing **63-second** configured scraper budget ended after **five of six** selected indexed providers, with no usable stream. The app retained the correct entry and offered Retry or explicit Open website. No website opened automatically. This qualifies the configured failure state, not positive special mapping, availability, audio, captions or playback.
+
+A distinct Retry/cancellation check first confirmed the live Python process and its Chrome tree: **14 child processes** under the owned app PID **79608**. **Back to search** closed details, canceled the actual lookup, retained search results and left no player tab. All 14 observed children exited while the app remained alive. Normal app close then exited PID 79608; the separate held Frieren PID **33544** remains alive. The deployed unit-guard script matched the source hash. The later primary-franchise guard has controlled passing evidence; this physical journey preceded that additional guard. No positive special source is claimed.
+
+The two scroll inputs rejected for concurrent user input, delayed modal creation and one rejected modal geometry click are tooling observations, not acceptance evidence. Private logs/process receipts are in the existing `.artifacts/implementation/package-smoke-20261009/` folder. Original profiles and permanent media were not mutable test inputs.
+
+## Completed preceding checkpoint and limits
+
+The preceding navigation source **e88da4badf689ad9134fa1312c4c4b89424c17e4** [hosted run](https://github.com/tntcool48-dot/UniversalMediaOS/actions/runs/37959332568) finished successfully: **1,087 passes / 22 existing skips / zero failures / 1,109 total**, approximately **12 minutes** of test execution; build and Python syntax passed. All nine new navigation cases and the minimize case passed. The older `964dca7` minimize failure remains recorded and unexplained. This checkpoint predates the script changes above and is not their full-source qualification.
+
+Real special/provider-unit reconciliation and a playable special remain open. The actual failure/cancellation sample does not cover every discovered provider or all outage modes. The tracker records **75 verified steps**, with **17 grouped gates open**, including two deferred Books groups.

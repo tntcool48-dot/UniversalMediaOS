@@ -1730,20 +1730,28 @@ def variant_conflicts(candidate, query):
     return bool(actual["kind"] - expected["kind"])
 
 
-EPISODE_PATH_RE = re.compile(r"(?P<prefix>(?:/|-)\b(?:episode|ep)[-/]?)(?P<number>\d+)(?=\b|/|$)", re.I)
+EPISODE_UNIT_PATTERN = r"[0-9]+(?:[.,_-][0-9]+)*(?:[a-z])?"
+EPISODE_PATH_RE = re.compile(
+    r"(?P<prefix>(?:/|-)\b(?:episode|ep)[-/]?)(?P<number>" + EPISODE_UNIT_PATTERN +
+    r")(?!\w|[.,_-][0-9])", re.I)
+
+
+def episode_unit_claims(text, is_url=False):
+    """Preserve a provider's complete unit token before classifying numbers."""
+    if is_url:
+        parsed = urlparse(text)
+        claims = {m.group("number").lower() for m in EPISODE_PATH_RE.finditer(unquote(parsed.path))}
+        claims.update(value.lower() for key, value in parse_qsl(parsed.query)
+                      if key.lower() in ("ep", "episode") and re.fullmatch(EPISODE_UNIT_PATTERN, value, re.I))
+        return claims
+    raw = unquote(str(text or "")).lower()
+    numbers = re.findall(r"\b(?:episode|ep)[\s:_-]*(" + EPISODE_UNIT_PATTERN + r")(?!\w|[.,_-][0-9])", raw)
+    numbers += re.findall(r"\bs[0-9]+e(" + EPISODE_UNIT_PATTERN + r")(?!\w|[.,_-][0-9])", raw)
+    return set(numbers)
 
 
 def episode_claims(text, is_url=False):
-    if is_url:
-        parsed = urlparse(text)
-        claims = {int(m.group("number")) for m in EPISODE_PATH_RE.finditer(unquote(parsed.path))}
-        claims.update(int(value) for key, value in parse_qsl(parsed.query)
-                      if key.lower() in ("ep", "episode") and value.isdigit())
-        return claims
-    text = normalize_title(text or "")
-    numbers = re.findall(r"\b(?:episode|ep)\s*(\d+)\b", text)
-    numbers += re.findall(r"\bs\d+e(\d+)\b", text)
-    return {int(n) for n in numbers}
+    return {int(number) for number in episode_unit_claims(text, is_url) if number.isdigit()}
 
 
 class CandidateAnchorParser(HTMLParser):
@@ -1940,6 +1948,8 @@ def episode_url_candidates(base_url, episode_id):
             candidates.append(url)
 
     if str(episode_id).isdigit():
+        if any(not unit.isdigit() for unit in episode_unit_claims(base_url, is_url=True)):
+            return []  # An explicit special/range needs a mapping, not a guessed rewrite.
         parsed = urlparse(base_url)
         has_path_episode = EPISODE_PATH_RE.search(parsed.path) is not None
         replaced_path = EPISODE_PATH_RE.sub(lambda m: m.group("prefix") + str(episode_id), parsed.path)
@@ -1967,15 +1977,28 @@ def check_episode_identity(identity, query, episode_id, title_aliases=None, cata
     accepted_titles = trusted_titles + ([synonym] if synonym else [])
     def matches_title(title, accepted):
         keywords = query_keywords(accepted)
-        return bool(keywords) and len(set(keywords) & match_tokens(title)) >= min(2, len(keywords))
+        tokens = match_tokens(title)
+        if not keywords or len(set(keywords) & tokens) < min(2, len(keywords)):
+            return False
+        # Shared subtitle words cannot identify a different primary franchise.
+        # Apply this only to a clear multiword prefix before the catalog colon;
+        # explicit catalog aliases still supply their own title evidence.
+        prefix = query_keywords(accepted.split(":", 1)[0]) if ":" in accepted else []
+        if len(prefix) >= 2 and all(len(word) >= 3 for word in prefix):
+            return set(prefix).issubset(tokens)
+        return True
     trusted_matching = [title for title in titles if any(matches_title(title, accepted) for accepted in trusted_titles)]
     synonym_matching = [title for title in titles if synonym and matches_title(title, synonym)]
     matching = [title for title in titles if title in trusted_matching or title in synonym_matching]
     active = [str(label) for label in identity.get("active_episodes", [])]
     observed_episodes = set().union(*(episode_claims(title) for title in matching + active))
+    unmapped_units = set().union(*(episode_unit_claims(label) for label in matching + active))
     for label in active:
         if label.strip().isdigit():
             observed_episodes.add(int(label.strip()))
+        elif re.fullmatch(EPISODE_UNIT_PATTERN, label.strip(), re.I):
+            unmapped_units.add(label.strip().lower())
+    unmapped_units = {unit for unit in unmapped_units if not unit.isdigit()}
     expected_ids = safe_catalog_ids(catalog_ids)
     observed_ids = {"anilist": set(), "mal": set()}
     for claims in [identity.get("primary_ids"), *(identity.get("active_id_claims") or [])]:
@@ -2002,7 +2025,8 @@ def check_episode_identity(identity, query, episode_id, title_aliases=None, cata
                 "synonym_match": bool(synonym_matching) and not bool(trusted_matching),
                 "catalog_id_match": id_match, "catalog_id_conflict": id_conflict,
                 "observed_catalog_ids": {name: sorted(values) for name, values in observed_ids.items() if values},
-                "observed_episodes": sorted(observed_episodes), "observed_seasons": [], "observed_parts": []}
+                "observed_episodes": sorted(observed_episodes), "observed_seasons": [], "observed_parts": [],
+                "observed_unmapped_units": sorted(unmapped_units)}
     for title in matching:
         claims = variant_claims(title)
         evidence["observed_seasons"] = sorted(set(evidence["observed_seasons"]) | claims["season"])
@@ -2014,6 +2038,8 @@ def check_episode_identity(identity, query, episode_id, title_aliases=None, cata
     if str(episode_id).isdigit():
         expected_episode = {int(episode_id)}
         conflict |= bool((observed_episodes | episode_claims(url, is_url=True)) - expected_episode)
+        conflict |= bool(unmapped_units or any(
+            not unit.isdigit() for unit in episode_unit_claims(url, is_url=True)))
     # A primary heading for a different show is stronger than the search card.
     heading = identity.get("heading") or ""
     heading_matches = any(matches_title(heading, accepted) for accepted in accepted_titles)
@@ -2069,6 +2095,7 @@ def read_episode_identity(page, query, episode_id, title_aliases=None, catalog_i
     page._ums_match_evidence = evidence
     log(f"  Episode identity: {evidence['status']} seasons={evidence['observed_seasons']} "
         f"parts={evidence['observed_parts']} episodes={evidence['observed_episodes']} "
+        f"unmapped_units={evidence['observed_unmapped_units']} "
         f"catalog_alias={evidence['alias_match']} synonym_match={evidence['synonym_match']} "
         f"catalog_id_match={evidence['catalog_id_match']} "
         f"catalog_id_conflict={evidence['catalog_id_conflict']}")

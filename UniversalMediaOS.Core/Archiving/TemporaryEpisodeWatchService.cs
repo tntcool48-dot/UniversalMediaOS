@@ -20,7 +20,8 @@ public sealed class TemporaryEpisodeWatchService
     private static readonly TimeSpan StallTimeout = TimeSpan.FromMinutes(8);
     private static readonly string[] VideoExtensions = [".mkv", ".mp4", ".webm", ".avi", ".m4v"];
     private static readonly string[] CaptionExtensions = [".srt", ".ass", ".ssa", ".vtt"];
-    private const string EpisodeMarkerPattern = @"\bS\d{1,2}E(\d{1,4})(?!\d)|(?<![A-Za-z0-9])(?:episode|ep|e|#)\s*0*(\d{1,4})(?!\d)|\s[-–—]\s*0*(\d{1,4})(?!\d)";
+    private const string EpisodeUnitPattern = @"\d{1,4}(?:[.,_~-]\d{1,4})*(?:[a-uw-z])?";
+    private const string EpisodeMarkerPattern = @"\bS\d{1,2}E(" + EpisodeUnitPattern + @")(?:v\d+)?(?!\w|[.,_-]\d)|(?<![A-Za-z0-9])(?:episode|ep|e|#)\s*(" + EpisodeUnitPattern + @")(?:v\d+)?(?!\w|[.,_-]\d)|\s[-–—]\s*(" + EpisodeUnitPattern + @")(?:v\d+)?(?!\w|[.,_-]\d)";
     private readonly Func<string, Action<string>?, CancellationToken, Task<List<TorrentResult>>> _search;
     private readonly string _root;
     private readonly Func<string, long> _availableSpace;
@@ -55,12 +56,16 @@ public sealed class TemporaryEpisodeWatchService
 
     public async Task<TemporaryEpisodeWatchResult> DownloadAsync(
         int catalogId, string title, IEnumerable<string> aliases, int episode, string audioPreference,
-        Action<string> log, CancellationToken token = default)
+        Action<string> log, CancellationToken token = default, string catalogFormat = "", int catalogEpisodeCount = 0)
     {
         if (catalogId <= 0 || string.IsNullOrWhiteSpace(title) || episode <= 0)
             throw new ArgumentException("A catalog title and numbered episode are required.");
 
         string audio = audioPreference.Equals("Dub", StringComparison.OrdinalIgnoreCase) ? "Dub" : "Sub";
+        aliases ??= [];
+        string[]? specialTitles = IsSingleSpecial(catalogFormat, catalogEpisodeCount, episode)
+            ? new[] { title }.Concat(aliases).Where(t => !string.IsNullOrWhiteSpace(t))
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToArray() : null;
         string key = $"{catalogId}:{episode}:{audio}";
         await _transferGate.WaitAsync(token);
         try
@@ -83,7 +88,8 @@ public sealed class TemporaryEpisodeWatchService
                 }
             }
 
-            var candidates = await FindCandidatesAsync(title, aliases, episode, audio, log, token);
+            var candidates = await FindCandidatesAsync(title, aliases, episode, audio, log, token,
+                catalogFormat, catalogEpisodeCount);
             if (candidates.Count == 0)
                 throw new InvalidOperationException("No matching episode torrent was found. Try Stream or another episode.");
 
@@ -98,7 +104,7 @@ public sealed class TemporaryEpisodeWatchService
                 try
                 {
                     lockHandle = new FileStream(Path.Combine(directory, ".active"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-                    var selection = await TransferCandidateAsync(candidate, title, episode, audio, directory, log, token);
+                    var selection = await TransferCandidateAsync(candidate, title, episode, audio, directory, log, token, specialTitles);
                     if (selection == null) continue;
                     token.ThrowIfCancellationRequested();
                     var entry = new CacheEntry(directory, selection.Value.Path, selection.Value.AudioNotice,
@@ -132,21 +138,25 @@ public sealed class TemporaryEpisodeWatchService
     }
 
     internal async Task<List<TorrentResult>> FindCandidatesAsync(
-        string title, IEnumerable<string> aliases, int episode, string audio, Action<string> log, CancellationToken token)
+        string title, IEnumerable<string> aliases, int episode, string audio, Action<string> log, CancellationToken token,
+        string catalogFormat = "", int catalogEpisodeCount = 0)
     {
         string[] titles = new[] { title }.Concat(aliases ?? []).Where(t => !string.IsNullOrWhiteSpace(t))
-            .Distinct(StringComparer.OrdinalIgnoreCase).Take(3).ToArray();
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        bool singleSpecial = IsSingleSpecial(catalogFormat, catalogEpisodeCount, episode);
         var results = new List<TorrentResult>();
         List<TorrentResult> Matches() => results.Where(result => !string.IsNullOrWhiteSpace(result.MagnetLink) &&
                 !SeasonConflicts(title, result.Title) &&
                 titles.Any(t => SeasonDownloader.TitleLooksLikeMatch(result.Title, StripSeasonMarker(t))) &&
-                !Regex.IsMatch(result.Title, @"\b(movie|ova|ona|special)\b", RegexOptions.IgnoreCase) &&
-                (!Regex.IsMatch(result.Title, EpisodeMarkerPattern, RegexOptions.IgnoreCase) || EpisodeMatches(result.Title, episode)) &&
+                (singleSpecial
+                    ? FileMatchesCatalogEpisode(result.Title, episode, titles)
+                    : !Regex.IsMatch(result.Title, @"\b(movie|ova|ona|special)\b", RegexOptions.IgnoreCase) &&
+                      (!Regex.IsMatch(result.Title, EpisodeMarkerPattern, RegexOptions.IgnoreCase) || EpisodeMatches(result.Title, episode))) &&
                 (audio != "Dub" || HasDubLabel(result.Title)))
             .GroupBy(result => string.IsNullOrWhiteSpace(result.InfoHash) ? result.MagnetLink : result.InfoHash,
                 StringComparer.OrdinalIgnoreCase)
             .Select(group => group.OrderByDescending(item => item.Seeders).First()).ToList();
-        foreach (string searchTitle in titles)
+        foreach (string searchTitle in titles.Take(3))
         {
             string episodeText = episode.ToString("00", System.Globalization.CultureInfo.InvariantCulture);
             if (audio == "Dub")
@@ -176,7 +186,7 @@ public sealed class TemporaryEpisodeWatchService
 
     private async Task<(string Path, string AudioNotice, IReadOnlyList<string> CaptionPaths)?> TransferCandidateAsync(
         TorrentResult candidate, string title, int episode, string audio, string directory,
-        Action<string> log, CancellationToken token)
+        Action<string> log, CancellationToken token, string[]? specialTitles)
     {
         var settings = new EngineSettingsBuilder
         {
@@ -208,7 +218,12 @@ public sealed class TemporaryEpisodeWatchService
             {
                 token.ThrowIfCancellationRequested();
                 if (SeasonConflicts(title, manager.Torrent?.Name ?? string.Empty)) return null;
-                ITorrentManagerFile? video = SelectEpisodeFile(manager.Files, episode);
+                if (specialTitles != null && !specialTitles.Any(t => TorrentMatchesSeries(manager.Torrent?.Name ?? string.Empty, t)))
+                {
+                    log("Torrent metadata does not identify the selected catalog special.");
+                    return null;
+                }
+                ITorrentManagerFile? video = SelectEpisodeFile(manager.Files, episode, specialTitles);
                 if (video == null)
                 {
                     log("Torrent did not contain one unambiguous file for this episode.");
@@ -363,17 +378,34 @@ public sealed class TemporaryEpisodeWatchService
         return "Release says Dub; audio language is not tagged, so verify it in the player.";
     }
 
-    internal static ITorrentManagerFile? SelectEpisodeFile(IEnumerable<ITorrentManagerFile> files, int episode)
+    internal static ITorrentManagerFile? SelectEpisodeFile(IEnumerable<ITorrentManagerFile> files, int episode, string[]? specialTitles = null)
     {
         var matches = files.Where(file => VideoExtensions.Contains(Path.GetExtension(file.FullPath), StringComparer.OrdinalIgnoreCase) &&
-            EpisodeMatches(Path.GetFileName(file.FullPath), episode)).ToArray();
+            FileMatchesCatalogEpisode(Path.GetFileName(file.FullPath), episode, specialTitles)).ToArray();
         return matches.Length == 1 ? matches[0] : null;
+    }
+
+    private static bool IsSingleSpecial(string format, int count, int episode) =>
+        count == 1 && episode == 1 && (string.Equals(format, "SPECIAL", StringComparison.OrdinalIgnoreCase) ||
+                                      string.Equals(format, "OVA", StringComparison.OrdinalIgnoreCase));
+
+    internal static bool FileMatchesCatalogEpisode(string name, int episode, string[]? specialTitles = null)
+    {
+        if (specialTitles == null) return EpisodeMatches(name, episode);
+        if (episode != 1 || !specialTitles.Any(t => TorrentMatchesSeries(name, t))) return false;
+        if (Regex.IsMatch(name, EpisodeMarkerPattern, RegexOptions.IgnoreCase)) return EpisodeMatches(name, episode);
+        // Only a catalog-confirmed single special may use its exact work title
+        // without a numbered unit. Never reinterpret OVA ordinals or batches.
+        return !Regex.IsMatch(name, @"\b(?:ova|special)\s*\d|\b(?:batch|complete)\b", RegexOptions.IgnoreCase);
     }
 
     internal static bool EpisodeMatches(string name, int episode)
     {
         if (episode <= 0) return false;
-        string text = Path.GetFileNameWithoutExtension(name);
+        string text = Path.GetFileName(name);
+        if (VideoExtensions.Contains(Path.GetExtension(text), StringComparer.OrdinalIgnoreCase) ||
+            CaptionExtensions.Contains(Path.GetExtension(text), StringComparer.OrdinalIgnoreCase))
+            text = Path.GetFileNameWithoutExtension(text);
         var numbers = new List<int>();
         foreach (Match match in Regex.Matches(text,
             EpisodeMarkerPattern,
@@ -381,10 +413,11 @@ public sealed class TemporaryEpisodeWatchService
         {
             string number = match.Groups[1].Success ? match.Groups[1].Value :
                 match.Groups[2].Success ? match.Groups[2].Value : match.Groups[3].Value;
-            if (int.TryParse(number, out int found)) numbers.Add(found);
+            if (!int.TryParse(number, out int found)) return false;
+            numbers.Add(found);
         }
         return numbers.Count == 1 && numbers[0] == episode &&
-            !Regex.IsMatch(text, @"\b(?:episode|ep|e)\s*\d+\s*[-~]\s*\d+|\s[-–—]\s*\d+\s*[-~]\s*\d+", RegexOptions.IgnoreCase);
+            !Regex.IsMatch(text, @"\bS\d+E\d+\s*[-~]\s*\d+|\b(?:episode|ep|e)\s*\d+\s*[-~]\s*\d+|\s[-–—]\s*\d+\s*[-~]\s*\d+", RegexOptions.IgnoreCase);
     }
 
     private static bool IsInside(string directory, string path) =>

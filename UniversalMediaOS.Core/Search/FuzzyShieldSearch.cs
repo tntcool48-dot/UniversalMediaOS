@@ -142,6 +142,7 @@ namespace UniversalMediaOS.Core.Search
                     media({string.Join(", ", mediaArguments)}) {{
                         id
                         idMal
+                        format
                         episodes
                         nextAiringEpisode {{ episode airingAt }}
                         isAdult
@@ -284,6 +285,7 @@ namespace UniversalMediaOS.Core.Search
                                 {
                                     Id = item.GetProperty("id").GetInt32(),
                                     IdMal = item.TryGetProperty("idMal", out var idMal) && idMal.ValueKind == JsonValueKind.Number ? idMal.GetInt32() : 0,
+                                    Format = item.TryGetProperty("format", out var format) && format.ValueKind == JsonValueKind.String ? format.GetString() ?? "" : "",
                                     TotalEpisodes = totalEpisodes,
                                     AvailableSubEpisodes = releasedEpisodes,
                                     AvailableDubEpisodes = 0,
@@ -574,6 +576,7 @@ namespace UniversalMediaOS.Core.Search
 
         public int Id { get; set; }
         public int IdMal { get; set; }
+        public string Format { get; set; } = string.Empty;
         public int TotalEpisodes { get; set; }
         public int AvailableSubEpisodes
         {

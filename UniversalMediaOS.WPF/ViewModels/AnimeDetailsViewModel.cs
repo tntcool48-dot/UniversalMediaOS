@@ -953,8 +953,9 @@ namespace UniversalMediaOS.WPF.ViewModels
             try
             {
                 TemporaryEpisodeWatchResult result = await _temporaryEpisodeWatch.DownloadAsync(
-                    media.Id, media.OfficialTitle, [media.EnglishTitle, media.RomajiTitle],
-                    episode, audio, message => AddScraperActivity(message, "Downloading"), token);
+                    media.Id, media.OfficialTitle, new[] { media.EnglishTitle, media.RomajiTitle }.Concat(media.Synonyms ?? []),
+                    episode, audio, message => AddScraperActivity(message, "Downloading"), token,
+                    media.Format, media.TotalEpisodes);
                 bool handedToPlayer = false;
                 try
                 {
