@@ -1,0 +1,15 @@
+# Packaged Manga WebView journey — October 9, 2026
+
+The remaining package smoke check needed a real embedded website journey after native playback and profile recovery had passed. No application change, rebuild or test suite was needed for this check.
+
+The existing framework-dependent package identifies **964dca7526ccdbe4b8eba8af0fa72e6b606d96e6**. It reused the isolated fresh profile and the already-running PID **69864**. Visible work used the explicitly permitted larger main monitor. Original profiles and permanent media were not opened as mutable test data.
+
+Through normal Manga search, **One Piece / 1997 / Ongoing**, MangaDex ID `a1c7c817-4e59-43b7-9365-09675a149a6f`, opened its chapter choices. Chapter 1 **Romance Dawn** was explicitly marked Website only. Choosing **Open website** opened [Manga Plus chapter 1](https://mangaplus.shueisha.co.jp/viewer/1000486) inside the app. The reader visibly rendered the English chapter, kept its **One Piece › Ch. 1 / Website reader** header and had no duplicate media transport. One 650-pixel scroll reached the Gol D. Roger panel. One switch to Downloads and return retained that same panel and scroll position.
+
+The owned log records **uBlock Origin loaded into WebView2**, ad-blocker configuration, and navigation **HTTP 200 / success=True**. The `error=Unknown` enum accompanies that successful navigation; it does not establish a failure. The isolated Secure Preferences file contains the exact uBlock extension path. It exposes no explicit enabled-state scalar in that entry, so registration/loading is qualified, while explicit enabled-state and blocking effectiveness remain unproved. No security setting, extension permission or browser barrier was changed to obtain this result.
+
+Normal Alt+F4 close drained accepted playback progress and ended PID 69864 and all seven observed owned WebView2 processes. A subsequent process inventory found no package/profile-owned remainder. The separate held Frieren PID **33544** remains alive for its pending human audio/caption checks. No owned listener existed in the pre-close app/browser inventory; this check makes no additional service-listener claim.
+
+Private evidence is retained in `.artifacts/implementation/package-smoke-20261009/webview-result.json` and the isolated profile's `Roaming/UniversalMediaOS/app.log`. Candidate manifest/identity metadata records this scope without changing executable source or converting its failed hosted checkpoint into a pass.
+
+This one physical journey does not certify other external providers, persistent website progress across restart, uBlock blocking efficacy, sustained resource cycles or final release acceptance. The earlier Manga **40/41** collection result remains open. The exact source checkpoint still has **1,077 passes / one unresolved minimize failure / 22 existing skips**. No broad retry was run. The tracker now has **73 verified steps**, while **17 grouped gates remain**, including two deferred Books gates: **15** for the current objective.
