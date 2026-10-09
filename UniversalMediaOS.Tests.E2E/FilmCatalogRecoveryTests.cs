@@ -55,6 +55,8 @@ public sealed class FilmCatalogRecoveryTests
     [Theory]
     [InlineData("wrong-id")]
     [InlineData("series")]
+    [InlineData("episode")]
+    [InlineData("game")]
     [InlineData("untrusted-host")]
     [InlineData("broken-json")]
     public async Task BadArtworkCannotReplaceIdentityOrHideValidFilms(string mode)
@@ -63,6 +65,8 @@ public sealed class FilmCatalogRecoveryTests
         {
             "wrong-id" => Poster("tt15239678"),
             "series" => Poster(Path.GetFileNameWithoutExtension(uri.AbsolutePath), "tvSeries"),
+            "episode" => Poster(Path.GetFileNameWithoutExtension(uri.AbsolutePath), "tvEpisode"),
+            "game" => Poster(Path.GetFileNameWithoutExtension(uri.AbsolutePath), "videoGame"),
             "untrusted-host" => Poster(Path.GetFileNameWithoutExtension(uri.AbsolutePath), url: "https://untrusted.example/poster.jpg"),
             _ => "not-json"
         })) };
@@ -72,6 +76,33 @@ public sealed class FilmCatalogRecoveryTests
         Assert.All(result.Items, item => Assert.Empty(item.PosterUrl));
         Assert.NotNull(result.NextToken);
         Assert.True(result.IsPartial);
+    }
+
+    [Fact]
+    public async Task AnimatedShortUsesItsExactIdArtworkInsteadOfTheRejectedCommonsFallback()
+    {
+        using var profile = new Config("", false);
+        var handler = new Handler
+        {
+            SearchPayload = """{"query":{"search":[{"title":"Q282456"}]}}""",
+            EntityPayload = JsonSerializer.Serialize(new { entities = new Dictionary<string, object>
+            {
+                ["Q282456"] = Entity("Q282456", "Big Buck Bunny", 2008, "tt1254207",
+                    "Big buck bunny poster big.jpg", "Q17517379")
+            } }),
+            Poster = (uri, _) => Task.FromResult(Json(Poster(Path.GetFileNameWithoutExtension(uri.AbsolutePath), "short")))
+        };
+        using var http = new HttpClient(handler);
+        var page = await new MovieService(profile.Value, http).GetPageAsync(
+            new(AudiovisualMediaKind.Movie, AudiovisualCatalogMode.Search, "Big Buck Bunny"));
+        var item = Assert.Single(page.Items);
+        Assert.Equal("Q282456", item.Identity.PrimaryId!.Value);
+        Assert.Equal("tt1254207", item.Identity.ImdbId);
+        Assert.Equal(2008, item.Identity.Year);
+        Assert.Equal(AudiovisualMediaKind.Movie, item.Identity.Kind);
+        Assert.True(item.Identity.IsAnimated);
+        Assert.Equal("https://m.media-amazon.com/tt1254207.jpg", item.PosterUrl);
+        Assert.Contains("tt1254207", new AudiovisualCardViewModel(item).PosterAttributionUrl!);
     }
 
     [Fact]
@@ -143,11 +174,11 @@ public sealed class FilmCatalogRecoveryTests
         Assert.Equal("www.wikidata.org", Assert.Single(handler.Uris).Host);
     }
 
-    private static object Entity(string id, string title, int year, string imdb, string poster = "") => new
+    private static object Entity(string id, string title, int year, string imdb, string poster = "", string filmType = "Q11424") => new
     {
         id, labels = new { en = new { value = title } }, descriptions = new { en = new { value = "A film" } },
         claims = new Dictionary<string, object>
-        { ["P31"] = Claim(new { id = "Q11424" }), ["P345"] = Claim(imdb), ["P577"] = Claim(new { time = $"+{year}-01-01T00:00:00Z", precision = 9 }), ["P3383"] = Claim(poster) }
+        { ["P31"] = Claim(new { id = filmType }), ["P345"] = Claim(imdb), ["P577"] = Claim(new { time = $"+{year}-01-01T00:00:00Z", precision = 9 }), ["P3383"] = Claim(poster) }
     };
     private static object Claim(object value) => new[] { new { rank = "normal", mainsnak = new { snaktype = "value", datavalue = new { value } } } };
     private static string Poster(string id, string type = "movie", string? url = null) => JsonSerializer.Serialize(new
@@ -157,6 +188,7 @@ public sealed class FilmCatalogRecoveryTests
     {
         public List<Uri> Uris { get; } = [];
         public HttpStatusCode MetadataStatus { get; init; } = HttpStatusCode.OK;
+        public string SearchPayload { get; init; } = Search;
         public string EntityPayload { get; init; } = Entities;
         public Func<Uri, CancellationToken, Task<HttpResponseMessage>>? Poster { get; init; }
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
@@ -168,7 +200,7 @@ public sealed class FilmCatalogRecoveryTests
                 return Poster?.Invoke(uri, token) ?? Task.FromResult(Json(FilmCatalogRecoveryTests.Poster(Path.GetFileNameWithoutExtension(uri.AbsolutePath))));
             Assert.Equal("www.wikidata.org", uri.Host);
             return Task.FromResult(new HttpResponseMessage(MetadataStatus)
-            { Content = new StringContent(uri.Query.Contains("wbgetentities", StringComparison.Ordinal) ? EntityPayload : Search) });
+            { Content = new StringContent(uri.Query.Contains("wbgetentities", StringComparison.Ordinal) ? EntityPayload : SearchPayload) });
         }
     }
 

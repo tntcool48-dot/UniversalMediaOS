@@ -1,0 +1,13 @@
+# Exact short-film artwork — October 9, 2026
+
+The fresh packaged Wikidata search found **Big Buck Bunny (2008), Q282456 / tt1254207**, but its card/Details poster failed with HTTP 403 from the Commons redirect. IMDb's exact-ID suggestion response succeeded and supplied an image with `qid: short`. The production artwork adapter accepted only `movie`/`tvMovie`, discarding this supported short film's own poster.
+
+`WikidataMetadataClient.WithPosterAsync` now also accepts `short`. It still requires one exact IMDb-ID match and a credential-free, default-port HTTPS URL on `m.media-amazon.com`. Series, episodes, games, different IDs/remakes and untrusted image hosts remain rejected. Catalog metadata stays keyless Wikidata; optional artwork does not change item identity or enable TMDB. No new provider, Commons-path algorithm or network request is added. The public Commons direct-file probe separately succeeded at its [documented upload layout](https://www.mediawiki.org/wiki/Manual:Image_administration#Data_storage), but that alternate mechanism is not implemented by this repair.
+
+## Verification
+
+- The new Big Buck Bunny case uses the production `MovieService`, a real-shaped Wikidata animated-short entity and IMDb's `short` classification. It failed before repair because the Commons fallback remained selected: **one failure, one second**, preserved in [before TRX](C:/Users/user/animeapp/UniversalMediaOS.Tests.E2E/TestResults/animated-short-artwork-before-20261009.trx).
+- The single related film-artwork cohort then passed **16 checks / zero failures/skips / 21 seconds**. This includes the new short case and explicit episode/game rejection alongside existing exact-ID/remake/trusted-host, caller cancellation, artwork deadline, keyless routing and provider-failure safeguards. [Final TRX](C:/Users/user/animeapp/UniversalMediaOS.Tests.E2E/TestResults/animated-short-artwork-final-20261009.trx).
+- Core/test builds passed with zero warnings/errors. Test builds used `BuildProjectReferences=false` to avoid rebuilding the held parent WPF app. The passing cohort is not repeated; one hosted full checkpoint will cover this source batch together with the test-launcher scope guard. No broad local media suite ran.
+
+Physical poster rendering in the rebuilt reusable package and the exact hosted checkpoint are pending. The preceding [f969f4c package/recovery record](C:/Users/user/animeapp/docs/qa/packaged-profile-recovery-2026-10-09.md) remains evidence for its own unchanged journeys, including the missing poster. Broader film classes/artwork availability, providers/audio/captions, catalog DASH and final release remain open.

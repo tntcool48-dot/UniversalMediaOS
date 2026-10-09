@@ -150,8 +150,9 @@ internal sealed class WikidataMetadataClient : IAudiovisualMetadataClient
             var matches = rows.EnumerateArray().Where(row => Text(row, "id") == imdb).ToArray();
             if (matches.Length != 1) return item;
             var match = matches[0];
-            // A same-name show, game or different remake cannot provide this film's poster.
-            if (Text(match, "qid") is not ("movie" or "tvMovie") ||
+            // Short films are catalog movies too. A same-name show, episode, game
+            // or different remake cannot provide this exact film's poster.
+            if (Text(match, "qid") is not ("movie" or "tvMovie" or "short") ||
                 !match.TryGetProperty("i", out var image)) return item;
             string poster = Text(image, "imageUrl");
             if (!Uri.TryCreate(poster, UriKind.Absolute, out var uri) || uri.Scheme != "https" ||

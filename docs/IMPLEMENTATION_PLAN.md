@@ -367,7 +367,7 @@ The first recovery changes are implemented in the working tree. This is not a re
 - Executable: `.artifacts/implementation/build/bin/UniversalMediaOS.WPF/debug/UniversalMediaOS.WPF.exe`.
 - Default isolated storage layout: `<UNIVERSAL_MEDIA_OS_DATA_ROOT>/Roaming/UniversalMediaOS` and `<UNIVERSAL_MEDIA_OS_DATA_ROOT>/Local/UniversalMediaOS`. An override must be absolute. Portable legacy SQLite import is disabled under the override to avoid pulling real user data into tests.
 
-Reproduce with `./run-e2e-tests.ps1`; add `-NoBuild` for the existing artifact or `-Filter` for a focused test selection. `-ArtifactsPath` selects another build root; `-ExecutablePath` (or `UNIVERSAL_MEDIA_OS_EXE`) selects an explicit application executable.
+Choose `./run-e2e-tests.ps1 -Filter '<affected test selection>'` for focused checks or explicitly use `-FullSuite` for a full checkpoint. Older reproduction commands above that omit a scope now need `-FullSuite`. Add `-NoBuild` only when reusing a current artifact; reuse the existing build root. `-ArtifactsPath` selects that build root; `-ExecutablePath` (or `UNIVERSAL_MEDIA_OS_EXE`) selects an explicit application executable.
 
 **Next integration work:** finish IP04 episode metadata/playback context, prioritize credential-free metadata qualification (IP05), and implement independent producer evidence plus UI adoption (IP06-IP08/IP10). Remaining UI acceptance and IP01 diagnostics are tracked in the [active checklist](C:/Users/user/animeapp/docs/IMPLEMENTATION_CHECKLIST.md). The movie provider, catalog and identity failures have not yet been repaired.
 
