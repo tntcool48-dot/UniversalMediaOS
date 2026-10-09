@@ -2,7 +2,13 @@ name: Release validation
 
 on:
   push:
+    # Checklist and QA prose do not change the executable or its test inputs.
+    paths-ignore:
+      - 'docs/**.md'
   pull_request:
+    paths-ignore:
+      - 'docs/**.md'
+  workflow_dispatch:
 
 jobs:
   build-and-test:
@@ -38,7 +44,7 @@ jobs:
           dotnet test UniversalMediaOS.sln -c Release --no-build --nologo
           --blame-crash --blame-crash-dump-type mini
           --logger "trx;LogFileName=release-validation.trx"
-          --logger "console;verbosity=normal"
+          --logger "console;verbosity=minimal"
       - name: Retain test and crash diagnostics
         if: always()
         uses: actions/upload-artifact@v4

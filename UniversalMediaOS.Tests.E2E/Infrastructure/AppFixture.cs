@@ -170,19 +170,24 @@ namespace UniversalMediaOS.Tests.E2E.Infrastructure
                     $"Main window '{ExpectedMainWindowTitle}' did not load within 30 seconds. Observed top-level windows: {observedWindowTitles}.");
             }
 
-            Console.WriteLine("DUMPING MAINWINDOW DESCENDANTS FOR DIAGNOSTICS:");
-            try
+            // Successful launches do not need a full accessibility traversal.
+            // Keep it available for an explicitly requested focused diagnosis.
+            if (Environment.GetEnvironmentVariable("UNIVERSAL_MEDIA_OS_UI_DIAGNOSTICS") == "1")
             {
-                var descendants = MainWindow.FindAllDescendants();
-                Console.WriteLine($"Total descendants found: {descendants.Length}");
-                foreach (var d in descendants)
+                Console.WriteLine("DUMPING MAINWINDOW DESCENDANTS FOR DIAGNOSTICS:");
+                try
                 {
-                    Console.WriteLine($"- Name: '{d.Name}', ControlType: {d.ControlType}, AutomationId: '{d.AutomationId}'");
+                    var descendants = MainWindow.FindAllDescendants();
+                    Console.WriteLine($"Total descendants found: {descendants.Length}");
+                    foreach (var d in descendants)
+                    {
+                        Console.WriteLine($"- Name: '{d.Name}', ControlType: {d.ControlType}, AutomationId: '{d.AutomationId}'");
+                    }
                 }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Failed to dump descendants: {ex.Message}");
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Failed to dump descendants: {ex.Message}");
+                }
             }
             }
             catch

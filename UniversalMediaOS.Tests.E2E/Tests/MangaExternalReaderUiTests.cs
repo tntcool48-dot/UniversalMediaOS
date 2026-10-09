@@ -35,8 +35,8 @@ public sealed class MangaExternalReaderUiTests
         Assert.Equal(0, scenario.PageRequests);
         scenario.VisualHold("explicit-website-choice");
         scenario.Button("Open chapter 1 website").Invoke();
-        Assert.True(SpinWait.SpinUntil(() => scenario.Website.Requests > 0, TimeSpan.FromSeconds(12)),
-            "The explicitly selected external chapter must reach its owned reader server.");
+        if (!SpinWait.SpinUntil(() => scenario.Website.Requests > 0, TimeSpan.FromSeconds(12)))
+            Assert.Fail(scenario.Diagnostics("The explicitly selected external chapter must reach its owned reader server."));
         scenario.WaitFor("Website could not load. Retry website or go back.");
         Assert.True(scenario.Has("Mock Manga › Ch. 1"));
         Assert.Equal(0, scenario.PageRequests);
@@ -93,10 +93,25 @@ public sealed class MangaExternalReaderUiTests
         public void WaitFor(string name)
         {
             if (SpinWait.SpinUntil(() => Has(name), TimeSpan.FromSeconds(8))) return;
-            using var log = new FileStream(Path.Combine(Fixture.SandboxPath, "Roaming", "UniversalMediaOS", "app.log"),
-                FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-            using var reader = new StreamReader(log);
-            Assert.Fail($"{name}; website requests={Website.Requests}; page requests={PageRequests}\n{reader.ReadToEnd()}");
+            Assert.Fail(Diagnostics(name));
+        }
+        public string Diagnostics(string action)
+        {
+            string logText;
+            try
+            {
+                using var log = new FileStream(Path.Combine(Fixture.SandboxPath, "Roaming", "UniversalMediaOS", "app.log"),
+                    FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                using var reader = new StreamReader(log);
+                logText = reader.ReadToEnd();
+                if (logText.Length > 16_384) logText = logText[^16_384..];
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                logText = $"Owned application log unavailable: {ex.Message}";
+            }
+            return $"{action}; owned PID={Fixture.App.ProcessId}; exited={Fixture.App.HasExited}; " +
+                $"website requests={Website.Requests}; page requests={PageRequests}\n{logText}";
         }
         public void OpenChapters()
         {

@@ -28,7 +28,7 @@ public sealed class NativeTemporaryDownloadBoundaryTests
     [Fact]
     public async Task TemporaryEpisodeFileSharingFailureStopsProviderRotationAndCleansOnRestart()
     {
-        await using var fixture = await LocalSeeder.StartAsync(128 * 1024, seconds: 90);
+        await using var fixture = await LocalSeeder.StartAsync(128 * 1024);
         ClientEngine? engine = null;
         TorrentManager? manager = null;
         FileStream? blocker = null;
@@ -77,7 +77,7 @@ public sealed class NativeTemporaryDownloadBoundaryTests
     [InlineData("write")]
     public async Task PermanentSeasonFileSharingFailureEndsPromptlyAndRetainsRetryablePieces(string operation)
     {
-        await using var fixture = await LocalSeeder.StartAsync(128 * 1024, seconds: 90);
+        await using var fixture = await LocalSeeder.StartAsync(128 * 1024);
         string? previousRoot = Environment.GetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable);
         Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, fixture.Root);
         try
@@ -126,7 +126,7 @@ public sealed class NativeTemporaryDownloadBoundaryTests
     [Fact]
     public async Task PermanentSeasonResumeReusesAllocatedPartialAndPreservesItsMetadataCache()
     {
-        await using var fixture = await LocalSeeder.StartAsync(128 * 1024, seconds: 90);
+        await using var fixture = await LocalSeeder.StartAsync(128 * 1024);
         string? previousRoot = Environment.GetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable);
         Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, fixture.Root);
         try
@@ -188,7 +188,7 @@ public sealed class NativeTemporaryDownloadBoundaryTests
     [InlineData("falling")]
     public async Task PermanentSeasonRejectsInsufficientSpaceBeforePayloadAndRetainsInterruptedPieces(string mode)
     {
-        await using var fixture = await LocalSeeder.StartAsync(32 * 1024, seconds: 90);
+        await using var fixture = await LocalSeeder.StartAsync(32 * 1024);
         string? previousRoot = Environment.GetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable);
         Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, fixture.Root);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(20));
@@ -241,7 +241,7 @@ public sealed class NativeTemporaryDownloadBoundaryTests
     [InlineData("completed-owners")]
     public async Task TemporaryEpisodeClosesNativeSessionsAcrossFailureAndFinalOwnerRelease(string mode)
     {
-        await using var fixture = await LocalSeeder.StartAsync(mode == "completed-owners" ? 0 : 32 * 1024, seconds: 90);
+        await using var fixture = await LocalSeeder.StartAsync(mode == "completed-owners" ? 0 : 32 * 1024);
         var sessions = new List<(ClientEngine Engine, object Dht)>();
         var service = fixture.Service(_ => mode == "capacity" ? 0 : long.MaxValue, createEngine: settings =>
         {
@@ -294,7 +294,7 @@ public sealed class NativeTemporaryDownloadBoundaryTests
     [InlineData("session-cleanup")]
     public async Task RapidSeasonPauseRetainsActualProgressAndReleasesTheClosedSession(string check)
     {
-        await using var fixture = await LocalSeeder.StartAsync(128 * 1024, seconds: 90);
+        await using var fixture = await LocalSeeder.StartAsync(128 * 1024);
         string? previousRoot = Environment.GetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable);
         Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, fixture.Root);
         try
@@ -319,7 +319,8 @@ public sealed class NativeTemporaryDownloadBoundaryTests
                 {
                     if (cycle > 0) Assert.True(queue.Resume(job.Id));
                     await Eventually(() => job.Status is DownloadJobStatus.Failed or DownloadJobStatus.Completed ||
-                        ActiveManager(executor) is { HasMetadata: true, State: TorrentState.Downloading });
+                        ActiveManager(executor) is { HasMetadata: true, State: TorrentState.Downloading },
+                        () => $"Native start cycle {cycle}: {NativeState(ActiveManager(executor))}; {fixture.SeedState}; status={job.Status}: {job.StatusMessage}; {string.Join(" | ", fixture.Logs.TakeLast(6))}");
                     Assert.True(ActiveManager(executor) is { HasMetadata: true, State: TorrentState.Downloading },
                         $"Expected incomplete native transfer, got {job.Status}: {job.StatusMessage}");
                     var manager = ActiveManager(executor)!;
@@ -505,7 +506,7 @@ public sealed class NativeTemporaryDownloadBoundaryTests
         private string _magnet = "";
         private string _hash = "";
 
-        public static async Task<LocalSeeder> StartAsync(int rate, int seconds = 30)
+        public static async Task<LocalSeeder> StartAsync(int rate, int seconds = 20)
         {
             var fixture = new LocalSeeder();
             try
@@ -519,8 +520,13 @@ public sealed class NativeTemporaryDownloadBoundaryTests
                     ["-nostdin", "-hide_banner", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25",
                      "-f", "lavfi", "-i", "sine=frequency=440", "-t", seconds.ToString(System.Globalization.CultureInfo.InvariantCulture), "-c:v", "mpeg4", "-q:v", "3", "-c:a", "aac", "-y", video], deadline.Token);
                 Assert.Equal(0, encoded.ExitCode);
+                // These checks exercise real pieces, pause/resume and ownership,
+                // not long-media throughput. Keep a multi-megabyte file without
+                // encoding and rehashing a 90-second sample for each small boundary.
                 fixture.VideoBytes = new FileInfo(video).Length;
-                Assert.True(fixture.VideoBytes > 5 * 1024 * 1024);
+                Assert.True(fixture.VideoBytes > 5 * 1024 * 1024,
+                    $"The real-media fixture must exceed 5 MiB; {seconds}s produced {fixture.VideoBytes} bytes.");
+                Console.WriteLine($"Native boundary fixture: {seconds}s, {fixture.VideoBytes} real video bytes, seed rate {rate} bytes/s.");
                 await File.WriteAllTextAsync(Path.Combine(source, Title + " - S01E01.en.srt"), "1\n00:00:00,000 --> 00:00:30,000\nGenerated cue\n", deadline.Token);
                 await File.WriteAllTextAsync(Path.Combine(fixture.Root, "permanent.mkv"), "permanent retained sentinel", deadline.Token);
                 int httpPort = FreePort(), peerPort = FreePort();

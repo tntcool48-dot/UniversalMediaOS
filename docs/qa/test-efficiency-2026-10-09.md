@@ -1,0 +1,32 @@
+# Test scope and current hosted failures — October 9, 2026
+
+The user requested less repeated testing without materially weakening quality. The full workflow previously ran on every push and pull request, including checklist/QA-only edits. Recent full test executions took 11–12 minutes, while focused repairs and related cohorts already supplied narrower evidence. Repeating both broad local and hosted suites for each small change consumes time without automatically qualifying another acceptance gate.
+
+The updated workflow ignores changes consisting entirely of Markdown under `docs/`, using `docs/**.md`. Runtime code, tests, assets, dependencies, workflow changes and non-Markdown files remain eligible for the existing full build/test steps. Manual `workflow_dispatch` permits an explicit full run. Console verbosity changes from normal to minimal; full TRX and crash diagnostics remain retained. No test, assertion, timeout, skip or failure policy is relaxed. These filters follow [GitHub's workflow syntax](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#onpushpull_requestpull_request_targetpathspaths-ignore). Main currently has no branch protection or active branch rules requiring the filtered check; revisit the filter if a required-check policy is added.
+
+Local work uses focused regressions for a concrete fault, with one relevant cohort when shared behavior or unresolved risk warrants it. A passed scope is not repeated without a code change, new evidence or unresolved concern. Coherent changes are batched before publishing. Full source/release checkpoints and necessary physical/package acceptance remain required; a focused pass is not substituted for them. No broad media suite is needed for this workflow/prose change.
+
+## Current source validation remains failed
+
+Published `366826fc48749b1f42c5fc42e47a3cde56f43a24` [hosted validation](https://github.com/tntcool48-dot/UniversalMediaOS/actions/runs/37794197262) completed with **1,045 passes, four failures and 22 existing skips; 1,071 total**, **11.3070 minutes** of test execution. Build passed; Python syntax did not run after the failed test step. The four failures are:
+
+- `NativeTemporaryDownloadBoundaryTests.PermanentSeasonResumeReusesAllocatedPartialAndPreservesItsMetadataCache`: resume-cycle timeout while the manager reported Hashing, progress 0.10758472296933834 and zero received bytes; the seed reported Seeding and 131,072 bytes sent.
+- `NativeTemporaryDownloadBoundaryTests.RapidSeasonPauseRetainsActualProgressAndReleasesTheClosedSession("progress")`: TaskCanceledException in the progress wait.
+- The same rapid-pause case for `"session-cleanup"`: TaskCanceledException in the progress wait.
+- `MangaExternalReaderUiTests.FailedWebsiteCanRetryRetainItsTabAndReturnToNativeChapterChoices`: the explicitly selected chapter did not reach the owned reader server before its assertion.
+
+These observations do not yet establish production defects versus test timing or fixture faults. Keep the original run failed and preserve identity/progress/ownership assertions; do not disable the cases or retry a broad run merely to obtain green. The prior successful `9b842f7` checkpoint predates this source.
+
+## Focused diagnosis and cost reduction
+
+All three native pause/resume failures passed unchanged in isolation, **3/0/0 in 14 seconds**. The manga failure also passed unchanged, **1/0/0 in 13 seconds**. These results leave the full-run failure cause unresolved; they are not evidence that it was fixed. [Native focused result](C:/Users/user/animeapp/UniversalMediaOS.Tests.E2E/TestResults/native-resume-focused-20261009.trx), [manga focused result](C:/Users/user/animeapp/UniversalMediaOS.Tests.E2E/TestResults/manga-external-focused-20261009.trx).
+
+The native fixture encoded a fresh 90-second real video for each small pause/resume/storage boundary, then hashed it through the real SDK. It now uses a 20-second video, measured at **6,967,090 bytes**, while retaining the **greater-than-5-MiB** safeguard, real payload/new verified pieces, two pause/resume cycles, allocation/metadata hashes, persisted queue identity/progress, temporary final-owner deletion, permanent-file protection and engine/DHT cleanup assertions. This reduces media generation and rehash work; it does not claim a production resume repair or a measured full-suite speedup. An initial 15-second optimization failed the existing size safeguard: its related run had **3 passes / 20 failures / zero skips**. That failed result is retained, and the safeguard was not lowered. [Rejected fixture result](C:/Users/user/animeapp/UniversalMediaOS.Tests.E2E/TestResults/boundary-efficiency-related-20261009.trx).
+
+Successful application startup no longer performs and prints a full accessibility traversal automatically. It remains available with `UNIVERSAL_MEDIA_OS_UI_DIAGNOSTICS=1`. The manga's initial server-request timeout now includes the owned process ID/life, request counters and a bounded owned-app log, so a recurrence can distinguish initialization/navigation failure instead of reporting only zero requests. Native first-resume waits also include manager/seed/queue state and recent operation messages. The same 12-second waits and assertions remain.
+
+The final related cohort passed **23 checks / zero failures/skips in 1 minute 37 seconds**, covering all 20 real native boundary cases and three manga website/outcome cases in the same process. Build passed with zero warnings/errors. [Final related result](C:/Users/user/animeapp/UniversalMediaOS.Tests.E2E/TestResults/boundary-efficiency-related-final-20261009.trx). No broader local suite was rerun. Exact hosted validation of this coherent workflow/test batch remains necessary before claiming the published source passes.
+
+## Verification and limits
+
+YAML parsing passed, all existing job steps remained identical except console verbosity, eight representative documentation-versus-code path decisions passed, and Git whitespace checks passed. Trigger checks are static verification rather than a hosted event test. Application implementation and original user data were not changed in this batch; owned tests used temporary isolated profiles. Workflow and test adjustments are published together rather than triggering separate full runs. A later actual documentation-only push is needed to observe GitHub skipping it; final source/package acceptance remains open. The active tracker still has 17 unfinished groups, including two deferred Books groups.
