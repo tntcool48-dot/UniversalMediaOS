@@ -162,6 +162,75 @@ public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
         => OnDispatcher(NativeLockedResumeAsync);
 
     [Fact]
+    public Task PausedHlsSeekDecodesTargetFrameWithoutStartingPlayback()
+        => OnDispatcher(async () =>
+        {
+            string? previous = Environment.GetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable);
+            string parent = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "UniversalMediaOS.Tests"));
+            string root = Path.Combine(parent, "NativePausedHlsSeek-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, root);
+            string? connectionString = null;
+            PlaybackProgressService? progress = null;
+            try
+            {
+                string manifest = Path.Combine(root, "seek.m3u8");
+                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+                var encoded = await new PreparationProcessRunner().RunAsync("ffmpeg", ["-nostdin", "-hide_banner", "-v", "error",
+                    "-f", "lavfi", "-i", "testsrc=size=160x90:rate=25", "-t", "16", "-c:v", "libx264",
+                    "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-g", "25", "-f", "hls", "-hls_time", "2",
+                    "-hls_list_size", "0", "-y", manifest.Replace('\\', '/')], deadline.Token);
+                Assert.Equal(0, encoded.ExitCode);
+                var resources = Directory.GetFiles(root).ToDictionary(path => Path.GetFileName(path)!, File.ReadAllBytes);
+                using var server = new VideoServer(resources, "seek.m3u8");
+                using (var seed = new DatabaseContext())
+                {
+                    seed.Database.EnsureCreated();
+                    connectionString = seed.Database.GetConnectionString();
+                }
+                progress = new(new AudiovisualLibraryService());
+                using var memory = new MemoryVideo();
+                using var player = new PlaybackViewModel(new DatabaseContext(), null, null, playbackProgress: progress);
+                memory.Attach(player.MediaPlayer);
+                player.Volume = 0;
+                player.LoadMedia(server.Url, "Paused HLS fixture", contentType: "application/x-mpegURL");
+                player.PlayPending();
+                await Wait(() => player.IsPlaying && memory.Frames >= 2 && player.MediaPlayer.IsSeekable, player);
+                player.TogglePlayPauseCommand.Execute(null);
+                await Wait(() => !player.IsPlaying && player.MediaPlayer.State == VLCState.Paused, player);
+                await Task.Delay(200);
+                int frames = memory.Frames, unexpectedStarts = 0;
+                player.MediaPlayer.Playing += (_, _) => Interlocked.Increment(ref unexpectedStarts);
+                player.BeginUserSeek();
+                player.CommitUserSeek(10_000);
+                await Wait(() => memory.Frames > frames && player.MediaPlayer.Time >= 9_750, player);
+                await Task.Delay(200);
+                Assert.False(player.IsPlaying);
+                Assert.Equal(VLCState.Paused, player.MediaPlayer.State);
+                Assert.InRange(player.MediaPlayer.Time, 9_750, 10_250);
+                Assert.Equal(0, unexpectedStarts);
+                Assert.Equal(server.Url, player.SourceInput);
+                player.SetTabActive(false);
+                player.SetTabActive(true);
+                Assert.False(player.IsPlaying);
+                Assert.Equal(VLCState.Paused, player.MediaPlayer.State);
+            }
+            finally
+            {
+                if (progress != null) await progress.FlushAsync().WaitAsync(TimeSpan.FromSeconds(5));
+                Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, previous);
+                if (connectionString != null)
+                {
+                    using var connection = new Microsoft.Data.Sqlite.SqliteConnection(connectionString);
+                    Microsoft.Data.Sqlite.SqliteConnection.ClearPool(connection);
+                }
+                Assert.StartsWith(parent + Path.DirectorySeparatorChar, root, StringComparison.OrdinalIgnoreCase);
+                Assert.Null(new DirectoryInfo(root).LinkTarget);
+                if (Directory.Exists(root)) Directory.Delete(root, true);
+            }
+        });
+
+    [Fact]
     public Task PausedDisplayRedrawDecodesAnotherFrameWithoutResumeOrSourceReplacement()
         => OnDispatcher(async () =>
         {
@@ -551,13 +620,14 @@ public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
         private readonly SemaphoreSlim _responses = new(4);
         private readonly Task _worker;
         public string Url { get; }
-        public VideoServer(byte[] bytes)
+        public VideoServer(byte[] bytes) : this(new Dictionary<string, byte[]> { ["short-video.mp4"] = bytes }, "short-video.mp4") { }
+        public VideoServer(IReadOnlyDictionary<string, byte[]> resources, string manifest)
         {
             using var reservation = new TcpListener(IPAddress.Loopback, 0);
             reservation.Start();
             int port = ((IPEndPoint)reservation.LocalEndpoint).Port;
             reservation.Stop();
-            Url = $"http://127.0.0.1:{port}/short-video.mp4";
+            Url = $"http://127.0.0.1:{port}/{manifest}";
             _listener.Prefixes.Add($"http://127.0.0.1:{port}/");
             _listener.Start();
             _worker = Task.Run(async () =>
@@ -591,7 +661,11 @@ public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
                 try
                 {
                     var response = context.Response;
-                    response.ContentType = "video/mp4";
+                    string name = Path.GetFileName(context.Request.Url!.AbsolutePath);
+                    if (!resources.TryGetValue(name, out byte[]? bytes))
+                    { response.StatusCode = 404; return; }
+                    response.ContentType = name.EndsWith(".m3u8", StringComparison.Ordinal)
+                        ? "application/x-mpegURL" : name.EndsWith(".ts", StringComparison.Ordinal) ? "video/MP2T" : "video/mp4";
                     response.Headers["Accept-Ranges"] = "bytes";
                     int offset = 0;
                     string? range = context.Request.Headers["Range"];

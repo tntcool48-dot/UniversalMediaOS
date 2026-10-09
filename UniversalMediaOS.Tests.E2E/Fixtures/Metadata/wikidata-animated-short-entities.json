@@ -1,0 +1,239 @@
+{
+  "entities": {
+    "Q282456": {
+      "descriptions": {
+        "en": {
+          "language": "en",
+          "value": "2008 computer-animated comedy short film"
+        }
+      },
+      "labels": {
+        "en": {
+          "language": "en",
+          "value": "Big Buck Bunny"
+        },
+        "mul": {
+          "language": "mul",
+          "value": "Big Buck Bunny"
+        }
+      },
+      "claims": {
+        "P31": [
+          {
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P31",
+              "hash": "36fe6bd237fa0dda0206a4991dc6214aa7559aee",
+              "datavalue": {
+                "value": {
+                  "entity-type": "item",
+                  "numeric-id": 17517379,
+                  "id": "Q17517379"
+                },
+                "type": "wikibase-entityid"
+              },
+              "datatype": "wikibase-item"
+            },
+            "type": "statement",
+            "id": "Q282456$00C12CC7-C00B-41D3-AC79-34D4D24E4A38",
+            "rank": "normal"
+          },
+          {
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P31",
+              "hash": "8d0548dd6f3f2d43e1473754dab9fb2fa1863576",
+              "datavalue": {
+                "value": {
+                  "entity-type": "item",
+                  "numeric-id": 917641,
+                  "id": "Q917641"
+                },
+                "type": "wikibase-entityid"
+              },
+              "datatype": "wikibase-item"
+            },
+            "type": "statement",
+            "id": "Q282456$6614FF1A-EB1C-4F08-BE56-9D33E966032F",
+            "rank": "normal"
+          }
+        ],
+        "P577": [
+          {
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "69218402add8938075ebc08e1fb1c31d44f661dd",
+              "datavalue": {
+                "value": {
+                  "time": "+2008-01-01T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 9,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            },
+            "type": "statement",
+            "qualifiers": {
+              "P518": [
+                {
+                  "snaktype": "value",
+                  "property": "P518",
+                  "hash": "a34a771f2faaab006fd4b930ef25f53707fcc01d",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 10898227,
+                      "id": "Q10898227"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ]
+            },
+            "qualifiers-order": [
+              "P518"
+            ],
+            "id": "Q282456$70FD07F6-A827-4923-8CF2-BDB20C2A388A",
+            "rank": "preferred",
+            "references": [
+              {
+                "hash": "d5847b9b6032aa8b13dae3c2dfd9ed5d114d21b3",
+                "snaks": {
+                  "P143": [
+                    {
+                      "snaktype": "value",
+                      "property": "P143",
+                      "hash": "5a343e7e758a4282a01316d3e959b6e653b767fc",
+                      "datavalue": {
+                        "value": {
+                          "entity-type": "item",
+                          "numeric-id": 11920,
+                          "id": "Q11920"
+                        },
+                        "type": "wikibase-entityid"
+                      },
+                      "datatype": "wikibase-item"
+                    }
+                  ]
+                },
+                "snaks-order": [
+                  "P143"
+                ]
+              }
+            ]
+          },
+          {
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P577",
+              "hash": "778036c94bcd494bb7efdf84b69d7acef1d1dfaa",
+              "datavalue": {
+                "value": {
+                  "time": "+2014-00-00T00:00:00Z",
+                  "timezone": 0,
+                  "before": 0,
+                  "after": 0,
+                  "precision": 9,
+                  "calendarmodel": "http://www.wikidata.org/entity/Q1985727"
+                },
+                "type": "time"
+              },
+              "datatype": "time"
+            },
+            "type": "statement",
+            "qualifiers": {
+              "P518": [
+                {
+                  "snaktype": "value",
+                  "property": "P518",
+                  "hash": "028948624bb9af01428abb95a52e2355f1baf348",
+                  "datavalue": {
+                    "value": {
+                      "entity-type": "item",
+                      "numeric-id": 1971087,
+                      "id": "Q1971087"
+                    },
+                    "type": "wikibase-entityid"
+                  },
+                  "datatype": "wikibase-item"
+                }
+              ]
+            },
+            "qualifiers-order": [
+              "P518"
+            ],
+            "id": "Q282456$e79a7a73-4d74-dbdb-bd65-dd724d37c484",
+            "rank": "normal"
+          }
+        ],
+        "P345": [
+          {
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P345",
+              "hash": "c98b437f07ced89d60a99c9e8e0d3f2289abe506",
+              "datavalue": {
+                "value": "tt1254207",
+                "type": "string"
+              },
+              "datatype": "external-id"
+            },
+            "type": "statement",
+            "id": "q282456$92339C0B-CD44-4A94-A2AE-238D9217223D",
+            "rank": "normal",
+            "references": [
+              {
+                "hash": "732ec1c90a6f0694c7db9a71bf09fe7f2b674172",
+                "snaks": {
+                  "P143": [
+                    {
+                      "snaktype": "value",
+                      "property": "P143",
+                      "hash": "9123b0de1cc9c3954366ba797d598e4e1ea4146f",
+                      "datavalue": {
+                        "value": {
+                          "entity-type": "item",
+                          "numeric-id": 10000,
+                          "id": "Q10000"
+                        },
+                        "type": "wikibase-entityid"
+                      },
+                      "datatype": "wikibase-item"
+                    }
+                  ]
+                },
+                "snaks-order": [
+                  "P143"
+                ]
+              }
+            ]
+          }
+        ],
+        "P3383": [
+          {
+            "mainsnak": {
+              "snaktype": "value",
+              "property": "P3383",
+              "hash": "b13073004fedb4fb3051061edcf508c30eb7223c",
+              "datavalue": {
+                "value": "Big buck bunny poster big.jpg",
+                "type": "string"
+              },
+              "datatype": "commonsMedia"
+            },
+            "type": "statement",
+            "id": "Q282456$bd3c7714-4aa9-95ea-3046-ae4824f60d10",
+            "rank": "normal"
+          }
+        ]
+      },
+      "id": "Q282456"
+    }
+  }
+}

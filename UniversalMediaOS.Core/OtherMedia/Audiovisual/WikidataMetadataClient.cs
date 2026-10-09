@@ -21,7 +21,7 @@ internal sealed class WikidataMetadataClient : IAudiovisualMetadataClient
     private const int UpstreamPageSize = 5;
     // Qualified subclasses occur as direct P31 values; Wikidata search does not
     // automatically include their ancestors. Keep discovery and parsing aligned.
-    private static readonly string[] AnimatedFilmTypes = ["Q202866", "Q20650540", "Q29168811"];
+    private static readonly string[] AnimatedFilmTypes = ["Q202866", "Q20650540", "Q29168811", "Q17517379"];
     private static readonly string[] FilmTypes = ["Q11424", "Q24869", .. AnimatedFilmTypes];
 
     public WikidataMetadataClient(ProviderRequestCoordinator requests, Uri? baseUri = null,

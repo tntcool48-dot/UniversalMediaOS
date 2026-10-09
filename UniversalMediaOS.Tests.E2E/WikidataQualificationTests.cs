@@ -189,6 +189,30 @@ public sealed class WikidataQualificationTests
 
     private static (string Search, string Entities) Fixture(string name) => (Read(name, "search"), Read(name, "entities"));
 
+    [Theory]
+    [InlineData(AudiovisualMediaKind.Movie)]
+    [InlineData(AudiovisualMediaKind.Cartoon)]
+    public async Task RecordedAnimatedShortFindsExactFilmWithoutInventingSpokenLanguage(AudiovisualMediaKind kind)
+    {
+        var handler = new Handler(_ => Fixture("animated-short"));
+        using var http = new HttpClient(handler);
+        var page = await new WikidataMetadataClient(new(http)).GetPageAsync(
+            new(kind, AudiovisualCatalogMode.Search, "Big Buck Bunny"));
+        var film = Assert.Single(page.Items);
+        Assert.Equal("Q282456", film.Identity.PrimaryId!.Value);
+        Assert.Equal("Big Buck Bunny", film.Title);
+        Assert.Equal(2008, film.Identity.Year);
+        Assert.Equal("tt1254207", film.Identity.ImdbId);
+        Assert.True(film.Identity.IsAnimated);
+        Assert.Equal(kind, film.Identity.Kind);
+        Assert.Null(film.Identity.TmdbId);
+        Assert.Empty(film.OriginalLanguage);
+        Assert.Contains("Big%20buck%20bunny%20poster%20big.jpg", film.PosterUrl);
+        Assert.Equal(2, handler.Uris.Count);
+        Assert.Contains("P31=Q17517379", Uri.UnescapeDataString(handler.Uris[0].Query));
+        Assert.Null(page.NextToken);
+    }
+
     [Fact]
     public async Task NonFilmAndDeprecatedClaimsCannotEstablishFilmOrArtwork()
     {
