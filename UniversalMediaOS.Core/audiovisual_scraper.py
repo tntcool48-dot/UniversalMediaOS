@@ -131,6 +131,11 @@ return (() => {
         if (jw.CONFIG.streamBase && jw.state.season != null && jw.state.episode != null)
             apiUrl = jw.CONFIG.streamBase + '&season=' + encodeURIComponent(jw.state.season) + '&episode=' + encodeURIComponent(jw.state.episode) + '&stream_urls';
         else apiUrl = jw.CONFIG.api || '';
+        // The provider signs its actual item request with the current token.
+        // Keep exact API equality, including authentication, for captured data.
+        if (apiUrl && typeof jw.CONFIG.apiToken === 'string' && jw.CONFIG.apiToken &&
+            !/[?&]api_token(?:=|&|$)/.test(apiUrl))
+            apiUrl += (apiUrl.includes('?') ? '&' : '?') + 'api_token=' + encodeURIComponent(jw.CONFIG.apiToken);
     }
     return {apiUrl, activeCaption, items: window.__umosAvItems || [],
         streams: jw && jw.state ? jw.state.allStreams : [],

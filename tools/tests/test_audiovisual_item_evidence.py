@@ -15,6 +15,45 @@ TV = {'title': 'Breaking Bad 2008', 'imdb_id': 'tt0903747',
 
 
 class ItemEvidenceTests(unittest.TestCase):
+    def scan_authenticated_item(self, token, api_suffix=''):
+        api = 'https://data.example/api.php?type=tv&imdb=tt0903747'
+        current = api + api_suffix + '&season=1&episode=1&stream_urls'
+        from urllib.parse import quote
+        requested = current if api_suffix or not token else current + '&api_token=' + quote(token, safe="~()*!.'-")
+        item = {'apiUrl': requested, 'data': TV, 'default_subs': []}
+        state = {'season': 1, 'episode': 1, 'allStreams': [MEDIA],
+                 'currentCues': [{'start': 1, 'end': 2, 'text': 'English cue'}]}
+        config = {'streamBase': api+api_suffix, 'apiToken': token, 'mediaId': 'tt0903747', 'mediaType': 'tv'}
+        setup = {'__JW': {'CONFIG': config, 'state': state, 'SUB': {'fileName': TV['file_name'], 'activeKey': 'en'}},
+                 '__umosAvItems': [item]}
+        node = shutil.which('node')
+        self.assertIsNotNone(node)
+        program = 'global.window=' + json.dumps(setup) + ";window.vsFetchJSON=()=>{};" + \
+            "global.localStorage={getItem:()=>JSON.stringify({vttUrl:'/en.vtt',lang:'en',label:'English'})};" + \
+            'console.log(JSON.stringify(new Function(' + json.dumps(av.PLAYER_ITEM_SCAN) + ')()));'
+        output = subprocess.run([node, '-e', program], capture_output=True, text=True, timeout=10, check=True)
+        return json.loads(output.stdout), requested
+
+    def test_current_provider_api_token_binds_the_original_item_without_refetch(self):
+        snapshot, expected_api = self.scan_authenticated_item('current+access/token=')
+        self.assertEqual(expected_api, snapshot['apiUrl'])
+        page = Mock(url=ROOT, user_agent='agent')
+        page.cookies.return_value = {}
+        page.run_js.return_value = snapshot
+        with patch.object(av, 'collect_subtitle_tracks', return_value=[]):
+            result = av.enrich_native_result(av.stream_result(MEDIA), page, ROOT, time.monotonic()+5)
+        self.assertEqual('tt0903747', result['evidence']['Identity']['ImdbId'])
+        self.assertEqual(1, result['evidence']['Unit']['EpisodeNumber'])
+        self.assertIn('English cue', result['subtitles'][0]['inline_vtt'])
+        self.assertNotIn('Audio', result['evidence'])
+        self.assertEqual(1, page.run_js.call_count)
+
+    def test_scan_retains_unauthenticated_and_already_authenticated_api_addresses(self):
+        for token, suffix in [('', ''), ('new-token', '&api_token=existing-token')]:
+            with self.subTest(token=token, suffix=suffix):
+                snapshot, expected = self.scan_authenticated_item(token, suffix)
+                self.assertEqual(expected, snapshot['apiUrl'])
+
     def test_original_decoded_item_supplies_evidence_and_loaded_captions_without_refetch(self):
         saved = {'apiUrl': 'https://data.example/api.php?stream_urls', 'data': TV, 'default_subs': []}
         cues = [{'start': 1, 'end': 2, 'text': 'Loaded English'}]

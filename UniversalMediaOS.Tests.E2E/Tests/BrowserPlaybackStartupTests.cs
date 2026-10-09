@@ -111,6 +111,7 @@ public sealed class BrowserPlaybackStartupTests
     [InlineData(360, 240, 1920, 1080)]
     [InlineData(2560, 1440, 1920, 1080)]
     [InlineData(900, 700, 1920, 800)]
+    [InlineData(1280, 653, 1920, 1080)]
     public void ExpandedOptionsScrollAboveTransportAndLeaveNativeCaptionSpace(
         double width, double height, uint videoWidth, uint videoHeight)
     {
@@ -149,8 +150,24 @@ public sealed class BrowserPlaybackStartupTests
             double transportTop = transport.TranslatePoint(new Point(), visual).Y;
             double transportBottom = transport.TranslatePoint(new Point(0, transport.ActualHeight), visual).Y;
             double pictureHeight = Math.Min(height, width * videoHeight / videoWidth);
-            double bottomCaptionBand = (height + pictureHeight) / 2 - pictureHeight * 0.12;
-            Assert.True(transportBottom <= bottomCaptionBand);
+            // Model the observed native font/line pitch, measuring actual text
+            // rather than checking the same reserve formula as production.
+            foreach (string cue in new[] { "First line\nSecond line\nThird line",
+                "First line\nSecond line\nThird line\nFourth line" })
+            {
+                var caption = new TextBlock
+                {
+                    Text = cue, FontSize = Math.Max(12, pictureHeight * .05),
+                    LineHeight = Math.Max(13, pictureHeight * .055),
+                    LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
+                    TextWrapping = TextWrapping.NoWrap
+                };
+                caption.Measure(new Size(width, double.PositiveInfinity));
+                double captionTop = (height + pictureHeight) / 2 -
+                    Math.Max(12, pictureHeight * .05) - caption.DesiredSize.Height;
+                Assert.True(transportBottom <= captionTop,
+                    $"Transport bottom {transportBottom:F1} covers multiline caption at {captionTop:F1} in {width}x{height}.");
+            }
             Assert.True(options.TranslatePoint(new Point(0, options.ActualHeight), visual).Y <= transportTop);
             Assert.Equal(new Size(width, height), video.RenderSize);
             var playbackOptions = (Expander)visual.FindName("PlaybackOptions");

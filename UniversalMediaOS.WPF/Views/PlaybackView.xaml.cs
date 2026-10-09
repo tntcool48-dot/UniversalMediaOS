@@ -747,7 +747,9 @@ namespace UniversalMediaOS.WPF.Views
             // the clearance follows window/DPI scaling with the overlay.
             double pictureHeight = videoWidth > 0 && videoHeight > 0
                 ? Math.Min(viewportHeight, viewportWidth * videoHeight / videoWidth) : viewportHeight;
-            double captionHeight = Math.Max(60, pictureHeight * 0.14);
+            // Native cues can occupy three or four lines. The previous two-line
+            // reserve placed the controls over a real downloaded TV cue.
+            double captionHeight = Math.Max(60, pictureHeight * 0.28);
             return Math.Min(viewportHeight * 0.55, (viewportHeight - pictureHeight) / 2 + captionHeight);
         }
 
