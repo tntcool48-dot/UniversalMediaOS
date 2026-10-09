@@ -1,0 +1,19 @@
+# Permanent season validation and file preservation — October 9, 2026
+
+## Reproduced problems and repair
+
+The permanent season downloader deleted a file after failed media validation. An existing qBittorrent task's files can predate the current app job, so validation failure does not establish app ownership. When the reported path was missing, the downloader also searched the entire Downloads tree for the same basename, allowing an unrelated permanent file to be selected and deleted. Two isolated production-downloader cases reproduced the deletion: **two failures, zero passes/skips, four seconds**. Their small sentinel files belonged only to the fixtures. [Before result](C:/Users/user/animeapp/UniversalMediaOS.Tests.E2E/TestResults/season-validation-preservation-before-20261009.trx).
+
+The downloader now validates only the reported exact path and leaves failed permanent files in place for retry. It no longer searches by basename or describes unverified bytes as purged corruption. Missing or unreadable media still fails the job; successful validation still sets the completed media path.
+
+The adjacent ffprobe-launch failure branch accepted a file solely because it exceeded five MiB. A separate isolated case supplied six MiB of unreadable bytes and an intentionally non-executable managed-probe fixture. It reproduced **one failure in two seconds**: the downloader returned success and advertised completed media without decoding evidence. That branch now reports that ffprobe could not start, asks for FFmpeg service repair/retry, and fails while preserving bytes. The existing size threshold, probe timeout, cancellation and normal codec validation remain. [Probe before result](C:/Users/user/animeapp/UniversalMediaOS.Tests.E2E/TestResults/season-probe-readiness-before-20261009.trx).
+
+## Verification and limits
+
+The first repair passed **four checks, zero failures/skips, ten seconds**: both preservation cases, an exact reported five-second real AVI with more than five MiB of bytes generated through FFmpeg, and the existing real native transfer's two-cycle allocated-partial/metadata resume case. The AVI completed at its exact path with unchanged bytes. [Preservation/related result](C:/Users/user/animeapp/UniversalMediaOS.Tests.E2E/TestResults/season-validation-preservation-final-20261009.trx).
+
+After repairing the newly reproduced probe-launch branch, only that affected case was rerun: **one pass, zero failures/skips, two seconds**. It retained the six MiB file, kept the completed path null and emitted the actionable probe notice. The already-passing four-case scope was not repeated; these are **five unique scoped checks**, not a full acceptance suite. [Final probe result](C:/Users/user/animeapp/UniversalMediaOS.Tests.E2E/TestResults/season-probe-readiness-final-20261009.trx).
+
+Core and test Release builds passed with zero warnings/errors. Standard build locations were reused. Test references were refreshed without rebuilding the WPF project, so the still-running isolated Frieren process keeps its earlier build and native owning tab. Fresh desktop observation confirmed its rendered frame, Paused state, 02:21 position and 21% volume; no input disturbed its pending human audio/caption checks.
+
+The qBittorrent responses above are a bounded localhost fixture through the production RSS/auth/info/start/files path. No external qBittorrent process is running, and its executable was absent from the two standard Program Files locations. This is not live qBittorrent transfer, UI or packaged acceptance. Broader storage/provider/temporary ownership gates remain open; no original profile or permanent user media was used. No grouped gate closes from this repair. Source publication/full checkpoint will be recorded when available; the latest completed full validation still belongs to the preceding provider-adapter source.

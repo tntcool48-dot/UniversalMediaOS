@@ -266,28 +266,10 @@ namespace UniversalMediaOS.Core.Archiving
 
                     string filePath = videoFiles[i];
                     
-                    // Resolve actual path in case it downloaded to a subdirectory
-                    if (!File.Exists(filePath))
-                    {
-                        string fileName = Path.GetFileName(filePath);
-                        try
-                        {
-                            if (Directory.Exists(_downloadDir))
-                            {
-                                var found = await Task.Run(() => Directory.EnumerateFiles(_downloadDir, fileName, SearchOption.AllDirectories).FirstOrDefault());
-                                if (found != null)
-                                {
-                                    filePath = found;
-                                }
-                            }
-                        }
-                        catch { }
-                    }
-
                     string filename = Path.GetFileName(filePath);
                     log($"[P2P Season Downloader] ({i + 1}/{videoFiles.Count}) Validating: \"{filename}\"");
 
-                    bool valid = await ValidateMediaFileAsync(filePath, token);
+                    bool valid = await ValidateMediaFileAsync(filePath, log, token);
                     if (valid)
                     {
                         var fi = new FileInfo(filePath);
@@ -298,13 +280,15 @@ namespace UniversalMediaOS.Core.Archiving
                     }
                     else
                     {
-                        log($"[P2P Season Downloader] -> ERROR: Validation FAILED for \"{filename}\" (corrupt, unreadable, or missing streams). Wiping file.");
-                        await Task.Run(() => { try { File.Delete(filePath); } catch { } });
+                        // Permanent files may predate this job or belong to the
+                        // user's qBittorrent transfer. Failed validation does not
+                        // establish ownership or permission to delete them.
+                        log($"[P2P Season Downloader] -> ERROR: Validation FAILED for \"{filename}\" (unreadable, missing, or unverified media). Existing files were retained for retry.");
                         failed++;
                     }
                 }
 
-                log($"[P2P Season Downloader] BATCH PROCESS COMPLETED! Season items verified: {passed} OK | {failed} Corrupted/Purged.");
+                log($"[P2P Season Downloader] BATCH PROCESS COMPLETED! Season items verified: {passed} OK | {failed} Failed validation; existing files retained.");
                 progressUpdate?.Invoke(100);
                 return passed == videoFiles.Count && failed == 0;
             }
@@ -864,7 +848,7 @@ namespace UniversalMediaOS.Core.Archiving
         /// <summary>
         /// Validates file size and runs ffprobe to verify that the file actually contains readable video streams.
         /// </summary>
-        private async Task<bool> ValidateMediaFileAsync(string filePath, System.Threading.CancellationToken token = default)
+        private async Task<bool> ValidateMediaFileAsync(string filePath, Action<string> log, System.Threading.CancellationToken token = default)
         {
             Process? proc = null;
             try
@@ -931,16 +915,7 @@ namespace UniversalMediaOS.Core.Archiving
             }
             catch (System.ComponentModel.Win32Exception)
             {
-                // Fall back to size check only if ffprobe failed to start (e.g. not installed)
-                try
-                {
-                    var info = new FileInfo(filePath);
-                    if (info.Exists)
-                    {
-                        return info.Length > 1024 * 1024 * 5;
-                    }
-                }
-                catch { }
+                log("[P2P Season Downloader] Cannot verify media because ffprobe could not start. Repair the FFmpeg service and retry; existing files are retained.");
                 return false;
             }
             catch
