@@ -195,6 +195,197 @@ public sealed class OtherMediaAudiovisualServiceTests
     }
 
     [Fact]
+    public async Task ManifestUpdates_PreserveItemEvidenceAndSeparateAudioFromSubtitles()
+    {
+        var request = new SourceSearchRequest
+        {
+            Identity = new() { Kind = AudiovisualMediaKind.Movie, ContentForm = AudiovisualContentForm.Feature,
+                Title = "Example Film", Year = 2024, ImdbId = "tt1234567" },
+            AudioLanguage = "ja", SubtitleLanguage = "en"
+        };
+        var updates = await ReadManifestUpdatesAsync("""
+            {"kind":"Movie","contentForm":"Feature","title":"Example Film","year":2024,
+             "imdbId":"tt1234567","audioLanguages":["ja"],"subtitleLanguages":["en"],
+             "url":"https://media.example/film.mpd","contentType":"application/dash+xml","accessMode":"DirectMedia"}
+            """, request);
+
+        var ready = Assert.Single(updates, update => update.Kind == AudiovisualSourceUpdateKind.SourceReady);
+        Assert.Equal(SourceVerificationStatus.Verified, ready.Verification!.Status);
+        Assert.Equal(SourceEvidenceOrigin.ProviderItem, ready.Source!.Evidence!.Origin);
+        Assert.Equal("tt1234567", ready.Source.Evidence.Identity!.ImdbId);
+        Assert.Equal(["ja"], ready.Source.Languages);
+        Assert.Equal(["en"], ready.Source.Evidence.Subtitles!.Languages);
+        Assert.Equal("application/dash+xml", ready.Source.ContentType);
+        Assert.Equal(1, updates.Last().Completion!.Ready);
+    }
+
+    [Fact]
+    public async Task ManifestProvider_DoesNotInheritProviderOrSubtitleLanguagesAsAudio()
+    {
+        var request = new SourceSearchRequest
+        {
+            Identity = new() { Kind = AudiovisualMediaKind.Movie, ContentForm = AudiovisualContentForm.Feature,
+                Title = "Example Film", Year = 2024 }, AudioLanguage = "en"
+        };
+        var updates = await ReadManifestUpdatesAsync("""
+            {"kind":"Movie","title":"Example Film","year":2024,"originalLanguage":"en",
+             "subtitleLanguages":["en"],"url":"https://media.example/film.mpd","accessMode":"DirectMedia"}
+            """, request);
+
+        var discovered = Assert.Single(updates, update => update.Kind == AudiovisualSourceUpdateKind.CandidateDiscovered);
+        Assert.Empty(discovered.Source!.Languages);
+        var verification = Assert.Single(updates, update => update.Kind == AudiovisualSourceUpdateKind.VerificationChanged);
+        Assert.Equal(SourceVerificationStatus.Unverified, verification.Verification!.Status);
+        Assert.Equal("audio_evidence_missing", verification.Verification.ReasonCode);
+        Assert.DoesNotContain(updates, update => update.Kind == AudiovisualSourceUpdateKind.SourceReady);
+    }
+
+    [Theory]
+    [InlineData("tt1234567", 1)]
+    [InlineData("tt7654321", 0)]
+    public async Task ManifestUpdates_UseObservedSharedIdWithoutYearAndRejectConflictingId(string observedId, int readyCount)
+    {
+        var request = new SourceSearchRequest
+        {
+            Identity = new() { Kind = AudiovisualMediaKind.Movie, ContentForm = AudiovisualContentForm.Feature,
+                Title = "Example Film", Year = 2024, ImdbId = "tt1234567" }
+        };
+        string item = JsonSerializer.Serialize(new { kind = "Movie", title = "Provider Original Title", imdbId = observedId,
+            url = "https://media.example/film.mpd", accessMode = "DirectMedia" });
+        var updates = await ReadManifestUpdatesAsync(item, request);
+        Assert.Equal(readyCount, updates.Last().Completion!.Ready);
+        if (readyCount > 0)
+        {
+            var ready = Assert.Single(updates, update => update.Kind == AudiovisualSourceUpdateKind.SourceReady);
+            Assert.Equal("Provider Original Title", ready.Source!.Identity.Title);
+            Assert.Null(ready.Source.Identity.Year);
+        }
+    }
+
+    [Theory]
+    [InlineData("Q123", 1)]
+    [InlineData("Q999", 0)]
+    public async Task ManifestUpdates_PreserveNamespacedIdsAndRejectConflictDespiteMatchingTitleAndImdb(string observedId, int readyCount)
+    {
+        var request = new SourceSearchRequest
+        {
+            Identity = new() { Kind = AudiovisualMediaKind.Movie, ContentForm = AudiovisualContentForm.Feature,
+                Title = "Example Film", Year = 2024, PrimaryId = new("wikidata", "item", "Q123"), ImdbId = "tt1234567" }
+        };
+        string item = JsonSerializer.Serialize(new { kind = "Movie", title = "Example Film", year = 2024,
+            primaryId = new AudiovisualExternalId("wikidata", "item", observedId),
+            externalIds = new[] { new AudiovisualExternalId("imdb", "title", "tt1234567") },
+            url = "https://media.example/film.mpd", accessMode = "DirectMedia" });
+        var updates = await ReadManifestUpdatesAsync(item, request);
+        Assert.Equal(readyCount, updates.Last().Completion!.Ready);
+        if (readyCount > 0)
+        {
+            var ready = Assert.Single(updates, update => update.Kind == AudiovisualSourceUpdateKind.SourceReady);
+            Assert.Equal(2, ready.Source!.Evidence!.Identity!.ExternalIds.Count);
+            Assert.Contains(new("wikidata", "item", observedId), ready.Source.Evidence.Identity.ExternalIds);
+        }
+    }
+
+    [Theory]
+    [InlineData("RequestEcho", "Movie", "Feature", "independent_identity_missing")]
+    [InlineData("Unknown", "Movie", "Feature", "independent_identity_missing")]
+    [InlineData("ProviderItem", null, null, "independent_identity_missing")]
+    [InlineData("ProviderItem", "Movie", "trailer", "content_form_missing")]
+    public async Task ManifestUpdates_KeepEchoedOrIncompleteEvidenceUnverified(string origin, string? kind,
+        string? form, string reason)
+    {
+        var request = new SourceSearchRequest
+        {
+            Identity = new() { Kind = AudiovisualMediaKind.Movie, ContentForm = AudiovisualContentForm.Feature,
+                Title = "Example Film", Year = 2024 }
+        };
+        string item = JsonSerializer.Serialize(new { kind, contentForm = form, title = "Example Film", year = 2024,
+            evidenceOrigin = origin, url = "https://media.example/film.mpd", accessMode = "DirectMedia" });
+        var updates = await ReadManifestUpdatesAsync(item, request);
+        var verification = Assert.Single(updates, update => update.Kind == AudiovisualSourceUpdateKind.VerificationChanged);
+        Assert.Equal(SourceVerificationStatus.Unverified, verification.Verification!.Status);
+        Assert.Equal(reason, verification.Verification.ReasonCode);
+        Assert.Equal(0, updates.Last().Completion!.Ready);
+    }
+
+    [Fact]
+    public async Task ManifestUpdates_RejectConflictingAudioWithoutUsingProviderLanguage()
+    {
+        var request = new SourceSearchRequest
+        {
+            Identity = new() { Kind = AudiovisualMediaKind.Movie, ContentForm = AudiovisualContentForm.Feature,
+                Title = "Example Film", Year = 2024 }, AudioLanguage = "en"
+        };
+        var updates = await ReadManifestUpdatesAsync("""
+            {"kind":"Movie","title":"Example Film","year":2024,"audioLanguages":["ja"],
+             "url":"https://media.example/film.mpd","accessMode":"DirectMedia"}
+            """, request);
+        var verification = Assert.Single(updates, update => update.Kind == AudiovisualSourceUpdateKind.VerificationChanged);
+        Assert.Equal(SourceVerificationStatus.Rejected, verification.Verification!.Status);
+        Assert.Equal("audio_language_conflict", verification.Verification.ReasonCode);
+        Assert.Equal(0, updates.Last().Completion!.Ready);
+    }
+
+    [Theory]
+    [InlineData(false, SourceVerificationStatus.Unverified)]
+    [InlineData(true, SourceVerificationStatus.Verified)]
+    public async Task ManifestUpdates_RequireIndependentSpecialUnitEstablishment(bool established, SourceVerificationStatus status)
+    {
+        var request = new SourceSearchRequest
+        {
+            Identity = new() { Kind = AudiovisualMediaKind.Television, ContentForm = AudiovisualContentForm.Series,
+                Title = "Example Show", Year = 2024 }, Unit = new() { SeasonNumber = 0, EpisodeNumber = 2 }
+        };
+        string item = JsonSerializer.Serialize(new { kind = "Television", title = "Example Show", year = 2024,
+            season = 0, episode = 2, specialUnitEstablished = established,
+            url = "https://media.example/special.mpd", accessMode = "DirectMedia" });
+        var updates = await ReadManifestUpdatesAsync(item, request);
+        var verification = Assert.Single(updates, update => update.Kind == AudiovisualSourceUpdateKind.VerificationChanged);
+        Assert.Equal(status, verification.Verification!.Status);
+        Assert.Equal(established ? 1 : 0, updates.Last().Completion!.Ready);
+    }
+
+    [Theory]
+    [InlineData(null, 0)]
+    [InlineData(true, 1)]
+    public async Task ManifestUpdates_RequirePerItemAnimationEvidence(bool? animated, int readyCount)
+    {
+        var request = new SourceSearchRequest
+        {
+            Identity = new() { Kind = AudiovisualMediaKind.Cartoon, ContentForm = AudiovisualContentForm.Feature,
+                Title = "Example Animation", Year = 2024 }
+        };
+        string item = JsonSerializer.Serialize(new { kind = "Cartoon", contentForm = "Feature", title = "Example Animation",
+            year = 2024, isAnimated = animated, url = "https://media.example/animation.mpd", accessMode = "DirectMedia" });
+        var updates = await ReadManifestUpdatesAsync(item, request);
+        Assert.Equal(readyCount, updates.Last().Completion!.Ready);
+        Assert.Contains(updates, update => update.Kind == AudiovisualSourceUpdateKind.VerificationChanged);
+    }
+
+    private static async Task<List<AudiovisualSourceUpdate>> ReadManifestUpdatesAsync(string item, SourceSearchRequest request)
+    {
+        using var config = new TempConfig(new Dictionary<string, string>
+        {
+            [AudiovisualOptions.InternetArchiveEnabledConfigKey] = "false",
+            [AudiovisualOptions.ProviderIndexesConfigKey] = ManifestJson(new
+            {
+                id = "provider.example", name = "Provider Example", mediaKinds = new[] { request.Identity.Kind.ToString() },
+                languages = new[] { "en" }, searchUrlTemplate = "https://provider.example/search?q={query}",
+                allowedHosts = new[] { "media.example" }, requestsPerMinute = 0, cacheSeconds = 0
+            })
+        });
+        using var client = new HttpClient(new StubHttpHandler((httpRequest, _) =>
+        {
+            Assert.Equal("provider.example", httpRequest.RequestUri!.Host);
+            return Task.FromResult(JsonResponse("{\"items\":[" + item + "]}"));
+        }));
+        var resolver = new AudiovisualSourceResolver(config.Value, client);
+        var updates = new List<AudiovisualSourceUpdate>();
+        await foreach (var update in resolver.FindSourceUpdatesAsync(request)) updates.Add(update);
+        return updates;
+    }
+
+    [Fact]
     public async Task ProviderCoordinator_CachesSuccessAndBacksOffRateLimitedProvider()
     {
         AudiovisualProviderDefinition provider = CreateProvider(

@@ -14,6 +14,7 @@ public interface IAudiovisualSourceProvider
 
 public sealed class ManifestAudiovisualSourceProvider : IAudiovisualSourceProvider
 {
+    private static readonly JsonSerializerOptions IdJsonOptions = new() { PropertyNameCaseInsensitive = true };
     private readonly AudiovisualProviderManifest _manifest;
     private readonly ProviderRequestCoordinator _requests;
 
@@ -133,7 +134,8 @@ public sealed class ManifestAudiovisualSourceProvider : IAudiovisualSourceProvid
             return null;
         }
 
-        AudiovisualMediaKind? kind = ParseKind(GetString(item, "kind", "mediaKind", "type"));
+        AudiovisualMediaKind? observedKind = ParseKind(GetString(item, "kind", "mediaKind", "type"));
+        AudiovisualMediaKind? kind = observedKind;
         if (!kind.HasValue && provider.MediaKinds.Count == 1)
         {
             kind = provider.MediaKinds[0];
@@ -161,14 +163,37 @@ public sealed class ManifestAudiovisualSourceProvider : IAudiovisualSourceProvid
             OriginalTitle = GetString(item, "originalTitle", "original_title"),
             AlternateTitles = GetStringArray(item, "alternateTitles", "aliases", "alternate_titles"),
             Year = GetInteger(item, "year", "releaseYear", "release_year"),
-            TmdbId = GetInteger(item, "tmdbId", "tmdb_id")
+            TmdbId = GetInteger(item, "tmdbId", "tmdb_id"),
+            ImdbId = GetString(item, "imdbId", "imdb_id"),
+            ExternalIds = GetExternalIds(item),
+            IsAnimated = GetBoolean(item, "isAnimated", "is_animated", "animated")
         };
 
-        if (!ExactAudiovisualMatcher.IsExactMatch(
-                requestedIdentity,
-                requestedUnit,
-                candidateIdentity,
-                candidateUnit))
+        // Per-item declarations are independent of the search arguments. A provider's
+        // supported languages or sole category cannot supply missing item evidence.
+        IReadOnlyList<string> languages = GetStringArray(item,
+                "audioLanguages", "audio_languages", "audioLanguage", "audio_language", "languages", "language")
+            .Where(language => !string.IsNullOrWhiteSpace(language) &&
+                !language.Equals("und", StringComparison.OrdinalIgnoreCase) &&
+                !language.Equals("unknown", StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        SourceEvidenceOrigin origin = GetEvidenceOrigin(item, observedKind.HasValue);
+        var evidence = new AudiovisualSourceEvidence
+        {
+            Origin = origin,
+            Identity = candidateIdentity,
+            Unit = candidateUnit,
+            SpecialUnitEstablished = GetBoolean(item, "specialUnitEstablished", "special_unit_established") == true,
+            Audio = new AudioEvidence { Origin = origin, Languages = languages },
+            Subtitles = new AudioEvidence { Origin = origin, Languages = GetStringArray(item,
+                "subtitleLanguages", "subtitle_languages", "subtitleLanguage", "subtitle_language") }
+        };
+        var verification = ExactAudiovisualMatcher.VerifyEvidence(
+            new SourceSearchRequest { Identity = requestedIdentity, Unit = requestedUnit }, evidence);
+        if (verification.Status == SourceVerificationStatus.Rejected ||
+            (verification.Status != SourceVerificationStatus.Verified && !ExactAudiovisualMatcher.IsExactMatch(
+                requestedIdentity, requestedUnit, candidateIdentity, candidateUnit)))
         {
             return null;
         }
@@ -180,15 +205,6 @@ public sealed class ManifestAudiovisualSourceProvider : IAudiovisualSourceProvid
             return null;
         }
 
-        IReadOnlyList<string> languages = GetStringArray(
-                item,
-                "languages",
-                "language",
-                "audioLanguages")
-            .Concat(provider.Languages)
-            .Where(language => !string.IsNullOrWhiteSpace(language))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
         if (!string.IsNullOrWhiteSpace(preferredLanguage) &&
             !languages.Any(language =>
                 AudiovisualProviderDefinition.LanguageMatches(language, preferredLanguage)))
@@ -207,6 +223,7 @@ public sealed class ManifestAudiovisualSourceProvider : IAudiovisualSourceProvid
 
         return new AudiovisualSource
         {
+            Evidence = evidence,
             ProviderId = provider.Id,
             ProviderName = provider.Name,
             Location = location,
@@ -321,6 +338,11 @@ public sealed class ManifestAudiovisualSourceProvider : IAudiovisualSourceProvid
             return AudiovisualContentForm.Series;
         }
 
+        if (normalized.Length != 0)
+        {
+            return AudiovisualContentForm.Unknown;
+        }
+
         if (kind == AudiovisualMediaKind.Movie)
         {
             return AudiovisualContentForm.Feature;
@@ -332,6 +354,48 @@ public sealed class ManifestAudiovisualSourceProvider : IAudiovisualSourceProvid
         }
 
         return AudiovisualContentForm.Unknown;
+    }
+
+    private static SourceEvidenceOrigin GetEvidenceOrigin(JsonElement item, bool hasItemKind)
+    {
+        if (!hasItemKind) return SourceEvidenceOrigin.Unknown;
+        string value = GetString(item, "evidenceOrigin", "evidence_origin").Trim()
+            .Replace("_", string.Empty, StringComparison.Ordinal)
+            .Replace("-", string.Empty, StringComparison.Ordinal).ToLowerInvariant();
+        return value switch
+        {
+            "" or "provideritem" => SourceEvidenceOrigin.ProviderItem,
+            "requestecho" => SourceEvidenceOrigin.RequestEcho,
+            _ => SourceEvidenceOrigin.Unknown
+        };
+    }
+
+    private static IReadOnlyList<AudiovisualExternalId> GetExternalIds(JsonElement item)
+    {
+        var ids = new List<AudiovisualExternalId>();
+        if (TryGetPropertyIgnoreCase(item, "primaryId", out JsonElement primary) && primary.ValueKind != JsonValueKind.Null)
+            ids.Add(JsonSerializer.Deserialize<AudiovisualExternalId>(primary.GetRawText(), IdJsonOptions)
+                ?? throw new JsonException("Invalid item primary ID."));
+        if (TryGetPropertyIgnoreCase(item, "externalIds", out JsonElement external) && external.ValueKind != JsonValueKind.Null)
+        {
+            if (external.ValueKind != JsonValueKind.Array || external.GetArrayLength() > 32)
+                throw new JsonException("Invalid item external IDs.");
+            foreach (JsonElement id in external.EnumerateArray())
+                ids.Add(JsonSerializer.Deserialize<AudiovisualExternalId>(id.GetRawText(), IdJsonOptions)
+                    ?? throw new JsonException("Invalid item external ID."));
+        }
+        return ids;
+    }
+
+    private static bool? GetBoolean(JsonElement item, params string[] propertyNames)
+    {
+        foreach (string name in propertyNames)
+            if (TryGetPropertyIgnoreCase(item, name, out JsonElement value))
+            {
+                if (value.ValueKind is JsonValueKind.True or JsonValueKind.False) return value.GetBoolean();
+                if (value.ValueKind == JsonValueKind.String && bool.TryParse(value.GetString(), out bool parsed)) return parsed;
+            }
+        return null;
     }
 
     private static string GetString(JsonElement item, params string[] propertyNames)
