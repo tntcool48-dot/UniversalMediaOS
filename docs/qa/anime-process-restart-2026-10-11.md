@@ -9,7 +9,7 @@ Actual AniList search → original Frieren Details (**AniList 154587 / MAL 52991
 Read-only canonical episode rows are **115.654 / 308.972 / 551.672 seconds** for episodes 1/2/3. Episode 2 remains unchanged, as do both unrelated rows with digest `18e2efa16928c473a08b300f0540648720ff7c9239412f0ebdae7aa14f79810d`. Expanded native options still truthfully show **“Dub server selected · audio language unverified”** with a disabled Track 2 choice and English captions. No new spoken-English or physical Japanese-track pass is claimed while the user is away. The app was left paused.
 
 - [Actual restart receipt](C:/Users/user/animeapp/.artifacts/implementation/package-smoke-20261009/anime-process-restart-live-20261011.json).
-- [Original preserved launch](C:/Users/user/animeapp/.artifacts/implementation/package-smoke-20261009/manual-recovery-launch-9454fb0-before-a3c5394.json), [new launch](C:/Users/user/animeapp/.artifacts/implementation/package-smoke-20261009/manual-recovery-launch-20261011.json).
+- [Original preserved launch](C:/Users/user/animeapp/.artifacts/implementation/package-smoke-20261009/manual-recovery-launch-9454fb0-before-a3c5394.json), [a3c5394 launch](C:/Users/user/animeapp/.artifacts/implementation/package-smoke-20261009/manual-recovery-launch-a3c5394-before-217ab84.json).
 - [Episode 2 failure and bounded repair](C:/Users/user/animeapp/docs/qa/anime-server-allocation-2026-10-11.md).
 
 This qualifies the finite episode-3 actual process-restart/native-resume sample and independent failed adjacent request. Repaired episode 2, broader providers/languages, different website-provider identity and final packaged acceptance remain open. No grouped gate is closed; Books remain deferred and Arabic cartoons last.

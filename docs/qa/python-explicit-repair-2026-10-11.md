@@ -1,0 +1,9 @@
+# Explicit Python service Repair — October 11, 2026
+
+Settings → Repair Services called the normal cached `EnsureScraperReadyAsync` path. After Ready, a changed interpreter or missing import therefore left the Python health state Ready without another probe. Two owned fake-runner regressions exercise that same warm call used by the original Settings action; both failed before repair, reporting Ready where Failed was expected.
+
+Explicit Settings Repair now requests a fresh preparation through `forceRefresh: true`. It reprobes the configured interpreter candidates, deployed scripts, imports and syntax using the existing pipeline. Ordinary startup/resolver calls keep their warm cache. An already-running preparation is still shared; a canceled repair waiter cannot cancel work required by another caller. Existing preparation deadlines, cancellation, diagnostics and installation/recheck behavior are unchanged.
+
+The final **10 affected/related checks** pass, zero failures/skips, in **218 ms**, with a clean Release build. They cover changed runtime/import failure and recovery, forced work shared with ordinary/canceled callers, healthy caching, deployed corruption/lock recovery and existing timeout/cancellation guards. The two failure cases took 31 ms before repair. No broad local suite, unchanged Python scope or global runtime/package mutation ran. [Before two failures](C:/Users/user/animeapp/UniversalMediaOS.Tests.E2E/TestResults/python-explicit-repair-before-20261011.trx), [final ten](C:/Users/user/animeapp/UniversalMediaOS.Tests.E2E/TestResults/python-explicit-repair-after-20261011.trx).
+
+This follow-up is locally implemented and focused-tested; it is not yet published or included in the running **217ab84 / PID 66712** candidate or that source's hosted checkpoint. Actual packaged Settings Repair and broader CLI/runtime compatibility remain open. The working tree and existing package/profile are preserved for the next coherent source batch.
