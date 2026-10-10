@@ -43,6 +43,7 @@ jobs:
         run: >-
           dotnet test UniversalMediaOS.sln -c Release --no-build --nologo
           --blame-crash --blame-crash-dump-type mini
+          --blame-hang --blame-hang-timeout 5m --blame-hang-dump-type mini
           --logger "trx;LogFileName=release-validation.trx"
           --logger "console;verbosity=minimal"
       - name: Retain test and crash diagnostics
