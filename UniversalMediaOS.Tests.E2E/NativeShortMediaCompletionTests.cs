@@ -632,6 +632,113 @@ public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
             }
         });
 
+    [Theory]
+    [InlineData("sub", "japanese")]
+    [InlineData("dub", "english")]
+    public Task NativeAnimeAudioPreferenceAndUnitResumeSurviveChangedTrackOrderAndPlayerRestart(string audio, string language)
+        => OnDispatcher(async () =>
+        {
+            string? previous = Environment.GetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable);
+            string root = Path.Combine(Path.GetTempPath(), "UniversalMediaOS.Tests", "AnimeAudioResume-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, root);
+            string? connectionString = null;
+            PlaybackProgressService? progress = null;
+            const string work = "anime:anilist:731901";
+            const string notice = "Generated tones; language tags do not establish spoken dialogue.";
+            try
+            {
+                string first = Path.Combine(root, "provider-one.mkv"), second = Path.Combine(root, "provider-two.mkv");
+                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+                foreach (var file in new[] { first, second })
+                {
+                    bool reversed = file == second;
+                    var encoded = await new PreparationProcessRunner().RunAsync("ffmpeg", [
+                        "-nostdin", "-hide_banner", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=160x90:rate=10",
+                        "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
+                        "-f", "lavfi", "-i", "sine=frequency=880:sample_rate=48000",
+                        "-map", "0:v", "-map", reversed ? "2:a" : "1:a", "-map", reversed ? "1:a" : "2:a",
+                        "-t", "45", "-c:v", "mpeg4", "-c:a", "aac",
+                        "-metadata:s:a:0", reversed ? "language=jpn" : "language=eng",
+                        "-metadata:s:a:1", reversed ? "language=eng" : "language=jpn",
+                        "-metadata:s:a:0", reversed ? "title=New provider first" : "title=Old provider first",
+                        "-metadata:s:a:1", reversed ? "title=New provider second" : "title=Old provider second",
+                        "-y", file], deadline.Token);
+                    Assert.Equal(0, encoded.ExitCode);
+                }
+                using (var seed = new DatabaseContext())
+                {
+                    seed.Database.EnsureCreated();
+                    connectionString = seed.Database.GetConnectionString();
+                    seed.SaveResumeState(work, "episode:4", 16);
+                }
+                var context = new EpisodePlaybackContext(1, 4, (_, _) => Task.FromResult<ResolvedEpisodePlayback?>(null),
+                    audio, new AnimePlaybackIdentity(731901));
+                progress = new(new AudiovisualLibraryService());
+                using (var memory = new MemoryVideo())
+                using (var player = new PlaybackViewModel(new DatabaseContext(), null, null, playbackProgress: progress))
+                {
+                    memory.Attach(player.MediaPlayer);
+                    player.Volume = 0;
+                    player.LoadMedia(first, "First provider title", episodeNumber: "3", episodeContext: context, audioNotice: notice);
+                    player.PlayPending();
+                    await Wait(() => player.IsPlaying && memory.Frames >= 2 && player.AudioOptions.Count == 2 &&
+                        player.MediaPlayer.Time >= 1_000, player);
+                    Assert.Contains(language, player.SelectedAudioTrack!.Label, StringComparison.OrdinalIgnoreCase);
+                    player.BeginUserSeek();
+                    player.CommitUserSeek(8);
+                    await Wait(() => player.MediaPlayer.Time >= 7_800, player);
+                    player.SetTabActive(false);
+                    await Wait(() => player.MediaPlayer.State == VLCState.Paused && !player.IsPlaying, player);
+                    await player.FlushResumeAsync();
+                    player.LoadMedia(second, "Changed provider alias", episodeNumber: "3", episodeContext: context,
+                        audioNotice: notice, pauseAfterReload: true);
+                    player.SetTabActive(true);
+                    player.PlayPending();
+                    await Wait(() => player.MediaPlayer.State == VLCState.Paused && player.AudioOptions.Count == 2 &&
+                        player.MediaPlayer.Time >= 7_500, player);
+                    Assert.Contains(language, player.SelectedAudioTrack!.Label, StringComparison.OrdinalIgnoreCase);
+                    Assert.Equal(audio, player.BrowserAudioPreference);
+                    Assert.Equal(notice, player.AudioNotice);
+                    await player.FlushResumeAsync();
+                }
+                await progress.FlushAsync();
+                progress = new(new AudiovisualLibraryService());
+                using (var memory = new MemoryVideo())
+                using (var reopened = new PlaybackViewModel(new DatabaseContext(), null, null, playbackProgress: progress))
+                {
+                    memory.Attach(reopened.MediaPlayer);
+                    reopened.Volume = 0;
+                    reopened.LoadMedia(first, "Restarted alias", episodeNumber: "3", episodeContext: context, audioNotice: notice);
+                    reopened.PlayPending();
+                    await Wait(() => reopened.IsPlaying && memory.Frames >= 2 && reopened.AudioOptions.Count == 2 &&
+                        reopened.MediaPlayer.Time >= 7_500, reopened);
+                    Assert.Contains(language, reopened.SelectedAudioTrack!.Label, StringComparison.OrdinalIgnoreCase);
+                    Assert.Equal(audio, reopened.BrowserAudioPreference);
+                    Assert.Equal(notice, reopened.AudioNotice);
+                    reopened.SetTabActive(false);
+                    await reopened.FlushResumeAsync();
+                }
+                using var read = new DatabaseContext();
+                Assert.InRange(read.GetResumeState(work, "episode:3"), 7.5, 12);
+                Assert.Equal(16, read.GetResumeState(work, "episode:4"));
+            }
+            finally
+            {
+                if (progress != null) await progress.FlushAsync().WaitAsync(TimeSpan.FromSeconds(5));
+                Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, previous);
+                if (connectionString != null)
+                {
+                    using var pool = new Microsoft.Data.Sqlite.SqliteConnection(connectionString);
+                    Microsoft.Data.Sqlite.SqliteConnection.ClearPool(pool);
+                }
+                Assert.StartsWith(Path.GetFullPath(Path.Combine(Path.GetTempPath(), "UniversalMediaOS.Tests")) + Path.DirectorySeparatorChar,
+                    Path.GetFullPath(root), StringComparison.OrdinalIgnoreCase);
+                Assert.Null(new DirectoryInfo(root).LinkTarget);
+                if (Directory.Exists(root)) Directory.Delete(root, true);
+            }
+        }, TimeSpan.FromSeconds(60));
+
     private sealed class MemoryVideo(bool capturePixels = false) : IDisposable
     {
         private readonly IntPtr _buffer = Marshal.AllocHGlobal(160 * 90 * 4);

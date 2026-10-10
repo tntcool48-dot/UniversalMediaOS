@@ -951,6 +951,8 @@ namespace UniversalMediaOS.WPF.ViewModels
 
                 if (_episodeContext?.AudioPreference == "dub")
                     _currentMedia.AddOption(":audio-language=eng,en");
+                else if (_episodeContext?.AudioPreference == "sub")
+                    _currentMedia.AddOption(":audio-language=jpn,ja");
                 _currentMedia.AddOption(":sub-language=eng,en");
                 AttachExternalSubtitles(_currentMedia);
                 RefreshCaptionState();
