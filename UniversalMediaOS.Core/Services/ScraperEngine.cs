@@ -247,6 +247,10 @@ namespace UniversalMediaOS.Core.Services
                 StandardOutputEncoding = System.Text.Encoding.UTF8,
                 StandardErrorEncoding = System.Text.Encoding.UTF8
             };
+            // Both sides of redirected pipes must use the same encoding.
+            // Windows' legacy Python pipe encoding can otherwise corrupt
+            // titles/logs or reject non-Latin caption JSON before it arrives.
+            psi.Environment["PYTHONIOENCODING"] = "utf-8";
             psi.ArgumentList.Add(scraperPath);
             psi.ArgumentList.Add(mode);
             foreach (var argument in arguments)
