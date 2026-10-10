@@ -153,6 +153,7 @@ namespace UniversalMediaOS.WPF.ViewModels
         private bool _suppressTrackSelection;
         private bool _restoringCurrentPosition;
         private string? _preferredAudioKey;
+        private string? _preferredAudioLanguage;
         private bool _restoreCaptionSelection;
         private bool _restoreAudioSelection;
 
@@ -686,6 +687,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             if (MediaPlayer.SetAudioTrack(value.NativeId))
             {
                 _preferredAudioKey = value.Key.StartsWith("unverified:", StringComparison.Ordinal) ? null : value.Key;
+                _preferredAudioLanguage = string.IsNullOrEmpty(value.NativeLanguage) ? null : value.NativeLanguage;
                 _restoreAudioSelection = false;
             }
             RefreshAudioTrackState();
@@ -2286,8 +2288,12 @@ namespace UniversalMediaOS.WPF.ViewModels
                 AudioTracksAvailable = choices.Count > 1;
                 if (_restoreAudioSelection && _preferredAudioKey != null)
                 {
-                    var preferred = UniqueTrack(choices, _preferredAudioKey);
-                    if (preferred != null && MediaPlayer.SetAudioTrack(preferred.NativeId)) _restoreAudioSelection = false;
+                    var preferred = PlaybackTrackOption.RememberedNativeAudio(choices, _preferredAudioKey, _preferredAudioLanguage);
+                    if (preferred != null && MediaPlayer.SetAudioTrack(preferred.NativeId))
+                    {
+                        _preferredAudioKey = preferred.Key;
+                        _restoreAudioSelection = false;
+                    }
                 }
                 SelectedAudioTrack = choices.FirstOrDefault(choice => choice.NativeId == MediaPlayer.AudioTrack);
                 AudioButtonText = IsWebViewActive ? "Site Audio" : SelectedAudioTrack == null ? "Audio" : $"Audio {SelectedAudioTrack.Label}";

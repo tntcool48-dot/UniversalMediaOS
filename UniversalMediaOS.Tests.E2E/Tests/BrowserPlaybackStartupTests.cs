@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Markup;
 using System.Windows.Media;
+using System.Windows.Threading;
 using System.Xml.Linq;
 using UniversalMediaOS.Core.Data;
 using UniversalMediaOS.WPF.ViewModels;
@@ -186,54 +187,74 @@ public sealed class BrowserPlaybackStartupTests
     [Fact]
     public void SlowBrowserRemainsAvailableAndLaterVideoClearsWaitingState()
     {
-        using var player = new PlaybackViewModel(new DatabaseContext());
-        player.IsWebViewActive = true;
-        player.EmbedUrl = "https://player.example/episode";
-        player.IsPlaybackBusy = true;
-        player.CheckPlaybackStartup(player.PlaybackStartupGeneration, isWeb: true);
-        Assert.False(player.HasPlaybackError);
-        Assert.False(player.IsPlaybackBusy);
-        Assert.Equal("https://player.example/episode", player.EmbedUrl);
-        Assert.Contains("waiting", player.PlaybackStatusText);
+        RecoveryLayoutTests.RunSta(() =>
+        {
+            // Exercise the queued WPF path regardless of which thread earlier
+            // tests used. Observe state only after its callbacks have run.
+            var dispatcher = Dispatcher.CurrentDispatcher;
+            using var player = new PlaybackViewModel(new DatabaseContext());
+            player.IsWebViewActive = true;
+            player.EmbedUrl = "https://player.example/episode";
+            player.IsPlaybackBusy = true;
+            player.CheckPlaybackStartup(player.PlaybackStartupGeneration, isWeb: true);
+            dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+            Assert.False(player.HasPlaybackError);
+            Assert.False(player.IsPlaybackBusy);
+            Assert.Equal("https://player.example/episode", player.EmbedUrl);
+            Assert.Contains("waiting", player.PlaybackStatusText);
 
-        player.ReportWebPlaybackAction("playing", 40, 1440);
-        Assert.True(player.IsPlaying);
-        Assert.False(player.HasPlaybackError);
-        Assert.Equal("Playing", player.PlaybackStatusText);
+            player.ReportWebPlaybackAction("playing", 40, 1440);
+            dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+            Assert.True(player.IsPlaying);
+            Assert.False(player.HasPlaybackError);
+            Assert.Equal("Playing", player.PlaybackStatusText);
+        });
     }
 
     [Fact]
     public void OldStartupCheckCannotOverwriteNewPlaybackOrARealNavigationError()
     {
-        using var player = new PlaybackViewModel(new DatabaseContext());
-        player.IsWebViewActive = true;
-        int oldGeneration = player.PlaybackStartupGeneration;
-        player.ReportWebPlaybackAction("playing", 3, 1440);
-        player.CheckPlaybackStartup(oldGeneration, isWeb: true);
-        Assert.Equal("Playing", player.PlaybackStatusText);
+        RecoveryLayoutTests.RunSta(() =>
+        {
+            var dispatcher = Dispatcher.CurrentDispatcher;
+            using var player = new PlaybackViewModel(new DatabaseContext());
+            player.IsWebViewActive = true;
+            int oldGeneration = player.PlaybackStartupGeneration;
+            player.ReportWebPlaybackAction("playing", 3, 1440);
+            player.CheckPlaybackStartup(oldGeneration, isWeb: true);
+            dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+            Assert.Equal("Playing", player.PlaybackStatusText);
 
-        oldGeneration = player.PlaybackStartupGeneration;
-        player.ReportPlaybackError("Navigation failed");
-        player.CheckPlaybackStartup(oldGeneration, isWeb: true);
-        Assert.True(player.HasPlaybackError);
-        Assert.Equal("Navigation failed", player.PlaybackErrorText);
+            oldGeneration = player.PlaybackStartupGeneration;
+            player.ReportPlaybackError("Navigation failed");
+            player.CheckPlaybackStartup(oldGeneration, isWeb: true);
+            dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+            Assert.True(player.HasPlaybackError);
+            Assert.Equal("Navigation failed", player.PlaybackErrorText);
+        });
     }
 
     [Fact]
     public void NativeStartupStillReportsFailureWhileLoadedBrowserWaitsForInteraction()
     {
-        using var player = new PlaybackViewModel(new DatabaseContext());
-        player.CheckPlaybackStartup(player.PlaybackStartupGeneration, isWeb: false);
-        Assert.True(player.HasPlaybackError);
-        Assert.Contains("30 seconds", player.PlaybackErrorText);
+        RecoveryLayoutTests.RunSta(() =>
+        {
+            var dispatcher = Dispatcher.CurrentDispatcher;
+            using var player = new PlaybackViewModel(new DatabaseContext());
+            player.CheckPlaybackStartup(player.PlaybackStartupGeneration, isWeb: false);
+            dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+            Assert.True(player.HasPlaybackError);
+            Assert.Contains("30 seconds", player.PlaybackErrorText);
 
-        player.HasPlaybackError = false;
-        player.IsWebViewActive = true;
-        player.IsPlaybackBusy = true;
-        player.ReportWebPageLoaded();
-        Assert.False(player.IsPlaybackBusy);
-        Assert.False(player.IsPlaying);
-        Assert.Equal("Press Play in the page", player.PlaybackStatusText);
+            player.HasPlaybackError = false;
+            player.IsWebViewActive = true;
+            player.IsPlaybackBusy = true;
+            player.ReportWebPageLoaded();
+            dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+            Assert.False(player.IsPlaybackBusy);
+            Assert.False(player.IsPlaying);
+            Assert.Equal("Press Play in the page", player.PlaybackStatusText);
+        });
     }
 
     [Theory]

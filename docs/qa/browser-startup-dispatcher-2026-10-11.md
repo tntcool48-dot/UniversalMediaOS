@@ -1,0 +1,15 @@
+# Startup-state test dispatcher boundary — October 11, 2026
+
+The single [a3c5394 hosted checkpoint](https://github.com/tntcool48-dot/UniversalMediaOS/actions/runs/38093114743) ended **failed: 1,179 passes / three failures / 22 unchanged skips / 1,204 total**, in **12 minutes 4.358 seconds** by TRX timestamps. Build passed; Python syntax was skipped after the failure. Both new native Sub/Dub source-and-resume cases passed. Original TRX and failed-step log were downloaded once into the existing package evidence folder; no full rerun was used to investigate.
+
+The failures were `SlowBrowserRemainsAvailableAndLaterVideoClearsWaitingState`, `OldStartupCheckCannotOverwriteNewPlaybackOrARealNavigationError` and `NativeStartupStillReportsFailureWhileLoadedBrowserWaitsForInteraction`. They read startup/error state immediately after calls that can queue WPF dispatcher updates. All three passed unchanged in one isolated scope (**three passes / 284 ms**), so that result alone did not establish a harmless timing classification.
+
+An explicit owning STA dispatcher reproduced **all three original assertion failures / zero passes / 297 ms** without pumping queued callbacks. The repaired tests create that dispatcher consistently and process its queued work through the existing `ApplicationIdle` boundary before asserting. Waiting, real navigation error, stale startup generation, native timeout and browser interaction assertions remain unchanged. Production dispatcher/startup behavior, the 30-second startup interval, the existing 15-second STA helper bound, and all 22 skips remain intact.
+
+The final affected/related scope passed **six checks / zero failures / zero skips / 329 ms**: the three startup cases plus active dispatched updates and both before/after-disposal callback guards. The Release build has zero warnings/errors. This demonstrates the queued-state assertion fault and its correction. The hosted trace does not record which operation originally created that runner thread's dispatcher; no particular predecessor or production regression is invented.
+
+- [Original retained hosted TRX](C:/Users/user/animeapp/.artifacts/implementation/package-smoke-20261009/ci-a3c5394/release-validation.trx).
+- [Unchanged isolated scope](C:/Users/user/animeapp/UniversalMediaOS.Tests.E2E/TestResults/browser-startup-ci-original-20261011.trx).
+- [Deterministic failure](C:/Users/user/animeapp/UniversalMediaOS.Tests.E2E/TestResults/browser-startup-dispatcher-before-20261011.trx), [final six checks](C:/Users/user/animeapp/UniversalMediaOS.Tests.E2E/TestResults/browser-startup-dispatcher-after-20261011.trx).
+
+The earlier c13a12d cancellation and hanging operation remain unexplained. This run completed normally with failures and supplied no hang dump; actual hang-dump capture remains unqualified. The prepared a3c5394 executable remains unchanged for its pending human restart, and excludes the manual-audio follow-up. The two repairs form one source batch for one necessary hosted checkpoint, without a duplicate broad local run. Final physical/package and broader provider acceptance remain open; Books stay deferred and Arabic cartoons last.

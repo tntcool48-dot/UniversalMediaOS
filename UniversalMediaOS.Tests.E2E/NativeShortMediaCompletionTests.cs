@@ -636,6 +636,13 @@ public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
     [InlineData("sub", "japanese")]
     [InlineData("dub", "english")]
     public Task NativeAnimeAudioPreferenceAndUnitResumeSurviveChangedTrackOrderAndPlayerRestart(string audio, string language)
+        => NativeAnimeAudioResumeAsync(audio, language, manualChoice: false);
+
+    [Fact]
+    public Task NativeManualAudioLanguageSurvivesRenamedProviderTrack()
+        => NativeAnimeAudioResumeAsync("dub", "japanese", manualChoice: true);
+
+    private static Task NativeAnimeAudioResumeAsync(string audio, string language, bool manualChoice)
         => OnDispatcher(async () =>
         {
             string? previous = Environment.GetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable);
@@ -684,6 +691,13 @@ public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
                     player.PlayPending();
                     await Wait(() => player.IsPlaying && memory.Frames >= 2 && player.AudioOptions.Count == 2 &&
                         player.MediaPlayer.Time >= 1_000, player);
+                    if (manualChoice)
+                    {
+                        Assert.Contains("english", player.SelectedAudioTrack!.Label, StringComparison.OrdinalIgnoreCase);
+                        player.SelectedAudioTrack = player.AudioOptions.Single(option =>
+                            option.Label.Contains(language, StringComparison.OrdinalIgnoreCase));
+                        await Wait(() => player.SelectedAudioTrack!.Label.Contains(language, StringComparison.OrdinalIgnoreCase), player);
+                    }
                     Assert.Contains(language, player.SelectedAudioTrack!.Label, StringComparison.OrdinalIgnoreCase);
                     player.BeginUserSeek();
                     player.CommitUserSeek(8);
@@ -713,7 +727,9 @@ public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
                     reopened.PlayPending();
                     await Wait(() => reopened.IsPlaying && memory.Frames >= 2 && reopened.AudioOptions.Count == 2 &&
                         reopened.MediaPlayer.Time >= 7_500, reopened);
-                    Assert.Contains(language, reopened.SelectedAudioTrack!.Label, StringComparison.OrdinalIgnoreCase);
+                    // A new player receives its explicit context preference. The manual
+                    // choice here qualifies source reload, not a persisted user setting.
+                    Assert.Contains(manualChoice ? "english" : language, reopened.SelectedAudioTrack!.Label, StringComparison.OrdinalIgnoreCase);
                     Assert.Equal(audio, reopened.BrowserAudioPreference);
                     Assert.Equal(notice, reopened.AudioNotice);
                     reopened.SetTabActive(false);
