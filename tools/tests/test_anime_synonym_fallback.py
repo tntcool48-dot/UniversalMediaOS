@@ -91,9 +91,9 @@ class AnimeSynonymFallbackTests(unittest.TestCase):
         expected_synonyms = None if len(expected_queries) == 1 else [SYNONYM]
         self.assertEqual(expected_synonyms, extract.call_args.kwargs['catalog_synonyms'])
 
-    def test_non_searchable_native_title_fails_fast_without_synonym(self):
+    def test_ambiguous_short_native_title_fails_fast_without_synonym(self):
         with patch.object(scraper, 'fetch_indexed_sites') as indexes:
-            result = scraper.do_resolve('旅人の日記', '1', 1, catalog_ids=IDS)
+            result = scraper.do_resolve('旅人', '1', 1, catalog_ids=IDS)
         self.assertEqual('no_searchable_title', result['error'])
         indexes.assert_not_called()
 

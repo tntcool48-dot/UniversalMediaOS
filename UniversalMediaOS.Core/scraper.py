@@ -7,6 +7,7 @@ Outputs strict JSON to stdout. All logging to stderr.
 import sys, os, re, json, base64, time, traceback, html as html_lib, tempfile, shutil, socket, ctypes, threading, ipaddress
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from html.parser import HTMLParser
+import unicodedata
 from urllib.parse import quote_plus, unquote, urljoin, urlparse, parse_qsl, urlencode, urlsplit, urlunsplit
 
 try:
@@ -286,6 +287,47 @@ def normalize_title(text):
     return re.sub(r"[^a-z0-9\s]", " ", (text or "").lower()).strip()
 
 
+def native_title_key(text):
+    """Bounded native titles use whole-title evidence, never ASCII fragments."""
+    if not isinstance(text, str) or len(text) > 140:
+        return ""
+    title = " ".join(unicodedata.normalize("NFC", text).casefold().split())
+    if sum(char.isalpha() and not char.isascii() for char in title) < 3:
+        return ""
+    return title
+
+
+def native_title_matches(text, query):
+    key = native_title_key(query)
+    if not key or not isinstance(text, str) or len(text) > 800:
+        return False
+    observed = " ".join(unicodedata.normalize("NFC", text).casefold().split())
+    observed = re.sub(r"^watch\s+", "", observed)
+    if observed == key:
+        return True
+    if not observed.startswith(key):
+        return False
+    suffix = observed[len(key):]
+    if not suffix or (not suffix[0].isspace() and suffix[0] not in "-:|"):
+        return False
+    suffix = suffix.strip(" -:|")
+    # Only explicit player decoration may follow the complete catalog title.
+    # Native sequel/special text and Latin version names stay part of identity.
+    return bool(re.fullmatch(
+        r"(?:(?:episode|ep)[\s:_-]*(?:" + EPISODE_UNIT_PATTERN + r"))?"
+        r"(?:[\s|:-]*(?:watch anime online|watch anime|watch online|sub|dub|subbed|dubbed))?",
+        suffix))
+
+
+def native_path_conflicts(url, query):
+    if not native_title_key(query):
+        return False
+    path = unquote(urlparse(url or "").path)
+    return any(any(char.isalpha() and not char.isascii() for char in segment)
+               and not native_title_matches(segment, query)
+               for segment in path.split("/"))
+
+
 def query_keywords(query):
     words = re.findall(r"[a-z0-9]+", normalize_title(query))
     ignored = {"dub", "sub", "eng", "english", "dubbed", "season", "the", "and", "of"}
@@ -409,6 +451,13 @@ def expand_audio_url_candidates(url, audio_preference):
 
 def html_is_relevant(text, query, title_aliases=None):
     for title in safe_title_aliases(query, title_aliases):
+        key = native_title_key(title)
+        if key:
+            # This is only the search-page gate. Each link still needs its own
+            # exact title, then the visited player must independently prove unit.
+            if key in unicodedata.normalize("NFC", html_lib.unescape(text or "")).casefold():
+                return True
+            continue
         keywords = query_keywords(title)
         if keywords and len(matched_query_keywords(text, keywords)) >= min(2, len(keywords)):
             return True
@@ -1647,6 +1696,16 @@ def score_candidate_url(full_url, context, query, episode_id, title_aliases=None
 
 
 def _score_candidate_title(full_url, context, query, episode_id):
+    if native_title_key(query):
+        if not native_title_matches(context or "", query) or native_path_conflicts(full_url, query):
+            return 0
+        path = unquote(urlparse(full_url).path)
+        if variant_conflicts(path, query):
+            return 0
+        # A romanized/opaque URL is only a candidate. No inferred translation
+        # or catalog identity is retained before the visited page is checked.
+        return 8 + (8 if str(episode_id).isdigit() and
+                    episode_claims(full_url, is_url=True) == {int(episode_id)} else 0)
     keywords = query_keywords(query)
     if not keywords:
         return 0
@@ -1780,7 +1839,7 @@ class CandidateAnchorParser(HTMLParser):
 
 def extract_candidate_links(html, base_url, query, episode_id, title_aliases=None):
     titles = safe_title_aliases(query, title_aliases)
-    if not any(query_keywords(title) for title in titles):
+    if not any(query_keywords(title) or native_title_key(title) for title in titles):
         return []
     parser = CandidateAnchorParser()
     parser.feed(html)
@@ -1795,6 +1854,11 @@ def extract_candidate_links(html, base_url, query, episode_id, title_aliases=Non
         if not looks_like_candidate_watch_url(full):
             continue
         score = score_candidate_url(full, " ".join(label), query, episode_id, titles)
+        if native_title_key(query):
+            # A title/alt attribute belongs to this same card. Joining it to a
+            # translated or duplicated label must not erase exact evidence.
+            score = max([score] + [score_candidate_url(full, field, query, episode_id, titles)
+                                   for field in label if field.strip()])
         if score > 0:
             candidates.append((full, score))
 
@@ -1804,6 +1868,8 @@ def extract_candidate_links(html, base_url, query, episode_id, title_aliases=Non
         slug_tokens = match_tokens(slug_text)
         score = 0
         for title in titles:
+            if native_title_key(title):
+                continue  # Do not synthesize a romanized slug for a native title.
             keywords = query_keywords(title)
             if not keywords or variant_conflicts(slug_text, title):
                 continue
@@ -1850,6 +1916,9 @@ def extract_browser_anchor_candidate_links(page, base_url, query, episode_id, ti
                 anchor.get("label", "") if isinstance(anchor, dict) else "",
             ]))
             score = score_candidate_url(full, context, query, episode_id, title_aliases)
+            if native_title_key(query):
+                score = max(score, *(score_candidate_url(full, anchor.get(field) or "",
+                    query, episode_id, title_aliases) for field in ("text", "label")))
             # Zero is a rejected title, not a low-ranked match. A watch-path
             # bonus must never revive an unrelated/stale recommendation card.
             if score <= 0:
@@ -1976,6 +2045,8 @@ def check_episode_identity(identity, query, episode_id, title_aliases=None, cata
     synonym = safe_catalog_synonym(query, trusted_titles, catalog_synonyms, catalog_ids)
     accepted_titles = trusted_titles + ([synonym] if synonym else [])
     def matches_title(title, accepted):
+        if native_title_key(accepted):
+            return native_title_matches(title, accepted)
         keywords = query_keywords(accepted)
         tokens = match_tokens(title)
         if not keywords or len(set(keywords) & tokens) < min(2, len(keywords)):
@@ -2035,6 +2106,7 @@ def check_episode_identity(identity, query, episode_id, title_aliases=None, cata
     conflict = id_conflict or any(variant_conflicts(title, query) for title in matching)
     conflict |= bool(synonym) and (not matching or ((not trusted_matching) and not id_match))
     conflict |= variant_conflicts(unquote(urlparse(url).path), query)
+    conflict |= native_path_conflicts(url, query)
     if str(episode_id).isdigit():
         expected_episode = {int(episode_id)}
         conflict |= bool((observed_episodes | episode_claims(url, is_url=True)) - expected_episode)
@@ -2047,6 +2119,9 @@ def check_episode_identity(identity, query, episode_id, title_aliases=None, cata
             matches_title(heading, accepted) for accepted in trusted_titles) and not id_match:
         conflict = True
     heading_without_episode = re.sub(r"\b(?:episode|ep)\s*\d+\b", "", normalize_title(heading)).strip()
+    if native_title_key(query) and any(char.isalpha() and not char.isascii() for char in heading):
+        if not heading_matches:
+            conflict = True  # ASCII normalization must not erase a contrary native heading.
     if heading and not heading_matches and heading_without_episode not in (
             "", "watch anime", "watch anime online", "watch online", "player"):
         conflict = True
@@ -2099,7 +2174,8 @@ def read_episode_identity(page, query, episode_id, title_aliases=None, catalog_i
         f"catalog_alias={evidence['alias_match']} synonym_match={evidence['synonym_match']} "
         f"catalog_id_match={evidence['catalog_id_match']} "
         f"catalog_id_conflict={evidence['catalog_id_conflict']}")
-    return evidence["status"] != "conflict"
+    return evidence["status"] != "conflict" and (
+        not native_title_key(query) or evidence["status"] == "consistent")
 
 def stage_a_player_fingerprint(page, html):
     try:
@@ -2547,9 +2623,10 @@ def do_resolve(query, episode_id, max_site_attempts, audio_preference="sub", bud
     preferred_title = title_aliases[0] if isinstance(title_aliases, (list, tuple)) and title_aliases and \
         title_aliases[0] in accepted_titles else query
     if not query_keywords(preferred_title):
-        if not synonym:
+        if synonym:
+            preferred_title = synonym
+        elif not native_title_key(preferred_title):
             return {"error": "no_searchable_title"}
-        preferred_title = synonym
     sites = fetch_indexed_sites()
     if not sites:
         log("Resolve failed: no indexed sites available")
