@@ -292,11 +292,25 @@ public sealed class ResumeDispatcherContentionTests(ITestOutputHelper output)
     internal static void WaitForResumeLoad(PlaybackViewModel player)
     {
         if (Thread.CurrentThread.GetApartmentState() == ApartmentState.STA)
-            PumpUntil(() => player.ResumeLoadCompleted.IsCompleted);
+            PumpUntil(() => player.ResumeLoadCompleted.IsCompleted, () => ResumeLoadDetails(player));
         player.ResumeLoadCompleted.WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
     }
 
-    private static void PumpUntil(Func<bool> condition)
+    private static string ResumeLoadDetails(PlaybackViewModel player)
+    {
+        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var read = typeof(PlaybackViewModel).GetField("_resumeLoadRead", flags)?.GetValue(player) as Task;
+        var gate = typeof(PlaybackViewModel).GetField("_resumeDatabaseLock", flags)?.GetValue(player) as SemaphoreSlim;
+        var dispatcher = System.Windows.Application.Current?.Dispatcher ?? System.Windows.Threading.Dispatcher.CurrentDispatcher;
+        ThreadPool.GetAvailableThreads(out int workers, out int completionPorts);
+        return $"read={read?.Status}; apply={player.ResumeLoadCompleted.Status}; " +
+            $"pending reads={player.PendingResumeLoadCount}; pending saves={player.PendingResumeSaveCount}; " +
+            $"database gate={gate?.CurrentCount}; disposed={player.IsDisposed}; " +
+            $"dispatcher thread={dispatcher.Thread.ManagedThreadId}, alive={dispatcher.Thread.IsAlive}, shutdown={dispatcher.HasShutdownStarted}; " +
+            $"pumping thread={Thread.CurrentThread.ManagedThreadId}; available workers={workers}, completion ports={completionPorts}.";
+    }
+
+    private static void PumpUntil(Func<bool> condition, Func<string>? failureDetails = null)
     {
         var dispatcher = System.Windows.Threading.Dispatcher.CurrentDispatcher;
         var deadline = Stopwatch.StartNew();
@@ -309,7 +323,8 @@ public sealed class ResumeDispatcherContentionTests(ITestOutputHelper output)
             System.Windows.Threading.Dispatcher.PushFrame(frame);
             Thread.Sleep(5);
         }
-        Assert.True(success, "The current unit must receive its delayed resume within the deadline.");
+        Assert.True(success, "The current unit must receive its delayed resume within the deadline." +
+            (success || failureDetails == null ? string.Empty : "\n" + failureDetails()));
     }
 
     [Theory]

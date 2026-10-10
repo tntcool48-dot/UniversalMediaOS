@@ -138,6 +138,7 @@ namespace UniversalMediaOS.WPF.ViewModels
         private EpisodePlaybackContext? _episodeContext;
         public AudiovisualPlaybackContext? AudiovisualContext { get; private set; }
         private CancellationTokenSource? _episodeNavigationCts;
+        private int? _failedNavigationEpisode;
         private int _qualityDiscoveryGeneration;
         private bool _suppressQualitySelection;
         private bool _autoAdvanceRequested;
@@ -1629,9 +1630,15 @@ namespace UniversalMediaOS.WPF.ViewModels
             PlaybackStatusText = "Stopped";
         }
 
-        [RelayCommand]
-        private void RetryPlayback()
+        [RelayCommand(AllowConcurrentExecutions = false)]
+        private async Task RetryPlayback()
         {
+            if (_isDisposing || IsDisposed || IsEpisodeNavigationBusy) return;
+            if (HasPlaybackError && _failedNavigationEpisode is int episode && _episodeContext != null)
+            {
+                await NavigateToEpisodeAsync(episode);
+                return;
+            }
             if (string.IsNullOrWhiteSpace(_lastMediaSource))
             {
                 ReportPlaybackError("There is no stream to retry.");
@@ -1664,7 +1671,7 @@ namespace UniversalMediaOS.WPF.ViewModels
         [RelayCommand]
         private void OpenWebFallback()
         {
-            if (string.IsNullOrWhiteSpace(_webFallbackUrl))
+            if (_failedNavigationEpisode.HasValue || string.IsNullOrWhiteSpace(_webFallbackUrl))
             {
                 return;
             }
@@ -1676,6 +1683,9 @@ namespace UniversalMediaOS.WPF.ViewModels
         }
 
         public void ReportPlaybackError(string message)
+            => ReportPlaybackError(message, failedNavigationEpisode: null);
+
+        private void ReportPlaybackError(string message, int? failedNavigationEpisode)
         {
             Interlocked.Increment(ref _startupWatchGeneration);
             string safeMessage = string.IsNullOrWhiteSpace(message)
@@ -1685,6 +1695,11 @@ namespace UniversalMediaOS.WPF.ViewModels
             AppLogger.Log($"Playback error: {safeMessage}", "ERROR");
             RunOnDispatcher(() =>
             {
+                _failedNavigationEpisode = failedNavigationEpisode;
+                // A retained unit's referer does not establish a website for
+                // the requested unit whose navigation failed.
+                HasWebFallback = !failedNavigationEpisode.HasValue && !IsWebViewActive &&
+                    !string.IsNullOrWhiteSpace(_webFallbackUrl);
                 IsPlaying = false;
                 IsPlaybackBusy = false;
                 HasPlaybackError = true;
@@ -1805,6 +1820,7 @@ namespace UniversalMediaOS.WPF.ViewModels
 
         private void CancelEpisodeNavigation()
         {
+            _failedNavigationEpisode = null;
             CancellationTokenSource? pending = _episodeNavigationCts;
             if (pending == null) return;
             _episodeNavigationCts = null;
@@ -1845,7 +1861,7 @@ namespace UniversalMediaOS.WPF.ViewModels
                 {
                     ReportPlaybackError(context.AudioPreference == "dub"
                         ? $"No playable dub was found for episode {episode}."
-                        : $"No playable source was found for episode {episode}.");
+                        : $"No playable source was found for episode {episode}.", episode);
                     return;
                 }
 
@@ -1891,7 +1907,8 @@ namespace UniversalMediaOS.WPF.ViewModels
                 if (!IsCurrent() && !resolutionAccepted) return;
                 if (_isDisposing || IsDisposed) return;
                 AppLogger.Log($"Episode {episode} navigation failed: {ex.Message}", "ERROR");
-                ReportPlaybackError($"Episode {episode} could not be opened: {ex.Message}");
+                ReportPlaybackError($"Episode {episode} could not be opened: {ex.Message}",
+                    resolutionAccepted ? null : episode);
             }
             finally
             {

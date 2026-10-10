@@ -60,14 +60,36 @@ public sealed class LiveCaptionSelectionTests(ITestOutputHelper output)
         long originalBytes = new FileInfo(video).Length;
         DateTime originalWriteTime = File.GetLastWriteTimeUtc(video);
         IntPtr ownedHandle = new(fixture.MainWindow.Properties.NativeWindowHandle.Value);
+        string phase = "opening-player";
         Window Window()
         {
             Assert.False(fixture.App.HasExited, $"Owned caption app {fixture.App.ProcessId} exited.");
             // Reacquire the owned provider root after native overlay reloads;
             // keep its original HWND instead of enumerating windows by title.
-            var window = fixture.Automation.FromHandle(ownedHandle).AsWindow();
-            Assert.Equal(fixture.App.ProcessId, window.Properties.ProcessId.Value);
-            return window;
+            try
+            {
+                var window = fixture.Automation.FromHandle(ownedHandle).AsWindow();
+                Assert.Equal(fixture.App.ProcessId, window.Properties.ProcessId.Value);
+                return window;
+            }
+            catch (TimeoutException)
+            {
+                output.WriteLine($"Owned caption window query timed out: phase={phase}; pid={fixture.App.ProcessId}; " +
+                    $"exited={fixture.App.HasExited}; paused={paused}; dropdown={dropdown}; restored={restoredWindow}; arabic={arabic}.");
+                string ownedLog = Path.Combine(fixture.SandboxPath, "Roaming", "UniversalMediaOS", "app.log");
+                try
+                {
+                    if (File.Exists(ownedLog))
+                    {
+                        using var stream = new FileStream(ownedLog, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                        stream.Seek(Math.Max(0, stream.Length - 4096), SeekOrigin.Begin);
+                        using var reader = new StreamReader(stream);
+                        output.WriteLine(reader.ReadToEnd());
+                    }
+                }
+                catch (IOException exception) { output.WriteLine($"Owned diagnostic log unavailable: {exception.Message}"); }
+                throw;
+            }
         }
         bool arabicControls = false;
         Button? Button(string name) => Window().FindFirstDescendant(cf => cf.ByName(
@@ -103,6 +125,7 @@ public sealed class LiveCaptionSelectionTests(ITestOutputHelper output)
         }
         void SelectCaption(string label)
         {
+            phase = "selecting-caption-" + label;
             if (!dropdown)
             {
                 Button("Toggle subtitles")!.Click();
@@ -181,6 +204,7 @@ public sealed class LiveCaptionSelectionTests(ITestOutputHelper output)
         Assert.Equal("English (downloaded)", Captions()!.SelectedItem?.Text);
         if (arabic)
         {
+            phase = "opening-language-settings";
             int beforeSettingsLogLength = ReadLog(logPath).Length;
             string playerTab = Window().FindAllDescendants(cf => cf.ByAutomationId("SelectTab")).Last().Name;
             Window().FindFirstDescendant(cf => cf.ByAutomationId("OpenSettings"))!.AsButton().Invoke();
@@ -188,8 +212,10 @@ public sealed class LiveCaptionSelectionTests(ITestOutputHelper output)
             Assert.True(SpinWait.SpinUntil(() => (language = Button("Language"))?.IsEnabled == true,
                 TimeSpan.FromSeconds(3)), "The opened Settings language action did not become available.");
             language!.Invoke();
+            phase = "selecting-arabic";
             Window().FindFirstDescendant(cf => cf.ByControlType(ControlType.ComboBox))!.AsComboBox().Select("Arabic");
             arabicControls = true;
+            phase = "returning-player-after-language-change";
             Window().FindAllDescendants(cf => cf.ByAutomationId("SelectTab")).Single(tab => tab.Name == playerTab).AsButton().Invoke();
             Assert.True(SpinWait.SpinUntil(() => Window().FindFirstDescendant(cf => cf.ByAutomationId("PlaybackOptions"))?
                 .FindFirstDescendant(cf => cf.ByText("خيارات التشغيل")) != null, TimeSpan.FromSeconds(3)),

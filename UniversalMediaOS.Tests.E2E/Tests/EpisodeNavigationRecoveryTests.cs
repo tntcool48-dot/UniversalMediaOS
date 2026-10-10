@@ -128,6 +128,111 @@ public sealed class EpisodeNavigationRecoveryTests
         Assert.False(player.IsEpisodeNavigationBusy);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RetryAfterFailedPreviousResolvesTheRequestedUnitInsteadOfReloadingTheCurrentUnit(bool throws)
+    {
+        using var sandbox = new AppDataSandbox();
+        using var player = new PlaybackViewModel(new DatabaseContext());
+        player.SetTabActive(false);
+        var requests = new List<int>();
+        var context = Context((episode, _) =>
+        {
+            requests.Add(episode);
+            if (requests.Count == 1)
+                return throws ? Task.FromException<ResolvedEpisodePlayback?>(new IOException("Provider unavailable"))
+                    : Task.FromResult<ResolvedEpisodePlayback?>(null);
+            return Task.FromResult<ResolvedEpisodePlayback?>(new("https://example.invalid/one.mp4", "Entry - Ep 1", false));
+        });
+        player.LoadMedia("https://example.invalid/two.mp4", "Entry - Ep 2", "https://example.invalid/two",
+            "2", episodeContext: context);
+        await player.PreviousEpisodeCommand.ExecuteAsync(null);
+        Assert.True(player.HasPlaybackError);
+        Assert.Equal("Entry - Ep 2", player.MediaTitle);
+
+        player.RetryPlaybackCommand.Execute(null);
+
+        Assert.Equal(new[] { 1, 1 }, requests);
+        Assert.Equal("Entry - Ep 1", player.MediaTitle);
+        Assert.Equal("https://example.invalid/one.mp4", player.SourceInput);
+        Assert.False(player.IsWebViewActive);
+        Assert.Equal("dub", player.BrowserAudioPreference);
+        Assert.False(player.HasPlaybackError);
+        await player.ResumeLoadCompleted.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task FailedNavigationCannotOfferThePreviousUnitsBrowserFallback()
+    {
+        using var sandbox = new AppDataSandbox();
+        using var player = new PlaybackViewModel(new DatabaseContext());
+        player.SetTabActive(false);
+        player.LoadMedia("https://example.invalid/two.mp4", "Entry - Ep 2", "https://example.invalid/two",
+            "2", episodeContext: Context((_, _) => Task.FromResult<ResolvedEpisodePlayback?>(null)));
+        Assert.True(player.HasWebFallback);
+        await player.PreviousEpisodeCommand.ExecuteAsync(null);
+
+        Assert.False(player.HasWebFallback);
+        player.OpenWebFallbackCommand.Execute(null);
+        Assert.False(player.IsWebViewActive);
+        Assert.Equal("Entry - Ep 2", player.MediaTitle);
+        Assert.True(player.HasPlaybackError);
+        await player.ResumeLoadCompleted.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task ANewSelectionCancelsAFailedUnitsRetryAndRejectsItsLateResult()
+    {
+        using var sandbox = new AppDataSandbox();
+        using var player = new PlaybackViewModel(new DatabaseContext());
+        player.SetTabActive(false);
+        var pending = new TaskCompletionSource<ResolvedEpisodePlayback?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        int requests = 0;
+        CancellationToken retryToken = default;
+        var context = Context((_, token) =>
+        {
+            if (++requests == 1) return Task.FromResult<ResolvedEpisodePlayback?>(null);
+            retryToken = token;
+            return pending.Task;
+        });
+        player.LoadMedia("https://example.invalid/two.mp4", "Entry - Ep 2", episodeNumber: "2", episodeContext: context);
+        await player.PreviousEpisodeCommand.ExecuteAsync(null);
+        Task retry = player.RetryPlaybackCommand.ExecuteAsync(null);
+        Assert.True(player.IsEpisodeNavigationBusy);
+
+        player.LoadMedia("https://example.invalid/seven.mp4", "New selection - Ep 7", episodeNumber: "7", episodeContext: context);
+        Assert.True(retryToken.IsCancellationRequested);
+        pending.SetResult(new("https://example.invalid/stale-one.mp4", "Retired - Ep 1", false));
+        await retry.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal("New selection - Ep 7", player.MediaTitle);
+        Assert.Equal("https://example.invalid/seven.mp4", player.SourceInput);
+        Assert.False(player.HasPlaybackError);
+        Assert.False(player.IsEpisodeNavigationBusy);
+        await player.RetryPlaybackCommand.ExecuteAsync(null);
+        Assert.Equal(2, requests);
+        Assert.Equal("New selection - Ep 7", player.MediaTitle);
+        await player.ResumeLoadCompleted.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task NormalNativeRetryKeepsItsFallbackButAnExplicitBrowserErrorCannotExposeTheOldNativeUnitsUrl()
+    {
+        using var sandbox = new AppDataSandbox();
+        using var player = new PlaybackViewModel(new DatabaseContext());
+        player.SetTabActive(false);
+        player.LoadMedia("https://example.invalid/two.mp4", "Entry - Ep 2", "https://example.invalid/two", "2");
+        player.ReportPlaybackError("Current native stream failed");
+        Assert.True(player.HasWebFallback);
+        player.LoadEmbed("https://example.invalid/three", "Entry - Ep 3", "3");
+        player.ReportPlaybackError("Explicit browser route failed");
+        Assert.False(player.HasWebFallback);
+        await player.RetryPlaybackCommand.ExecuteAsync(null);
+        Assert.Equal("https://example.invalid/three", player.EmbedUrl);
+        Assert.Equal("Entry - Ep 3", player.MediaTitle);
+        await player.ResumeLoadCompleted.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
     private static EpisodePlaybackContext Context(Func<int, CancellationToken, Task<ResolvedEpisodePlayback?>> resolver) =>
         new(1, 12, resolver, "dub", new AnimePlaybackIdentity(1234, 5678));
 
