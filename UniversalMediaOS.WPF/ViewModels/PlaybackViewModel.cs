@@ -670,8 +670,12 @@ namespace UniversalMediaOS.WPF.ViewModels
             }
             else
             {
-                if (MediaPlayer.SetSpu(value.NativeId)) _restoreCaptionSelection = false;
+                bool applied = MediaPlayer.SetSpu(value.NativeId);
+                if (applied) _restoreCaptionSelection = false;
                 RefreshCaptionState();
+                // VLC can select an embedded cue while retaining the old paused
+                // picture. Decode at the same clock so Off/on is visible immediately.
+                if (applied) RedrawPausedNativeFrame();
             }
         }
 
@@ -2035,11 +2039,11 @@ namespace UniversalMediaOS.WPF.ViewModels
                 return false;
             long position = MediaPlayer.Time;
             if (position < 0) return false;
-            // Moving a paused Direct3D surface between displays can leave it
-            // black. Seek the existing input to its own clock to decode another
-            // frame, without starting playback or publishing a user seek.
+            // Display and embedded-caption changes can leave an outdated paused
+            // picture. Decode the existing input at its own clock without starting
+            // playback or publishing a user seek.
             MediaPlayer.Time = position;
-            AppLogger.Log($"[PlaybackView] Redrew paused native frame at {position} ms after display change.");
+            AppLogger.Log($"[PlaybackView] Redrew paused native frame at {position} ms.");
             return true;
         }
 

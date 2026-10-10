@@ -41,7 +41,8 @@ namespace UniversalMediaOS.Core.Archiving
         {
         }
 
-        internal SeasonDownloader(DomainHotSwapper config, Func<string, long>? availableSpace)
+        internal SeasonDownloader(DomainHotSwapper config, Func<string, long>? availableSpace,
+            DualTrackerRssParser? rssParser = null)
         {
             _config = config;
             _availableSpace = availableSpace ?? (directory => new DriveInfo(Path.GetPathRoot(directory)!).AvailableFreeSpace);
@@ -55,7 +56,7 @@ namespace UniversalMediaOS.Core.Archiving
                 : dDir;
             Directory.CreateDirectory(_downloadDir);
 
-            _rssParser = new DualTrackerRssParser(_config);
+            _rssParser = rssParser ?? new DualTrackerRssParser(_config);
 
             string qbitPort = _config.GetSetting("QBitPort");
             if (string.IsNullOrEmpty(qbitPort)) qbitPort = "8080";
@@ -371,13 +372,14 @@ namespace UniversalMediaOS.Core.Archiving
             return true;
         }
 
-        private async Task<List<TorrentResult>> SearchForBatchTorrentsAsync(
+        internal async Task<List<TorrentResult>> SearchForBatchTorrentsAsync(
             string title,
             Action<string> log,
             string? audioPreference = null,
             System.Threading.CancellationToken token = default)
         {
             var allResults = new List<TorrentResult>();
+            int failedQueries = 0;
 
             string audioPref = NormalizeAudioPreference(audioPreference);
             bool isDub = audioPref.StartsWith("Dub", StringComparison.OrdinalIgnoreCase);
@@ -423,6 +425,7 @@ namespace UniversalMediaOS.Core.Archiving
                     }
                     catch (Exception ex)
                     {
+                        System.Threading.Interlocked.Increment(ref failedQueries);
                         log($"[Torrent Search] Error on query \"{q}\": {ex.Message}");
                         return new List<TorrentResult>();
                     }
@@ -448,8 +451,15 @@ namespace UniversalMediaOS.Core.Archiving
                     if (res != null) allResults.AddRange(res);
                 }
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
-                catch (Exception ex) { log($"[Torrent Search] Raw-title search failed: {ex.Message}"); }
+                catch (Exception ex)
+                {
+                    failedQueries++;
+                    log($"[Torrent Search] Raw-title search failed: {ex.Message}");
+                }
             }
+
+            if (allResults.Count == 0 && failedQueries > 0)
+                throw new TorrentSearchIncompleteException("Season torrent discovery is incomplete because a source could not be checked. Retry or repair the download sources.");
 
             return allResults
                 .GroupBy(result => !string.IsNullOrWhiteSpace(result.InfoHash)

@@ -565,16 +565,97 @@ public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
             $"duration={player.PlaybackDuration}, error={player.PlaybackErrorText}");
     }
 
-    private sealed class MemoryVideo : IDisposable
+    [Fact]
+    public Task PausedEmbeddedCaptionRestorationRepaintsWithoutStartingPlayback()
+        => OnDispatcher(async () =>
+        {
+            string? previous = Environment.GetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable);
+            string root = Path.Combine(Path.GetTempPath(), "UniversalMediaOS.Tests", "EmbeddedCaption-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, root);
+            string? connectionString = null;
+            PlaybackProgressService? progress = null;
+            try
+            {
+                string video = Path.Combine(root, "embedded.mkv"), caption = Path.Combine(root, "embedded.en.srt");
+                File.WriteAllText(caption, "1\n00:00:00,000 --> 00:00:30,000\nEmbedded English cue\n");
+                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                var encoded = await new PreparationProcessRunner().RunAsync("ffmpeg", ["-nostdin", "-hide_banner", "-v", "error",
+                    "-f", "lavfi", "-i", "color=c=black:size=160x90:rate=10", "-i", caption,
+                    "-map", "0:v", "-map", "1:s", "-t", "30", "-c:v", "mpeg4", "-c:s", "ass",
+                    "-metadata:s:s:0", "language=eng", "-metadata:s:s:0", "title=English", "-y", video], deadline.Token);
+                Assert.Equal(0, encoded.ExitCode);
+                File.Delete(caption); // The player must use the embedded track, not a discovered sidecar.
+                using (var seed = new DatabaseContext())
+                {
+                    seed.Database.EnsureCreated();
+                    connectionString = seed.Database.GetConnectionString();
+                }
+                progress = new(new AudiovisualLibraryService());
+                using var memory = new MemoryVideo(capturePixels: true);
+                using var player = new PlaybackViewModel(new DatabaseContext(), null, null, playbackProgress: progress);
+                memory.Attach(player.MediaPlayer);
+                player.Volume = 0;
+                player.LoadMedia(video, "Embedded caption fixture");
+                player.PlayPending();
+                await Wait(() => player.IsPlaying && player.MediaPlayer.Time >= 1_000 &&
+                    player.SelectedCaption is { Key: not "off" } && memory.BrightPixels > 5, player);
+                player.TogglePlayPauseCommand.Execute(null);
+                await Wait(() => !player.IsPlaying && player.MediaPlayer.State == VLCState.Paused, player);
+                await Task.Delay(150);
+                long position = player.MediaPlayer.Time;
+                int unexpectedStarts = 0;
+                player.MediaPlayer.Playing += (_, _) => Interlocked.Increment(ref unexpectedStarts);
+                player.ToggleCaptionsCommand.Execute(null);
+                await Wait(() => player.SelectedCaption?.Key == "off" && memory.BrightPixels == 0, player);
+                player.ToggleCaptionsCommand.Execute(null);
+                await Wait(() => player.SelectedCaption is { Key: not "off" } && memory.BrightPixels > 5, player);
+                Assert.Equal(VLCState.Paused, player.MediaPlayer.State);
+                Assert.False(player.IsPlaying);
+                Assert.InRange(player.MediaPlayer.Time, position - 100, position + 100);
+                Assert.Equal(video, player.SourceInput);
+                Assert.Equal(0, unexpectedStarts);
+            }
+            finally
+            {
+                if (progress != null) await progress.FlushAsync().WaitAsync(TimeSpan.FromSeconds(5));
+                Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, previous);
+                if (connectionString != null)
+                {
+                    using var connection = new Microsoft.Data.Sqlite.SqliteConnection(connectionString);
+                    Microsoft.Data.Sqlite.SqliteConnection.ClearPool(connection);
+                }
+                Assert.StartsWith(Path.GetFullPath(Path.Combine(Path.GetTempPath(), "UniversalMediaOS.Tests")) + Path.DirectorySeparatorChar,
+                    Path.GetFullPath(root), StringComparison.OrdinalIgnoreCase);
+                Assert.Null(new DirectoryInfo(root).LinkTarget);
+                if (Directory.Exists(root)) Directory.Delete(root, true);
+            }
+        });
+
+    private sealed class MemoryVideo(bool capturePixels = false) : IDisposable
     {
         private readonly IntPtr _buffer = Marshal.AllocHGlobal(160 * 90 * 4);
         private int _frames;
+        private int _brightPixels;
         public int Frames => Volatile.Read(ref _frames);
+        public int BrightPixels => Volatile.Read(ref _brightPixels);
         public void Attach(MediaPlayer player)
         {
             player.SetVideoFormat("RV32", 160, 90, 640);
             player.SetVideoCallbacks((_, planes) => { Marshal.WriteIntPtr(planes, _buffer); return IntPtr.Zero; },
-                null, (_, _) => Interlocked.Increment(ref _frames));
+                null, (_, _) =>
+                {
+                    if (capturePixels)
+                    {
+                        var pixels = new byte[160 * 90 * 4];
+                        Marshal.Copy(_buffer, pixels, 0, pixels.Length);
+                        int bright = 0;
+                        for (int index = 0; index < pixels.Length; index += 4)
+                            if (pixels[index] > 64 || pixels[index + 1] > 64 || pixels[index + 2] > 64) bright++;
+                        Volatile.Write(ref _brightPixels, bright);
+                    }
+                    Interlocked.Increment(ref _frames);
+                });
         }
         public void Dispose() => Marshal.FreeHGlobal(_buffer);
     }

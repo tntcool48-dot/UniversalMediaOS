@@ -52,9 +52,15 @@ public sealed class LiveLocalizationTests
 
         SelectLanguage("الإنجليزية");
         Button("Downloads").Invoke();
-        Assert.True(SpinWait.SpinUntil(() => Window().FindFirstDescendant(cf =>
-            cf.ByText("Open folder")) != null, TimeSpan.FromSeconds(3)));
-        Assert.NotNull(Window().FindFirstDescendant(cf => cf.ByText("Refresh")));
+        Assert.True(SpinWait.SpinUntil(() =>
+        {
+            var view = Window().FindFirstDescendant(cf => cf.ByAutomationId("DownloadsViewRoot"));
+            return view?.FindFirstDescendant(cf => cf.ByText("Open folder")) != null &&
+                view.FindFirstDescendant(cf => cf.ByText("Refresh")) != null;
+        }, TimeSpan.FromSeconds(3)), "Both English controls must appear in the intended Downloads view. " +
+            string.Join("; ", Window().FindAllDescendants(cf => cf.ByText("Open folder").Or(cf.ByText("Refresh"))
+                .Or(cf.ByText("فتح المجلد")).Or(cf.ByText("تحديث")))
+                .Select(element => $"{element.ControlType}/{element.AutomationId}/{element.Name}")));
         downloads = Window().FindFirstDescendant(cf => cf.ByAutomationId("DownloadsViewRoot"))!;
         Assert.Equal("Rescan the download folder and refresh this list.", downloads.FindFirstDescendant(cf =>
             cf.ByName("Refresh").And(cf.ByControlType(ControlType.Button)))!.Properties.HelpText.ValueOrDefault);

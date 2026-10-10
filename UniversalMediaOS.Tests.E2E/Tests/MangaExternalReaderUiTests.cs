@@ -35,8 +35,7 @@ public sealed class MangaExternalReaderUiTests
         Assert.Equal(0, scenario.PageRequests);
         scenario.VisualHold("explicit-website-choice");
         scenario.Button("Open chapter 1 website").Invoke();
-        if (!SpinWait.SpinUntil(() => scenario.Website.Requests > 0, TimeSpan.FromSeconds(12)))
-            Assert.Fail(scenario.Diagnostics("The explicitly selected external chapter must reach its owned reader server."));
+        scenario.WaitForWebsiteRequest();
         scenario.WaitFor("Website could not load. Retry website or go back.");
         Assert.True(scenario.Has("Mock Manga › Ch. 1"));
         Assert.Equal(0, scenario.PageRequests);
@@ -95,13 +94,32 @@ public sealed class MangaExternalReaderUiTests
             if (SpinWait.SpinUntil(() => Has(name), TimeSpan.FromSeconds(8))) return;
             Assert.Fail(Diagnostics(name));
         }
-        public string Diagnostics(string action)
+        public void WaitForWebsiteRequest()
+        {
+            // Cold WebView2 profile creation is separate from navigation. The
+            // hosted failure spent the whole request deadline before Navigate.
+            string navigationMarker = $"[MangaView] Navigating WebView to external chapter: {Website.Url}";
+            var startup = System.Diagnostics.Stopwatch.StartNew();
+            while (Website.Requests == 0 && !ReadOwnedLog().Contains(navigationMarker, StringComparison.Ordinal))
+            {
+                if (Fixture.App.HasExited || startup.Elapsed >= TimeSpan.FromSeconds(30))
+                {
+                    Assert.Fail(Diagnostics("The explicitly selected website reader must initialize before navigation."));
+                    return;
+                }
+                Thread.Sleep(50);
+            }
+            if (!SpinWait.SpinUntil(() => Website.Requests > 0, TimeSpan.FromSeconds(12)))
+                Assert.Fail(Diagnostics("The initialized external reader must reach its owned server within the navigation deadline."));
+        }
+        private string ReadOwnedLog()
         {
             string logText;
             try
             {
                 using var log = new FileStream(Path.Combine(Fixture.SandboxPath, "Roaming", "UniversalMediaOS", "app.log"),
                     FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                if (log.Length > 16_384) log.Seek(-16_384, SeekOrigin.End);
                 using var reader = new StreamReader(log);
                 logText = reader.ReadToEnd();
                 if (logText.Length > 16_384) logText = logText[^16_384..];
@@ -110,8 +128,12 @@ public sealed class MangaExternalReaderUiTests
             {
                 logText = $"Owned application log unavailable: {ex.Message}";
             }
+            return logText;
+        }
+        public string Diagnostics(string action)
+        {
             return $"{action}; owned PID={Fixture.App.ProcessId}; exited={Fixture.App.HasExited}; " +
-                $"website requests={Website.Requests}; page requests={PageRequests}\n{logText}";
+                $"website requests={Website.Requests}; page requests={PageRequests}\n{ReadOwnedLog()}";
         }
         public void OpenChapters()
         {
