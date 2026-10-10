@@ -34,6 +34,7 @@ namespace UniversalMediaOS.WPF.ViewModels
         private int _searchGeneration;
         private bool _isInitialized;
         private bool _isDisposed;
+        private bool _lookupIncomplete;
 
         [ObservableProperty]
         private string _searchQuery = string.Empty;
@@ -259,10 +260,12 @@ namespace UniversalMediaOS.WPF.ViewModels
             _currentPage = 1;
             _activeQuery = string.Empty;
             _hasNextPage = true;
+            bool catalogReceived = false;
 
             try
             {
                 var page = await _searchService.SearchAnimePageAsync(string.Empty, _currentPage, 36, BuildFilters(), token).WaitAsync(token);
+                catalogReceived = true;
                 token.ThrowIfCancellationRequested();
                 if (!IsCurrentSearchGeneration(generation))
                 {
@@ -285,17 +288,17 @@ namespace UniversalMediaOS.WPF.ViewModels
                     return;
                 }
 
-                ShowNoAnimeFound("No anime found. You may be offline or the anime provider returned no results.");
+                ShowNoAnimeFound("No anime found for the current filters.");
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
                 UniversalMediaOS.Core.Helpers.AppLogger.Log("Anime recommendation load cancelled.");
-                if (IsCurrentSearchGeneration(generation)) ResultsDescription = "Search canceled; available and unknown results retained.";
+                ReportSearchCanceled(generation, catalogReceived, "Search canceled; available and unknown results retained.");
             }
             catch (Exception ex)
             {
                 UniversalMediaOS.Core.Helpers.AppLogger.Log($"Anime recommendation load failed: {ex.Message}", "WARNING");
-                ShowNoAnimeFound("No anime found. You may be offline or the anime provider returned no results.");
+                ReportSearchFailure(generation, catalogReceived);
             }
             finally
             {
@@ -313,6 +316,29 @@ namespace UniversalMediaOS.WPF.ViewModels
             ResultsDescription = message;
             SearchResults.ReplaceRange(Array.Empty<MediaResult>());
             UpdateNoResultsState();
+        }
+
+        private void ReportSearchFailure(int generation, bool catalogReceived)
+        {
+            if (!IsCurrentSearchGeneration(generation)) return;
+            _lookupIncomplete = true;
+            // Retained cards belong to the last known result set. A failed new
+            // query must not append its page two, and layout must not retry an
+            // unavailable endpoint repeatedly. Explicit Search starts page one.
+            _hasNextPage = false;
+            string outcome = catalogReceived ? "Anime availability lookup failed." : "Anime catalog unavailable.";
+            ResultsDescription = outcome + (SearchResults.Count > 0
+                ? " Previous results retained; retry search."
+                : " Check your connection and retry search.");
+            UpdateNoResultsState();
+        }
+
+        private void ReportSearchCanceled(int generation, bool catalogReceived, string message)
+        {
+            if (!IsCurrentSearchGeneration(generation)) return;
+            _lookupIncomplete = true;
+            if (!catalogReceived) _hasNextPage = false;
+            ResultsDescription = message;
         }
 
         [RelayCommand(IncludeCancelCommand = true, AllowConcurrentExecutions = false)]
@@ -335,9 +361,11 @@ namespace UniversalMediaOS.WPF.ViewModels
             _currentPage = 1;
             _activeQuery = SearchQuery.Trim();
             _hasNextPage = true;
+            bool catalogReceived = false;
             try
             {
                 var page = await _searchService.SearchAnimePageAsync(_activeQuery, _currentPage, 36, BuildFilters(), token).WaitAsync(token);
+                catalogReceived = true;
                 token.ThrowIfCancellationRequested();
                 if (!IsCurrentSearchGeneration(generation))
                 {
@@ -357,15 +385,15 @@ namespace UniversalMediaOS.WPF.ViewModels
                 UpdateNoResultsState();
                 UniversalMediaOS.Core.Helpers.AppLogger.Log($"SearchAsync complete. Found {filtered.Count} visible results from {page.Results.Count} provider results.");
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
                 UniversalMediaOS.Core.Helpers.AppLogger.Log("SearchAsync cancelled by user.");
-                if (IsCurrentSearchGeneration(generation)) ResultsDescription = "Search canceled; available and unknown results retained.";
+                ReportSearchCanceled(generation, catalogReceived, "Search canceled; available and unknown results retained.");
             }
             catch (Exception ex)
             {
                 UniversalMediaOS.Core.Helpers.AppLogger.Log($"SearchAsync failed. Error: {ex.Message}", "ERROR");
-                ResultsDescription = "Search failed; showing previous results";
+                ReportSearchFailure(generation, catalogReceived);
             }
             finally
             {
@@ -393,10 +421,12 @@ namespace UniversalMediaOS.WPF.ViewModels
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_lifecycleCts.Token);
             _activeSearchCts = linkedCts;
             var token = linkedCts.Token;
+            bool catalogReceived = false;
             try
             {
                 int nextPage = _currentPage + 1;
                 var page = await _searchService.SearchAnimePageAsync(_activeQuery, nextPage, 36, BuildFilters(), token).WaitAsync(token);
+                catalogReceived = true;
                 token.ThrowIfCancellationRequested();
                 if (!IsCurrentSearchGeneration(generation))
                 {
@@ -430,14 +460,15 @@ namespace UniversalMediaOS.WPF.ViewModels
                     _hasNextPage = false;
                 }
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
                 UniversalMediaOS.Core.Helpers.AppLogger.Log("LoadMoreAnimeAsync cancelled.");
-                if (IsCurrentSearchGeneration(generation)) ResultsDescription = "Page lookup canceled; available and unknown results retained.";
+                ReportSearchCanceled(generation, catalogReceived, "Page lookup canceled; available and unknown results retained.");
             }
             catch (Exception ex)
             {
                 UniversalMediaOS.Core.Helpers.AppLogger.Log($"LoadMoreAnimeAsync failed: {ex.Message}", "WARNING");
+                ReportSearchFailure(generation, catalogReceived);
             }
             finally
             {
@@ -564,7 +595,7 @@ namespace UniversalMediaOS.WPF.ViewModels
 
         private void UpdateNoResultsState()
         {
-            HasNoResults = !IsSearching && SearchResults.Count == 0;
+            HasNoResults = !IsSearching && !_lookupIncomplete && SearchResults.Count == 0;
         }
 
         public void RequestDubAvailabilityForVisibleResults(IReadOnlyCollection<MediaResult> results)
@@ -690,6 +721,8 @@ namespace UniversalMediaOS.WPF.ViewModels
 
         private int NextSearchGeneration()
         {
+            int generation = Interlocked.Increment(ref _searchGeneration);
+            _lookupIncomplete = false;
             _activeSearchCts?.Cancel();
             _activeSearchCts = null;
             _dubAnnotationCts?.Cancel();
@@ -699,7 +732,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             {
                 _automaticDubAnnotationKeys.Clear();
             }
-            return Interlocked.Increment(ref _searchGeneration);
+            return generation;
         }
 
         private bool IsCurrentSearchGeneration(int generation)

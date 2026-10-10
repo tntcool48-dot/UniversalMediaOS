@@ -23,6 +23,7 @@ namespace UniversalMediaOS.Core.Search
 
         private readonly string _aniListUrl;
         private readonly DomainHotSwapper? _config;
+        private readonly HttpClient _requestClient = _httpClient;
 
         static FuzzyShieldSearch()
         {
@@ -35,6 +36,11 @@ namespace UniversalMediaOS.Core.Search
             _config = config;
             _aniListUrl = config.GetSetting("AniListUrl") ?? "";
             if (string.IsNullOrEmpty(_aniListUrl)) _aniListUrl = "https://graphql.anilist.co";
+        }
+
+        internal FuzzyShieldSearch(DomainHotSwapper config, HttpClient client) : this(config)
+        {
+            _requestClient = client;
         }
 
         public FuzzyShieldSearch()
@@ -170,23 +176,28 @@ namespace UniversalMediaOS.Core.Search
                 
                 try
                 {
-                    response = await _httpClient.PostAsync(_aniListUrl, content, token);
+                    response = await _requestClient.PostAsync(_aniListUrl, content, token);
                     
                     if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
                     {
-                        int delay = 2;
-                        if (response.Headers.TryGetValues("Retry-After", out var values) && int.TryParse(values.FirstOrDefault(), out int parsedDelay))
-                        {
-                            delay = parsedDelay;
-                        }
+                        var retryAfter = response.Headers.RetryAfter;
+                        TimeSpan delay = retryAfter?.Delta ?? (retryAfter?.Date is { } retryDate
+                            ? retryDate - DateTimeOffset.UtcNow : TimeSpan.FromSeconds(2));
+                        if (delay < TimeSpan.Zero) delay = TimeSpan.Zero;
+                        // Respect the server rather than retrying early. Long
+                        // backoffs need an explicit later retry, not a spinner
+                        // beyond the existing 20-second request budget.
+                        if (delay > _httpClient.Timeout)
+                            throw new HttpRequestException("AniList is rate limited; retry the catalog later.",
+                                null, System.Net.HttpStatusCode.TooManyRequests);
                         
                         response.Dispose(); // Dispose rate-limited response
                         response = null;
 
-                        await Task.Delay(TimeSpan.FromSeconds(delay), token);
+                        await Task.Delay(delay, token);
                         
                         using var retryContent = new StringContent(jsonBody, Encoding.UTF8, "application/json");
-                        response = await _httpClient.PostAsync(_aniListUrl, retryContent, token);
+                        response = await _requestClient.PostAsync(_aniListUrl, retryContent, token);
                     }
 
                     string responseJson = await response.Content.ReadAsStringAsync(token);
@@ -203,9 +214,10 @@ namespace UniversalMediaOS.Core.Search
                             throw new Exception($"AniList GraphQL error: {errorText}");
                         }
 
-                        if (doc.RootElement.TryGetProperty("data", out var dataElement) && 
+                        if (doc.RootElement.TryGetProperty("data", out var dataElement) && dataElement.ValueKind == JsonValueKind.Object &&
                             dataElement.TryGetProperty("Page", out var pageElement) && 
-                            pageElement.TryGetProperty("media", out var mediaArray))
+                            pageElement.ValueKind == JsonValueKind.Object &&
+                            pageElement.TryGetProperty("media", out var mediaArray) && mediaArray.ValueKind == JsonValueKind.Array)
                         {
                             if (pageElement.TryGetProperty("pageInfo", out var pageInfo) &&
                                 pageInfo.TryGetProperty("hasNextPage", out var hasNextProp) &&
@@ -313,6 +325,7 @@ namespace UniversalMediaOS.Core.Search
                         else
                         {
                             UniversalMediaOS.Core.Helpers.AppLogger.Log($"AniList search response did not contain media. Response head: {TrimForLog(responseJson)}", "WARNING");
+                            throw new InvalidDataException("AniList returned an incomplete catalog page.");
                         }
                     }
                     else
@@ -354,7 +367,7 @@ namespace UniversalMediaOS.Core.Search
             var tags = new List<AnimeTagOption>();
 
             using var content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
-            using var response = await _httpClient.PostAsync(_aniListUrl, content, token);
+            using var response = await _requestClient.PostAsync(_aniListUrl, content, token);
             string responseJson = await response.Content.ReadAsStringAsync(token);
 
             if (!response.IsSuccessStatusCode)
