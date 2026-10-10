@@ -2413,7 +2413,7 @@ def stage_d_carpet_bomb(page, audio_preference="sub"):
     return None
 
 
-def extract_from_mirror(mirror, episode_url, page, audio_preference="sub", deadline=None, query=None, episode_id=None, browser_fallbacks=None, title_aliases=None, catalog_ids=None, catalog_synonyms=None):
+def extract_from_mirror(mirror, episode_url, page, audio_preference="sub", deadline=None, query=None, episode_id=None, browser_fallbacks=None, title_aliases=None, catalog_ids=None, catalog_synonyms=None, matched_server_deadline=None):
     match_evidence = None
     try:
         if deadline_expired(deadline):
@@ -2438,6 +2438,14 @@ def extract_from_mirror(mirror, episode_url, page, audio_preference="sub", deadl
         observed = getattr(page, "_ums_match_evidence", None)
         if isinstance(observed, dict):
             match_evidence = dict(observed)
+        # A matched page with several servers can use the remainder of its
+        # existing provider allocation. Unknown pages retain the shorter
+        # candidate allowance; the coordinator still caps site/global time.
+        if query and match_evidence and match_evidence.get("status") == "consistent" and \
+                ready.get("server_controls", 0) > 1 and deadline is not None and \
+                matched_server_deadline is not None and matched_server_deadline > deadline:
+            deadline = matched_server_deadline
+            log("  Matched multi-server page: retaining the existing site/global allowance")
         # An empty parent with ready server controls needs selection, not an
         # autoplay sniff. Keep sniffing actual iframes/direct-video parents.
         needs_selection = ready.get("server_controls") and not ready.get("iframes") and not ready.get("video")
@@ -2697,7 +2705,8 @@ def do_resolve(query, episode_id, max_site_attempts, audio_preference="sub", bud
                     result = extract_from_mirror("", candidate, page, audio_preference=audio_preference,
                         deadline=candidate_deadline, query=query, episode_id=episode_id,
                         browser_fallbacks=candidate_fallbacks, title_aliases=accepted_titles,
-                        catalog_ids=catalog_ids, catalog_synonyms=[synonym] if used_synonym else None)
+                        catalog_ids=catalog_ids, catalog_synonyms=[synonym] if used_synonym else None,
+                        matched_server_deadline=combine_deadlines(site_deadline, deadline))
                     if not result and candidate_fallbacks:
                         result = candidate_fallbacks[0]
                     if result:

@@ -63,9 +63,9 @@ public sealed class PythonBootstrapper : IDisposable
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (_preparationTask is { IsCompleted: false }) return _preparationTask.WaitAsync(token);
-            string revision = Revision();
-            if (_snapshot.State == PythonPreparationState.Ready && _readyRevision == revision &&
-                Scripts.All(s => File.Exists(Path.Combine(_scraperDir, s)))) return Task.CompletedTask;
+            string? revision = Revision(_sourceDir);
+            if (revision != null && _snapshot.State == PythonPreparationState.Ready && _readyRevision == revision &&
+                revision == Revision(_scraperDir)) return Task.CompletedTask;
             _preparationCts?.Dispose();
             _preparationCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
             _preparationCts.CancelAfter(_budget);
@@ -79,7 +79,7 @@ public sealed class PythonBootstrapper : IDisposable
 
     public void CancelPreparation() { lock (_gate) { _cancelRequested = true; _preparationCts?.Cancel(); } }
 
-    private async Task PrepareAsync(string revision, CancellationToken token)
+    private async Task PrepareAsync(string? revision, CancellationToken token)
     {
         SetState(PythonPreparationState.Preparing, "preparing", []);
         try
@@ -150,11 +150,23 @@ public sealed class PythonBootstrapper : IDisposable
         return missing.Distinct().ToArray();
     }
 
-    private string Revision() => string.Join("|", Scripts.Select(s =>
+    private static string? Revision(string directory)
     {
-        string path = Path.Combine(_sourceDir, s);
-        return File.Exists(path) ? Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))) : "missing";
-    }));
+        try
+        {
+            return string.Join("|", Scripts.Select(s =>
+            {
+                string path = Path.Combine(directory, s);
+                return File.Exists(path) ? Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))) : "missing";
+            }));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Unreadable bytes cannot establish cached readiness. Preparation
+            // reports a normal failure and remains retryable after lock release.
+            return null;
+        }
+    }
 
     private void SetState(PythonPreparationState state, string code, IReadOnlyList<string> missing)
     {

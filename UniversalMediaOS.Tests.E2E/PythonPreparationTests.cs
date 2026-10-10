@@ -56,6 +56,46 @@ public sealed class PythonPreparationTests
         Assert.Equal(exitCode == 0 ? 2 : 1, runner.Probes);
     }
 
+    [Theory]
+    [InlineData("scraper.py")]
+    [InlineData("book_scraper.py")]
+    [InlineData("audiovisual_scraper.py")]
+    public async Task ChangedDeployedScriptCannotReuseCachedReadiness(string script)
+    {
+        var runner = new FakeRunner((_, _) => Task.FromResult("[]"));
+        using var fixture = new Fixture(runner);
+        await fixture.Python.EnsureScraperReadyAsync();
+        string deployed = Path.Combine(Path.GetDirectoryName(fixture.Python.GetScraperPath())!, script);
+        File.WriteAllText(deployed, "def broken(:\n");
+
+        await fixture.Python.EnsureScraperReadyAsync();
+
+        Assert.Equal(File.ReadAllBytes(Path.Combine(fixture.Source, script)), File.ReadAllBytes(deployed));
+        Assert.Equal(2, runner.Probes);
+        Assert.Equal(PythonPreparationState.Ready, fixture.Python.Snapshot.State);
+        Assert.True(fixture.Python.IsAvailable);
+    }
+
+    [Fact]
+    public async Task LockedDeployedScriptReportsPreparationFailureAndRecoversAfterRelease()
+    {
+        var runner = new FakeRunner((_, _) => Task.FromResult("[]"));
+        using var fixture = new Fixture(runner);
+        await fixture.Python.EnsureScraperReadyAsync();
+        using (var ownedLock = new FileStream(fixture.Python.GetScraperPath(), FileMode.Open,
+            FileAccess.ReadWrite, FileShare.None))
+        {
+            await fixture.Python.EnsureScraperReadyAsync();
+            Assert.Equal(PythonPreparationState.Failed, fixture.Python.Snapshot.State);
+            Assert.Equal("preparation_failed", fixture.Python.Snapshot.DiagnosticCode);
+            Assert.False(fixture.Python.IsAvailable);
+        }
+        await fixture.Python.EnsureScraperReadyAsync();
+        Assert.True(fixture.Python.IsAvailable);
+        Assert.Equal(File.ReadAllBytes(Path.Combine(fixture.Source, "scraper.py")),
+            File.ReadAllBytes(fixture.Python.GetScraperPath()));
+    }
+
     [Fact]
     public async Task RetryRecoversInSameSessionAndRechecksInstalledImports()
     {

@@ -1,0 +1,12 @@
+# Matched anime server allocation — October 11, 2026
+
+The actual a3c5394 second-monitor Frieren episode 2 Dub lookup failed within its existing 63-second overall allowance. Its first independently matched parent had six dynamic server controls. The first selected Dub host explicitly reported the file unavailable; the second produced no iframe before the 18-second candidate allocation expired. The third same-audio control was never selected. The later candidate had a conflicting catalog ID and was correctly rejected. Later indexed providers supplied no accepted native media. The missing second iframe's cause is unknown; an earlier successful third-server sample does not establish current availability.
+
+The resolver now gives an independently **consistent** multi-server page access to the remainder of its existing **24-second provider allocation**, bounded by the unchanged overall deadline. Unknown/conflicting and single-control pages keep the 18-second candidate allowance; direct extraction keeps its caller's deadline. Dynamic discovery, requested-audio selection, exclusions and identity rechecks on rotated parents remain intact. This may spend more of the same provider allocation on its matched page and leave less for other candidates; it creates no extra provider/global time.
+
+One deterministic coordinator-to-extractor regression failed before repair. With a simulated first and second server consuming 20 seconds, the old resolver returned failure before the third server. After repair it accepts that server at 21 seconds. Additional guards cover unknown/conflicting/single-control parents, provider/global expiration and direct-call expiration. The affected native-policy and related candidate/audio modules pass **96 checks / zero failures**, in **0.048 seconds**, without network, sleep or browser. No full Python or C# local duplicate ran.
+
+- [Actual sanitized failure](C:/Users/user/animeapp/.artifacts/implementation/package-smoke-20261009/anime-episode2-restart-failure-sanitized-20261011.log).
+- [Before failure](C:/Users/user/animeapp/.artifacts/implementation/package-smoke-20261009/anime-server-budget-before-20261011.log), [final related scope](C:/Users/user/animeapp/.artifacts/implementation/package-smoke-20261009/anime-server-budget-after-20261011.log).
+
+Actual repaired episode 2 playback remains pending a source-bound candidate. The old failed request is retained; it is not relabeled as a pass. No website fallback, new audio claim, static provider list or original user-data change was introduced.

@@ -35,6 +35,101 @@ def website():
 
 
 class AnimeNativePolicyTests(unittest.TestCase):
+    def resolve_server_rotation(self, *, status='consistent', controls=6,
+                                costs=(5, 15, 1), prior_site_seconds=0,
+                                direct=False):
+        clock, selected, deadlines = [0.0], [], []
+        page = Mock(html='', url=PARENT)
+        page.get.return_value = True
+        evidence = dict(EVIDENCE, status=status)
+
+        def identity(*args):
+            page._ums_match_evidence = dict(evidence)
+            return status != 'conflict'
+
+        def sniff(*args, **kwargs):
+            deadlines.append(kwargs['deadline'])
+            selected.append(len(selected) + 1)
+            kwargs['excluded'].add(selected[-1])
+            clock[0] = min(clock[0] + costs[len(selected) - 1], kwargs['deadline'])
+            return native() if len(selected) == 3 and clock[0] < kwargs['deadline'] else None
+
+        def search(site, *args, **kwargs):
+            if site['name'] == 'earlier':
+                clock[0] += prior_site_seconds
+                return []
+            return [PARENT]
+
+        sites = ([{'name': 'earlier', 'url': 'https://earlier.example'}]
+                 if prior_site_seconds else [])
+        sites.append({'name': 'matched', 'url': 'https://provider.example'})
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(scraper.time, 'monotonic', side_effect=lambda: clock[0]))
+            stack.enter_context(patch.object(scraper, 'DRISSION_AVAILABLE', True))
+            for name, value in [('fetch_indexed_sites', sites), ('launch_browser', page),
+                                ('start_media_listener', True), ('player_page_unavailable', False),
+                                ('wait_for_dynamic_player', {'server_controls': controls}),
+                                ('browser_search_site', []), ('stage_d_carpet_bomb', None),
+                                ('stage_a_player_fingerprint', None), ('stage_c_iframe_crawl', None)]:
+                stack.enter_context(patch.object(scraper, name, return_value=value))
+            for name in ('setup_worker_hooks', 'set_navigation_referer', 'stop_media_listener'):
+                stack.enter_context(patch.object(scraper, name))
+            closed = stack.enter_context(patch.object(scraper, 'close_browser'))
+            stack.enter_context(patch.object(scraper, 'read_episode_identity', side_effect=identity))
+            stack.enter_context(patch.object(scraper, 'stage_b_network_sniff', side_effect=sniff))
+            stack.enter_context(patch.object(scraper, 'search_site', side_effect=search))
+            stack.enter_context(patch.object(scraper, 'episode_url_candidates',
+                                            side_effect=lambda url, episode: [url]))
+            if direct:
+                result = scraper.extract_from_mirror('', PARENT, page, audio_preference='dub',
+                    deadline=18, query=QUERY, episode_id=EPISODE)
+            else:
+                result = scraper.do_resolve(QUERY, EPISODE, 0, 'dub', 35)
+                closed.assert_called_once_with(page)
+        return result, selected, deadlines, clock[0]
+
+    def test_matched_page_can_try_third_audio_server_within_existing_site_budget(self):
+        result, selected, deadlines, elapsed = self.resolve_server_rotation()
+        self.assertEqual('matched', result.get('site'))
+        self.assertFalse(result.get('requires_webview', False))
+        self.assertEqual(EVIDENCE, result['match_evidence'])
+        self.assertEqual([1, 2, 3], selected)
+        self.assertEqual([24, 24, 24], deadlines)
+        self.assertEqual(21, elapsed)
+
+    def test_unknown_conflicting_or_single_control_page_keeps_candidate_limit(self):
+        for status, controls, count in [('unknown', 6, 2), ('conflict', 6, 0),
+                                        ('consistent', 1, 2)]:
+            with self.subTest(status=status, controls=controls):
+                result, selected, deadlines, elapsed = self.resolve_server_rotation(
+                    status=status, controls=controls)
+                self.assertEqual('all_indexed_sites_failed', result['error'])
+                self.assertEqual(count, len(selected))
+                self.assertTrue(all(deadline == 18 for deadline in deadlines))
+                self.assertLessEqual(elapsed, 18)
+
+    def test_matched_server_rotation_still_expires_at_site_limit(self):
+        result, selected, deadlines, elapsed = self.resolve_server_rotation(costs=(5, 19, 1))
+        self.assertEqual('all_indexed_sites_failed', result['error'])
+        self.assertEqual([1, 2], selected)
+        self.assertEqual([24, 24], deadlines)
+        self.assertEqual(24, elapsed)
+
+    def test_matched_server_rotation_still_expires_at_global_limit(self):
+        result, selected, deadlines, elapsed = self.resolve_server_rotation(
+            costs=(5, 10, 1), prior_site_seconds=20)
+        self.assertEqual('all_indexed_sites_failed', result['error'])
+        self.assertEqual([1, 2], selected)
+        self.assertEqual([35, 35], deadlines)
+        self.assertEqual(35, elapsed)
+
+    def test_direct_extraction_keeps_its_callers_deadline(self):
+        result, selected, deadlines, elapsed = self.resolve_server_rotation(direct=True)
+        self.assertIsNone(result)
+        self.assertEqual([1, 2], selected)
+        self.assertEqual([18, 18], deadlines)
+        self.assertEqual(18, elapsed)
+
     def resolve(self, extract, *, links=None, prefer_native=True, limit=0, clock=None, close=None):
         sites = [{'name': name, 'url': f'https://{name}.example', 'source': 'everythingmoe'}
                  for name in ('first', 'later')]
