@@ -74,27 +74,44 @@ namespace UniversalMediaOS.Core.Services
             _config.SetSetting("WatchTogetherLastRoomId", RoomId);
             _config.SetSetting("WatchTogetherOffsetSeconds", OffsetSeconds.ToString("R", CultureInfo.InvariantCulture));
 
+            var connectionCts = CancellationTokenSource.CreateLinkedTokenSource(token);
+            var connectionSocket = new ClientWebSocket();
+            CancellationToken connectionToken = connectionCts.Token;
+            _cts = connectionCts;
+            _socket = connectionSocket;
             SetState(WatchRoomConnectionState.Connecting);
-            _cts = CancellationTokenSource.CreateLinkedTokenSource(token);
-            _socket = new ClientWebSocket();
             try
             {
-                await _socket.ConnectAsync(BuildWebSocketUri(ServerUrl, RoomId), _cts.Token);
+                await connectionSocket.ConnectAsync(BuildWebSocketUri(ServerUrl, RoomId), connectionToken);
+                // Disconnect/reconnect can replace this attempt while its UI continuation
+                // is queued. Its result and cleanup belong only to the original socket.
+                if (!ReferenceEquals(_socket, connectionSocket))
+                {
+                    return;
+                }
                 SetState(WatchRoomConnectionState.Connected);
-                ClientWebSocket connectedSocket = _socket;
-                CancellationToken receiveToken = _cts.Token;
-                _ = Task.Run(() => ReceiveLoopAsync(connectedSocket, receiveToken));
+                _ = Task.Run(() => ReceiveLoopAsync(connectionSocket, connectionToken));
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
-                await DisconnectAsync();
+                if (ReferenceEquals(_socket, connectionSocket))
+                {
+                    await DisconnectAsync();
+                }
                 throw;
             }
             catch (Exception ex)
             {
+                if (!ReferenceEquals(_socket, connectionSocket))
+                {
+                    return;
+                }
                 AppLogger.Log($"Watch Together connection failed: {ex.Message}", "WARNING");
                 await DisconnectAsync();
-                SetState(WatchRoomConnectionState.Failed);
+                if (_socket is null)
+                {
+                    SetState(WatchRoomConnectionState.Failed);
+                }
             }
         }
 
