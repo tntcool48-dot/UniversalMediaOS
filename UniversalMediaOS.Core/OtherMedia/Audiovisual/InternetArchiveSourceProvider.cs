@@ -279,7 +279,7 @@ public sealed class InternetArchiveSourceProvider : IAudiovisualSourceProvider
                 return null;
             }
 
-            string? fileName = SelectVideoFile(files);
+            string? fileName = SelectVideoFile(files, candidateIdentity.Title, candidateUnit);
             if (string.IsNullOrWhiteSpace(fileName))
             {
                 return null;
@@ -462,7 +462,7 @@ public sealed class InternetArchiveSourceProvider : IAudiovisualSourceProvider
             : identity;
     }
 
-    private static string? SelectVideoFile(JsonElement files)
+    private static string? SelectVideoFile(JsonElement files, string itemTitle, AudiovisualUnit itemUnit)
     {
         return files
             .EnumerateArray()
@@ -474,12 +474,63 @@ public sealed class InternetArchiveSourceProvider : IAudiovisualSourceProvider
                 Source = GetScalarString(file, "source"),
                 Size = GetLong(file, "size")
             })
-            .Where(file => IsSupportedVideoFile(file.Name, file.Format))
+            .Where(file => IsSupportedVideoFile(file.Name, file.Format) &&
+                !IsSupplementalVideo(file.Name, itemTitle) && !HasConflictingFileUnit(file.Name, itemTitle, itemUnit))
             .OrderByDescending(file => file.Source.Equals("original", StringComparison.OrdinalIgnoreCase))
             .ThenByDescending(file => Path.GetExtension(file.Name).Equals(".mp4", StringComparison.OrdinalIgnoreCase))
             .ThenByDescending(file => file.Size)
             .Select(file => file.Name)
             .FirstOrDefault();
+    }
+
+    private static bool IsSupplementalVideo(string fileName, string itemTitle)
+    {
+        return System.Text.RegularExpressions.Regex.IsMatch(ComponentFileLabel(fileName, itemTitle),
+            @"\b(?:trailers?|teasers?|clips?|previews?|excerpts?|featurettes?|outtakes|deleted\s+scenes|behind\s+the\s+scenes|making\s+of)\b",
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+    }
+
+    private static string ComponentFileLabel(string fileName, string itemTitle)
+    {
+        string observedName = " " + ExactAudiovisualMatcher.NormalizeTitle(Path.ChangeExtension(fileName, null)) + " ";
+        string observedTitle = ExactAudiovisualMatcher.NormalizeTitle(itemTitle);
+        if (!string.IsNullOrEmpty(observedTitle))
+        {
+            // A film's own name may contain "Trailer" or "Clip". Only additional
+            // component labels can establish that this file is supplementary.
+            observedName = observedName.Replace(" " + observedTitle + " ", " ", StringComparison.Ordinal);
+        }
+        return observedName;
+    }
+
+    private static bool HasConflictingFileUnit(string fileName, string itemTitle, AudiovisualUnit itemUnit)
+    {
+        // Keep decimal/range markers intact: they cannot establish one integer unit.
+        const string number = @"\d{1,4}(?:\.\d{1,4})?(?:(?:[.\s-]*e|-)\d{1,4}(?:\.\d{1,4})?)?";
+        string label = (Path.ChangeExtension(fileName, null) ?? string.Empty).Replace('_', ' ');
+        string component = ComponentFileLabel(fileName, itemTitle);
+        foreach (System.Text.RegularExpressions.Match claim in System.Text.RegularExpressions.Regex.Matches(label,
+            @"\b(?:s(?<season>\d{1,3})[.\s-]*e(?<episode>" + number + @")|" +
+            @"(?<season>\d{1,2})x(?<episode>" + number + @")|" +
+            @"(?:season|s)[.\s-]*(?<season>" + number + @")|" +
+            @"(?:episodes?|ep|e)[.\s-]*(?<episode>" + number + @"))\b",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant))
+        {
+            if (itemUnit.IsFeature)
+            {
+                // An observed film title itself may contain an episode/season label.
+                if (component.Contains(" " + ExactAudiovisualMatcher.NormalizeTitle(claim.Value) + " ", StringComparison.Ordinal))
+                    return true;
+                continue;
+            }
+            if (claim.Groups["season"].Success &&
+                (!int.TryParse(claim.Groups["season"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out int season) ||
+                 season != itemUnit.SeasonNumber)) return true;
+            if (claim.Groups["episode"].Success &&
+                (!int.TryParse(claim.Groups["episode"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out int episode) ||
+                 episode != itemUnit.EpisodeNumber)) return true;
+        }
+        return false;
     }
 
     private static bool IsSupportedVideoFile(string fileName, string format)
