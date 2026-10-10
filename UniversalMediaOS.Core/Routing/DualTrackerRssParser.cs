@@ -23,6 +23,7 @@ namespace UniversalMediaOS.Core.Routing
 
         private readonly string _nyaaUrl;
         private readonly string _animeToshoUrl;
+        private readonly HttpClient _client;
 
         static DualTrackerRssParser()
         {
@@ -31,6 +32,7 @@ namespace UniversalMediaOS.Core.Routing
 
         public DualTrackerRssParser(DomainHotSwapper? config = null)
         {
+            _client = _httpClient;
             _nyaaUrl = config?.GetSetting("NyaaUrl") ?? "";
             if (string.IsNullOrEmpty(_nyaaUrl)) _nyaaUrl = "https://nyaa.si/?page=rss&c=1_2&f=0&q=";
 
@@ -38,10 +40,18 @@ namespace UniversalMediaOS.Core.Routing
             if (string.IsNullOrEmpty(_animeToshoUrl)) _animeToshoUrl = "https://feed.animetosho.org/rss2?q=";
         }
 
+        internal DualTrackerRssParser(HttpClient client, string nyaaUrl, string animeToshoUrl)
+        {
+            _client = client;
+            _nyaaUrl = nyaaUrl;
+            _animeToshoUrl = animeToshoUrl;
+        }
+
         public async Task<List<TorrentResult>> SearchAsync(string query, Action<string>? logger = null, CancellationToken token = default)
         {
             void Log(string msg) { logger?.Invoke(msg); System.Diagnostics.Debug.WriteLine(msg); }
             var results = new List<TorrentResult>();
+            var failedSources = new List<string>();
             var escapedQuery = Uri.EscapeDataString(query ?? string.Empty);
 
             try 
@@ -62,10 +72,12 @@ namespace UniversalMediaOS.Core.Routing
             catch (TaskCanceledException ex)
             {
                 Log($"> [Tier 1] Nyaa search timed out: {ex.Message}");
+                failedSources.Add("Nyaa");
             }
             catch (Exception ex)
             {
                 Log($"> [Tier 1] Nyaa search failed: {ex.Message}");
+                failedSources.Add("Nyaa");
             }
 
             try 
@@ -86,12 +98,16 @@ namespace UniversalMediaOS.Core.Routing
             catch (TaskCanceledException ex)
             {
                 Log($"> [Tier 1] AnimeTosho search timed out: {ex.Message}");
+                failedSources.Add("AnimeTosho");
             }
             catch (Exception ex)
             {
                 Log($"> [Tier 1] AnimeTosho search failed: {ex.Message}");
+                failedSources.Add("AnimeTosho");
             }
 
+            if (results.Count == 0 && failedSources.Count > 0)
+                throw new TorrentSearchIncompleteException($"Torrent search is incomplete: {string.Join(" and ", failedSources)} could not be checked.");
             return results;
         }
 
@@ -103,7 +119,7 @@ namespace UniversalMediaOS.Core.Routing
 
             log($"> [Tier 1] Awaiting {source} response (10s timeout)...");
             
-            using var response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, mergedToken);
+            using var response = await _client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, mergedToken);
             response.EnsureSuccessStatusCode();
             
             log($"> [Tier 1] Reading {source} stream...");
@@ -224,4 +240,6 @@ namespace UniversalMediaOS.Core.Routing
         public int Seeders { get; set; }
         public string Source { get; set; } = string.Empty;
     }
+
+    public sealed class TorrentSearchIncompleteException(string message) : IOException(message);
 }

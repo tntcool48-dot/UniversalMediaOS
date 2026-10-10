@@ -145,40 +145,60 @@ public sealed class TemporaryEpisodeWatchService
             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         bool singleSpecial = IsSingleSpecial(catalogFormat, catalogEpisodeCount, episode);
         var results = new List<TorrentResult>();
+        bool incompleteSearch = false;
+        async Task Search(string query)
+        {
+            try { results.AddRange(await _search(query, log, token)); }
+            catch (TorrentSearchIncompleteException ex)
+            {
+                incompleteSearch = true;
+                log(ex.Message);
+            }
+        }
         List<TorrentResult> Matches() => results.Where(result => !string.IsNullOrWhiteSpace(result.MagnetLink) &&
-                !SeasonConflicts(title, result.Title) &&
-                titles.Any(t => SeasonDownloader.TitleLooksLikeMatch(result.Title, StripSeasonMarker(t))) &&
                 (singleSpecial
-                    ? FileMatchesCatalogEpisode(result.Title, episode, titles)
-                    : !Regex.IsMatch(result.Title, @"\b(movie|ova|ona|special)\b", RegexOptions.IgnoreCase) &&
+                    ? FileMatchesCatalogEpisode(result.Title, episode, titles) || TryMapSingleSpecialRelease(result.Title, titles) != null
+                    : !SeasonConflicts(title, result.Title) &&
+                      titles.Any(t => SeasonDownloader.TitleLooksLikeMatch(result.Title, StripSeasonMarker(t))) &&
+                      !Regex.IsMatch(result.Title, @"\b(movie|ova|ona|special)\b", RegexOptions.IgnoreCase) &&
                       (!Regex.IsMatch(result.Title, EpisodeMarkerPattern, RegexOptions.IgnoreCase) || EpisodeMatches(result.Title, episode))) &&
-                (audio != "Dub" || HasDubLabel(result.Title)))
+                (audio == "Dub" ? HasDubLabel(result.Title) : !HasDubLabel(result.Title) ||
+                    Regex.IsMatch(result.Title, @"\bdual[\s._-]*audio\b", RegexOptions.IgnoreCase)))
             .GroupBy(result => string.IsNullOrWhiteSpace(result.InfoHash) ? result.MagnetLink : result.InfoHash,
                 StringComparer.OrdinalIgnoreCase)
             .Select(group => group.OrderByDescending(item => item.Seeders).First()).ToList();
+        if (singleSpecial && title.Contains(':'))
+        {
+            string franchise = title.Split(':', 2)[0].Trim();
+            if (Regex.Matches(franchise, @"[a-z]{3,}", RegexOptions.IgnoreCase).Count >= 2)
+                await Search($"{franchise} OVA");
+        }
         foreach (string searchTitle in titles.Take(3))
         {
             string episodeText = episode.ToString("00", System.Globalization.CultureInfo.InvariantCulture);
             if (audio == "Dub")
             {
-                results.AddRange(await _search($"{searchTitle} {episodeText} Dub", log, token));
+                await Search($"{searchTitle} {episodeText} Dub");
                 // Dub and dual-audio feeds contain different releases. Search both
                 // for the catalog title before ranking available seeder evidence.
                 if (searchTitle == titles[0] || Matches().Count < 5)
-                    results.AddRange(await _search($"{searchTitle} Dual Audio", log, token));
+                    await Search($"{searchTitle} Dual Audio");
                 if (Matches().Count < 5)
-                    results.AddRange(await _search($"{searchTitle} English Audio", log, token));
+                    await Search($"{searchTitle} English Audio");
             }
             else
             {
-                results.AddRange(await _search($"{searchTitle} {episodeText}", log, token));
-                if (Matches().Count < 5) results.AddRange(await _search(searchTitle, log, token));
+                await Search($"{searchTitle} {episodeText}");
+                if (Matches().Count < 5) await Search(searchTitle);
             }
             token.ThrowIfCancellationRequested();
             if (Matches().Count >= 20) break;
         }
 
-        return Matches()
+        var matches = Matches();
+        if (matches.Count == 0 && incompleteSearch)
+            throw new TorrentSearchIncompleteException("No verified episode was found; torrent discovery is incomplete because a source could not be checked. Retry or repair the download sources.");
+        return matches
             .OrderByDescending(result => EpisodeMatches(result.Title, episode))
             .ThenByDescending(result => result.Seeders)
             .Take(12).ToList();
@@ -196,6 +216,7 @@ public sealed class TemporaryEpisodeWatchService
             CacheDirectory = Path.Combine(directory, "engine")
         };
         using var engine = _createEngine(settings.ToSettings());
+        SpecialEpisodeMapping? mapping = specialTitles == null ? null : TryMapSingleSpecialRelease(candidate.Title, specialTitles);
         try
         {
             log($"Checking torrent files: {candidate.Title}");
@@ -217,19 +238,21 @@ public sealed class TemporaryEpisodeWatchService
             try
             {
                 token.ThrowIfCancellationRequested();
-                if (SeasonConflicts(title, manager.Torrent?.Name ?? string.Empty)) return null;
-                if (specialTitles != null && !specialTitles.Any(t => TorrentMatchesSeries(manager.Torrent?.Name ?? string.Empty, t)))
+                string torrentName = manager.Torrent?.Name ?? string.Empty;
+                if (mapping == null && SeasonConflicts(title, torrentName)) return null;
+                if (mapping != null ? !FileMatchesSpecialMapping(torrentName, mapping) :
+                    specialTitles != null && !specialTitles.Any(t => TorrentMatchesSeries(torrentName, t)))
                 {
                     log("Torrent metadata does not identify the selected catalog special.");
                     return null;
                 }
-                ITorrentManagerFile? video = SelectEpisodeFile(manager.Files, episode, specialTitles);
+                ITorrentManagerFile? video = SelectEpisodeFile(manager.Files, episode, specialTitles, mapping);
                 if (video == null)
                 {
                     log("Torrent did not contain one unambiguous file for this episode.");
                     return null;
                 }
-                if (SeasonConflicts(title, video.FullPath) || !IsInside(directory, video.FullPath))
+                if ((mapping == null && SeasonConflicts(title, video.FullPath)) || !IsInside(directory, video.FullPath))
                 {
                     log("Episode file has a conflicting season or unsafe path.");
                     return null;
@@ -240,6 +263,8 @@ public sealed class TemporaryEpisodeWatchService
                     return null;
                 }
                 string stem = Path.GetFileNameWithoutExtension(video.FullPath);
+                if (mapping != null)
+                    log($"Matched the selected special episode {episode}; this release labels it {mapping.ProviderLabel}.");
                 var sidecars = manager.Files.Where(file => CaptionExtensions.Contains(Path.GetExtension(file.FullPath), StringComparer.OrdinalIgnoreCase) &&
                     Path.GetDirectoryName(file.FullPath)?.Equals(Path.GetDirectoryName(video.FullPath), StringComparison.OrdinalIgnoreCase) == true &&
                     Path.GetFileNameWithoutExtension(file.FullPath).StartsWith(stem, StringComparison.OrdinalIgnoreCase) &&
@@ -378,11 +403,67 @@ public sealed class TemporaryEpisodeWatchService
         return "Release says Dub; audio language is not tagged, so verify it in the player.";
     }
 
-    internal static ITorrentManagerFile? SelectEpisodeFile(IEnumerable<ITorrentManagerFile> files, int episode, string[]? specialTitles = null)
+    internal static ITorrentManagerFile? SelectEpisodeFile(IEnumerable<ITorrentManagerFile> files, int episode, string[]? specialTitles = null,
+        SpecialEpisodeMapping? mapping = null)
     {
-        var matches = files.Where(file => VideoExtensions.Contains(Path.GetExtension(file.FullPath), StringComparer.OrdinalIgnoreCase) &&
-            FileMatchesCatalogEpisode(Path.GetFileName(file.FullPath), episode, specialTitles)).ToArray();
+        var videos = files.Where(file => VideoExtensions.Contains(Path.GetExtension(file.FullPath), StringComparer.OrdinalIgnoreCase)).ToArray();
+        if (mapping != null && videos.Length != 1) return null;
+        var matches = videos.Where(file => mapping != null
+            ? FileMatchesSpecialMapping(Path.GetFileName(file.FullPath), mapping)
+            : FileMatchesCatalogEpisode(Path.GetFileName(file.FullPath), episode, specialTitles)).ToArray();
         return matches.Length == 1 ? matches[0] : null;
+    }
+
+    internal sealed record SpecialEpisodeMapping(string CatalogTitle, string Franchise, decimal ProviderNumber, int? ProviderSeason)
+    {
+        public string ProviderLabel => (ProviderSeason.HasValue ? $"Season {ProviderSeason} " : "") +
+            "Episode " + ProviderNumber.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    internal static SpecialEpisodeMapping? TryMapSingleSpecialRelease(string release, string[] titles)
+    {
+        if (!Regex.IsMatch(release, @"\b(?:ova|special)\b", RegexOptions.IgnoreCase) ||
+            Regex.IsMatch(release, @"\b(?:batch|complete)\b|\b(?:ova|special)\s*\d", RegexOptions.IgnoreCase)) return null;
+        var units = Regex.Matches(release, EpisodeMarkerPattern, RegexOptions.IgnoreCase);
+        if (units.Count != 1 || !TryReadProviderNumber(units[0], out decimal number)) return null;
+        foreach (string catalog in titles)
+        {
+            int colon = catalog.IndexOf(':');
+            int subtitle = catalog.LastIndexOf(" - ", StringComparison.Ordinal);
+            if (colon <= 0 || subtitle <= colon || Regex.Matches(catalog[(subtitle + 3)..], @"[a-z]{3,}", RegexOptions.IgnoreCase).Count < 2) continue;
+            string franchise = catalog[..colon].Trim();
+            string work = Regex.Replace(catalog, @"\b(?:cour|part|season)\s*\d+\b", " ", RegexOptions.IgnoreCase);
+            if (SeasonDownloader.TitleLooksLikeMatch(release, work) &&
+                Regex.Matches(franchise, @"[a-z]{3,}", RegexOptions.IgnoreCase).Count >= 2)
+                return new SpecialEpisodeMapping(catalog, franchise, number, ReadProviderSeason(release));
+        }
+        return null;
+    }
+
+    private static bool TryReadProviderNumber(Match match, out decimal number)
+    {
+        number = 0;
+        string raw = match.Groups[1].Success ? match.Groups[1].Value : match.Groups[2].Success ? match.Groups[2].Value : match.Groups[3].Value;
+        return Regex.IsMatch(raw, @"^\d+(?:[.,]\d+)?$") &&
+            decimal.TryParse(raw.Replace(',', '.'), System.Globalization.NumberStyles.AllowDecimalPoint,
+                System.Globalization.CultureInfo.InvariantCulture, out number);
+    }
+
+    private static int? ReadProviderSeason(string name)
+    {
+        var match = Regex.Match(name, @"\b(?:season\s*|s)(\d{1,2})(?:\b|e\d)", RegexOptions.IgnoreCase);
+        return match.Success ? int.Parse(match.Groups[1].Value) : null;
+    }
+
+    internal static bool FileMatchesSpecialMapping(string name, SpecialEpisodeMapping mapping)
+    {
+        string file = Path.GetFileName(name);
+        if (!SeasonDownloader.TitleLooksLikeMatch(file, mapping.Franchise)) return false;
+        var units = Regex.Matches(file, EpisodeMarkerPattern, RegexOptions.IgnoreCase);
+        int? season = ReadProviderSeason(file);
+        return units.Count == 1 && TryReadProviderNumber(units[0], out decimal number) && number == mapping.ProviderNumber &&
+            !(season.HasValue && mapping.ProviderSeason.HasValue && season != mapping.ProviderSeason) &&
+            !Regex.IsMatch(file, @"\d+\s*[-~]\s*\d+|\b(?:batch|complete)\b", RegexOptions.IgnoreCase);
     }
 
     private static bool IsSingleSpecial(string format, int count, int episode) =>

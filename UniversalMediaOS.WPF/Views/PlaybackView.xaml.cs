@@ -1441,7 +1441,10 @@ namespace UniversalMediaOS.WPF.Views
                 if (!System.IO.File.Exists(System.IO.Path.Combine(uBlockPath, "manifest.json")))
                     AppLogger.Log($"uBlock Origin extension path not found: '{uBlockPath}'. Starting WebView2 with script blocker fallback.", "WARNING");
 
-                return await CoreWebView2Environment.CreateAsync(null, userDataPath, options);
+                AppLogger.Log("[WebView] Creating browser environment.");
+                var environment = await CoreWebView2Environment.CreateAsync(null, userDataPath, options);
+                AppLogger.Log("[WebView] Browser environment created.");
+                return environment;
             }
             catch (Exception ex)
             {
@@ -1493,7 +1496,9 @@ namespace UniversalMediaOS.WPF.Views
         public static async Task EnsureWebViewWithUBlockAsync(IWebView2 webView)
         {
             var env = await CreateUBlockEnvironmentAsync();
+            AppLogger.Log("[WebView] Initializing browser control.");
             await webView.EnsureCoreWebView2Async(env);
+            AppLogger.Log("[WebView] Browser control initialized.");
 
             string uBlockPath = GetUBlockOriginPath();
             string manifestPath = System.IO.Path.Combine(uBlockPath, "manifest.json");

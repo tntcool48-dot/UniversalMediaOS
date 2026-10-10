@@ -23,6 +23,7 @@ public sealed class SpecialEpisodeDownloadIdentityTests
     [InlineData("SPECIAL", 1, 1, "[Group] " + Title + " - 13.5", "Sub", false)]
     [InlineData("SPECIAL", 1, 1, "[Group] " + Title + " OVA 2", "Sub", false)]
     [InlineData("SPECIAL", 1, 1, "[Group] " + Title + " OVA", "Dub", false)]
+    [InlineData("SPECIAL", 1, 1, "[Group] " + Title + " OVA [English Dub]", "Sub", false)]
     public async Task DiscoveryRequiresCatalogFormCountExactWorkAndRequestedAudio(
         string format, int count, int episode, string release, string audio, bool expected)
     {
