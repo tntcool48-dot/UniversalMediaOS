@@ -1,4 +1,4 @@
-# Native paused-clock consistency â€” October 11, 2026
+# Native paused-clock consistency — October 11, 2026
 
 The actual 6375d52 packaged Sintel stream showed 185.146 seconds while its pause callback saved 188.083 seconds, a 2.937-second discrepancy. That physical sample remains evidence for the earlier executable; the source repair below awaits updated-package physical qualification.
 
