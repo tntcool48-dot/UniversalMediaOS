@@ -109,6 +109,46 @@ public sealed class ArchiveMovieFileSelectionTests
         else Assert.Empty(sources);
     }
 
+    [Theory]
+    [InlineData("Blender|Sintel|Movie|Film|Short|Fantasy", true)]
+    [InlineData("Animated short film", true)]
+    [InlineData("Short animated film", true)]
+    [InlineData("Short|Fantasy", false)]
+    [InlineData("Film|Short|Trailer", false)]
+    [InlineData("Film|Short|Clip", false)]
+    [InlineData("movies", false)]
+    public async Task IndependentlyDeclaredShortFilmHasStandaloneUnitEvidence(string subjects, bool verified)
+    {
+        AudiovisualIdentity identity = Identity("Sintel") with { Year = 2010 };
+        AudiovisualSource source = Assert.Single(await FindSourcesWithSubjectsAsync(identity,
+            AudiovisualUnit.Feature, subjects.Split('|'),
+            new VideoFile("data/sintel.mp4", "h.264", "original", "88506270")));
+
+        SourceVerification result = ExactAudiovisualMatcher.VerifyEvidence(
+            new SourceSearchRequest { Identity = identity, Unit = AudiovisualUnit.Feature }, source.Evidence);
+        Assert.Equal(verified ? SourceVerificationStatus.Verified : SourceVerificationStatus.Unverified, result.Status);
+        Assert.Empty(source.Evidence?.Audio?.Languages ?? []);
+        if (verified)
+        {
+            Assert.Equal(SourceEvidenceOrigin.ProviderItem, source.Evidence?.Origin);
+            Assert.True(source.Evidence?.Unit?.IsFeature);
+            Assert.Equal(2010, source.Evidence?.Identity?.Year);
+        }
+    }
+
+    [Theory]
+    [InlineData("Short films")]
+    [InlineData("Feature films")]
+    public async Task SearchFilmTagsCannotOverrideSupplementalItemDeclaration(string searchSubject)
+    {
+        AudiovisualIdentity identity = Identity("Sintel") with { Year = 2010 };
+        AudiovisualSource source = Assert.Single(await FindSourcesWithSubjectsAsync(identity,
+            AudiovisualUnit.Feature, ["Film", "Short", "Trailer"], [searchSubject],
+            new VideoFile("data/sintel.mp4", "h.264", "original", "88506270")));
+        Assert.Equal(SourceVerificationStatus.Unverified, ExactAudiovisualMatcher.VerifyEvidence(
+            new SourceSearchRequest { Identity = identity }, source.Evidence).Status);
+    }
+
     private static AudiovisualIdentity Identity(string title) => new()
     {
         Kind = AudiovisualMediaKind.Movie,
@@ -120,24 +160,33 @@ public sealed class ArchiveMovieFileSelectionTests
     private static Task<IReadOnlyList<AudiovisualSource>> FindSourcesAsync(string title, params VideoFile[] files) =>
         FindSourcesAsync(Identity(title), AudiovisualUnit.Feature, files);
 
-    private static async Task<IReadOnlyList<AudiovisualSource>> FindSourcesAsync(
-        AudiovisualIdentity identity, AudiovisualUnit unit, params VideoFile[] files)
+    private static Task<IReadOnlyList<AudiovisualSource>> FindSourcesAsync(
+        AudiovisualIdentity identity, AudiovisualUnit unit, params VideoFile[] files) =>
+        FindSourcesWithSubjectsAsync(identity, unit,
+            [identity.Kind == AudiovisualMediaKind.Movie ? "Feature films" : "Television"], files);
+
+    private static Task<IReadOnlyList<AudiovisualSource>> FindSourcesWithSubjectsAsync(
+        AudiovisualIdentity identity, AudiovisualUnit unit, string[] subjects, params VideoFile[] files) =>
+        FindSourcesWithSubjectsAsync(identity, unit, subjects, [], files);
+
+    private static async Task<IReadOnlyList<AudiovisualSource>> FindSourcesWithSubjectsAsync(
+        AudiovisualIdentity identity, AudiovisualUnit unit, string[] subjects, string[] searchSubjects, params VideoFile[] files)
     {
         string title = identity.Title;
         string search = JsonSerializer.Serialize(new
         {
             response = new { docs = new[] { new
             {
-                identifier = "film-item", title, year = 2000,
-                season = unit.SeasonNumber, episode = unit.EpisodeNumber
+                identifier = "film-item", title, year = identity.Year,
+                season = unit.SeasonNumber, episode = unit.EpisodeNumber, subject = searchSubjects
             } } }
         });
         string item = JsonSerializer.Serialize(new
         {
             metadata = new
             {
-                title, year = 2000, season = unit.SeasonNumber, episode = unit.EpisodeNumber,
-                subject = new[] { identity.Kind == AudiovisualMediaKind.Movie ? "Feature films" : "Television" }
+                title, year = identity.Year, season = unit.SeasonNumber, episode = unit.EpisodeNumber,
+                subject = subjects
             }, files
         });
         using var http = new HttpClient(new ItemResponses(search, item));

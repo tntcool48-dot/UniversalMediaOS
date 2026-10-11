@@ -322,7 +322,7 @@ public sealed class InternetArchiveSourceProvider : IAudiovisualSourceProvider
     {
         // Archive item fields are independent of the requested catalog selection.
         // Its broad "movies" mediatype alone does not establish a feature film.
-        bool feature = HasFeatureFilmSignal(metadata) || HasFeatureFilmSignal(searchDocument);
+        bool feature = HasStandaloneFilmSignal(metadata, searchDocument);
         bool episode = unit.SeasonNumber.HasValue && unit.EpisodeNumber.HasValue;
         if ((identity.ContentForm == AudiovisualContentForm.Feature && !feature) ||
             (identity.ContentForm == AudiovisualContentForm.Series && !episode) ||
@@ -338,12 +338,25 @@ public sealed class InternetArchiveSourceProvider : IAudiovisualSourceProvider
         };
     }
 
-    private static bool HasFeatureFilmSignal(JsonElement item) =>
-        GetStringValues(item, "subject").Concat(GetStringValues(item, "genre"))
-            .Concat(GetStringValues(item, "type"))
-            .Any(value => System.Text.RegularExpressions.Regex.IsMatch(value,
-                @"\b(?:feature[\s_-]+film|full[\s_-]+length[\s_-]+film)s?\b",
-                System.Text.RegularExpressions.RegexOptions.IgnoreCase));
+    private static bool HasStandaloneFilmSignal(params JsonElement[] items)
+    {
+        string[] values = items.SelectMany(item => GetStringValues(item, "subject")
+            .Concat(GetStringValues(item, "genre")).Concat(GetStringValues(item, "type"))).ToArray();
+        bool Matches(string pattern) => values.Any(value => System.Text.RegularExpressions.Regex.IsMatch(
+            value, pattern, System.Text.RegularExpressions.RegexOptions.IgnoreCase));
+        if (Matches(@"\b(?:trailers?|teasers?|clips?|previews?|excerpts?)\b")) return false;
+        if (Matches(@"\b(?:feature[\s_-]+film|full[\s_-]+length[\s_-]+film)s?\b")) return true;
+
+        // The feature unit represents a standalone catalog movie, including a
+        // short film. Use only independently supplied structured work-form fields;
+        // neither mediatype=movies nor the requested movie kind establishes it.
+        if (Matches(@"\bshort[\s_-]+(?:animated[\s_-]+)?films?\b")) return true;
+        var tags = values.SelectMany(value => value.Split([';', '|', ','],
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return (tags.Contains("Short") || tags.Contains("Shorts")) &&
+            (tags.Contains("Film") || tags.Contains("Films") || tags.Contains("Movie") || tags.Contains("Movies"));
+    }
 
     internal static bool TryGetExplicitAuthorization(
         string? licenseUrl,
