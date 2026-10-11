@@ -21,3 +21,5 @@ Tested source is `6379e86` plus this four-file production/test batch. WPF DLL SH
 ## Remaining limits
 
 No user logoff, shutdown, reboot, OS end-session message, or forced process termination was performed. The real Windows lifecycle and the three-second production deadline remain physically unqualified; a deadline cannot guarantee a later write after the OS terminates the process. Locks beyond either exit deadline, global queues across distinct accepted source/ownership intervals, portable configuration migration and final package acceptance remain open. The existing isolated profile and six unrelated untracked paths were preserved; controlled fixtures used their own temporary profiles. The grouped persistence gate stays open.
+
+Published on main as **`9e33b704044c0a742a49a13427ad2fb364d757e6`**. Its single [hosted checkpoint](https://github.com/tntcool48-dot/UniversalMediaOS/actions/runs/38142447496) is queued at this recorded checkpoint; no full pass is claimed for this source. The latest completed passing full source remains `e036323` (1,215 passes / zero failures / 22 unchanged skips). No second full run or broad local duplicate was started.
