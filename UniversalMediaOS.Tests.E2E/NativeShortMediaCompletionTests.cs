@@ -162,6 +162,78 @@ public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
         => OnDispatcher(NativeLockedResumeAsync);
 
     [Fact]
+    public Task NativePausedClockUsesFinalPositionWhenProgressNotificationsAreSparse()
+        => OnDispatcher(async () =>
+        {
+            string? previous = Environment.GetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable);
+            string parent = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "UniversalMediaOS.Tests"));
+            string root = Path.Combine(parent, "NativePauseClock-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, root);
+            string? connectionString = null;
+            PlaybackProgressService? progress = null;
+            try
+            {
+                string video = Path.Combine(root, "pause.mp4");
+                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                var encoded = await new PreparationProcessRunner().RunAsync("ffmpeg", ["-nostdin", "-hide_banner", "-v", "error",
+                    "-f", "lavfi", "-i", "testsrc=size=160x90:rate=25", "-t", "20", "-c:v", "mpeg4", "-y", video], deadline.Token);
+                Assert.Equal(0, encoded.ExitCode);
+                const string work = "av:fixture:film:pause-clock";
+                const string unit = "feature";
+                using (var seed = new DatabaseContext())
+                {
+                    seed.Database.EnsureCreated();
+                    seed.SaveResumeState(work, unit, 6);
+                    seed.SaveResumeState(work, "other-cut", 57);
+                    connectionString = seed.Database.GetConnectionString();
+                }
+                progress = new(new AudiovisualLibraryService());
+                using var memory = new MemoryVideo();
+                using var player = new PlaybackViewModel(new DatabaseContext(), null, null, playbackProgress: progress);
+                memory.Attach(player.MediaPlayer);
+                player.Volume = 0;
+                player.LoadMedia(video, "Pause clock fixture", audiovisualContext: new(work,
+                    new() { ContentForm = AudiovisualContentForm.Feature }, new(), "Pause clock fixture", "", new()));
+                player.PlayPending();
+                await Wait(() => player.IsPlaying && player.PlaybackTime >= 6_000 && memory.Frames >= 2, player);
+
+                // Model a gap in progress notifications while the real decoder keeps
+                // advancing. Pause must use its final native clock, without a seek.
+                typeof(PlaybackViewModel).GetField("_lastTimeUpdate",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                    .SetValue(player, DateTime.Now.AddMinutes(1));
+                double staleDisplay = player.PlaybackTime;
+                int frames = memory.Frames;
+                await Wait(() => player.MediaPlayer.Time >= staleDisplay + 2_200 && memory.Frames > frames, player);
+                long beforePause = player.MediaPlayer.Time;
+                player.TogglePlayPauseCommand.Execute(null);
+                await Wait(() => player.PlaybackStatusText == "Paused" && player.MediaPlayer.State == VLCState.Paused, player);
+                long pausedClock = player.MediaPlayer.Time;
+                Assert.True(pausedClock >= beforePause - 100, "Refreshing the paused clock must not seek backwards.");
+                Assert.InRange(Math.Abs(player.PlaybackTime - pausedClock), 0, 1);
+                Assert.False(player.IsPlaying);
+                await player.FlushResumeAsync().WaitAsync(TimeSpan.FromSeconds(5));
+                using var verify = new DatabaseContext();
+                Assert.Equal(pausedClock / 1000.0, verify.GetResumeState(work, unit), 3);
+                Assert.Equal(57, verify.GetResumeState(work, "other-cut"));
+            }
+            finally
+            {
+                if (progress != null) await progress.FlushAsync().WaitAsync(TimeSpan.FromSeconds(5));
+                Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, previous);
+                if (connectionString != null)
+                {
+                    using var connection = new Microsoft.Data.Sqlite.SqliteConnection(connectionString);
+                    Microsoft.Data.Sqlite.SqliteConnection.ClearPool(connection);
+                }
+                Assert.StartsWith(parent + Path.DirectorySeparatorChar, root, StringComparison.OrdinalIgnoreCase);
+                Assert.Null(new DirectoryInfo(root).LinkTarget);
+                if (Directory.Exists(root)) Directory.Delete(root, true);
+            }
+        });
+
+    [Fact]
     public Task PausedHlsSeekDecodesTargetFrameWithoutStartingPlayback()
         => OnDispatcher(async () =>
         {

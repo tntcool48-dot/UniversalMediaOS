@@ -5,6 +5,7 @@ import sys
 import time
 import unittest
 from unittest.mock import Mock, patch
+from DrissionPage._functions.cookies import CookiesList
 
 CORE = Path(__file__).resolve().parents[2] / 'UniversalMediaOS.Core'
 sys.path.insert(0, str(CORE))
@@ -17,6 +18,23 @@ MEDIA = 'https://cdn.example/master.m3u8'
 
 
 class NativeFrameTests(unittest.TestCase):
+    def test_browser_cookies_use_supported_api_and_preserve_replay_values(self):
+        class Page:
+            def cookies(self, all_domains=False, all_info=False):
+                if all_domains or all_info:
+                    raise AssertionError('Only the current page cookies should be replayed.')
+                return CookiesList([{'name': 'session', 'value': 'opaque'},
+                                    {'name': 'clearance', 'value': 'present'}])
+
+        self.assertEqual('session=opaque; clearance=present', av.browser_cookie(Page()))
+
+    def test_browser_cookie_failure_or_empty_jar_does_not_invent_headers(self):
+        page = Mock()
+        page.cookies.return_value = CookiesList([])
+        self.assertEqual('', av.browser_cookie(page))
+        page.cookies.side_effect = RuntimeError('closed browser')
+        self.assertEqual('', av.browser_cookie(page))
+
     def test_verified_resolve_requests_item_evidence_without_duplicate_provider_targets(self):
         with patch.object(av, 'do_extract', return_value={'error': 'all_sources_failed'}) as extract, patch('builtins.print'):
             self.assertEqual(0, av.main(['av.py', 'resolve-verified', ROOT]))

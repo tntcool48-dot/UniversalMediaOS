@@ -448,13 +448,26 @@ namespace UniversalMediaOS.WPF.ViewModels
                 {
                     if (HasNativeBufferingFailure || IsPersistenceWaiting) return;
                     CancelNativeBufferingWatch();
-                    SaveCurrentResumePosition(force: true, synchronous: false);
+                    // TimeChanged can be sparse near pause. Use one final native
+                    // observation for the visible clock, persistence and peers;
+                    // updating the display must not be interpreted as a seek.
+                    double pausedSeconds = GetCurrentPlaybackPositionSeconds();
+                    _isUpdatingTimeFromPlayer = true;
+                    try
+                    {
+                        PlaybackTime = pausedSeconds * 1000.0;
+                    }
+                    finally
+                    {
+                        _isUpdatingTimeFromPlayer = false;
+                    }
+                    QueueResumeSave(pausedSeconds, ended: false, force: true, synchronous: false);
                     IsPlaying = false;
                     IsPlaybackBusy = false;
                     PlaybackStatusText = "Paused";
                     RefreshCaptionState();
                     AppLogger.Log($"LibVLC paused event fired for: '{MediaTitle}'");
-                    PublishPlaybackAction("pause", GetCurrentPlaybackPositionSeconds());
+                    PublishPlaybackAction("pause", pausedSeconds);
                 });
             };
             _nativeStopped = (s, e) => RunOnDispatcher(() =>

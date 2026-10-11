@@ -1104,8 +1104,7 @@ def close_browser(page):
 
 
 def browser_cookie(page):
-    values = attempt(lambda: page.cookies(as_dict=True), {})
-    return "; ".join(f"{key}={value}" for key, value in values.items())
+    return attempt(lambda: page.cookies().as_str(), "")
 
 
 def packet_result(packet, page, referer):
