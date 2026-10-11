@@ -227,7 +227,7 @@ namespace UniversalMediaOS.WPF.ViewModels
                         vaVm.LoadMedia(m.Media);
                     }
 
-                    vm.AddTab("VA Detect", "VA Detect", "\uE77C", "#F59E0B", vaVm, scope);
+                    vm.AddTab("VA Detect", "VA Detect", "\uE77C", "#F59E0B", vaVm, scope, localizeTitle: true);
                 };
 
                 if (dispatcher != null)
@@ -289,9 +289,10 @@ namespace UniversalMediaOS.WPF.ViewModels
             string icon,
             string accent,
             ObservableObject content,
-            IDisposable? lifetime = null)
+            IDisposable? lifetime = null,
+            bool localizeTitle = false)
         {
-            var tab = new MediaTabViewModel(title, kind, icon, accent, content, lifetime);
+            var tab = new MediaTabViewModel(title, kind, icon, accent, content, lifetime, localizeTitle);
             Tabs.Add(tab);
             ActiveTab = tab;
         }
@@ -361,7 +362,7 @@ namespace UniversalMediaOS.WPF.ViewModels
                 return;
             }
 
-            AddTab(title, kind, icon, accent, content);
+            AddTab(title, kind, icon, accent, content, localizeTitle: true);
         }
 
         public void PlayMedia(
@@ -606,7 +607,7 @@ namespace UniversalMediaOS.WPF.ViewModels
         {
             UniversalMediaOS.Core.Helpers.AppLogger.Log("Opening Anime tab.");
             var (searchViewModel, scope) = CreateScopedViewModel<SearchViewModel>();
-            AddTab("Anime", "Anime", "\uE7FC", "#8B5CF6", searchViewModel, scope);
+            AddTab("Anime", "Anime", "\uE7FC", "#8B5CF6", searchViewModel, scope, localizeTitle: true);
             searchViewModel.Initialize();
         }
 
@@ -615,7 +616,7 @@ namespace UniversalMediaOS.WPF.ViewModels
         {
             UniversalMediaOS.Core.Helpers.AppLogger.Log("Opening Manga tab.");
             var (mangaViewModel, scope) = CreateScopedViewModel<MangaViewModel>();
-            AddTab("Manga", "Manga", "\uE82D", "#EC4899", mangaViewModel, scope);
+            AddTab("Manga", "Manga", "\uE82D", "#EC4899", mangaViewModel, scope, localizeTitle: true);
             mangaViewModel.Initialize();
         }
 
@@ -624,7 +625,7 @@ namespace UniversalMediaOS.WPF.ViewModels
         {
             UniversalMediaOS.Core.Helpers.AppLogger.Log("Opening Movies tab.");
             var (viewModel, scope) = CreateScopedViewModel<MovieCatalogViewModel>();
-            AddTab("Movies", "Movies", "\uE8B2", "#06B6D4", viewModel, scope);
+            AddTab("Movies", "Movies", "\uE8B2", "#06B6D4", viewModel, scope, localizeTitle: true);
             viewModel.Initialize();
         }
 
@@ -633,7 +634,7 @@ namespace UniversalMediaOS.WPF.ViewModels
         {
             UniversalMediaOS.Core.Helpers.AppLogger.Log("Opening Books tab.");
             var (viewModel, scope) = CreateScopedViewModel<BookBrowseViewModel>();
-            AddTab("Books", "Books", "\uE82D", "#F59E0B", viewModel, scope);
+            AddTab("Books", "Books", "\uE82D", "#F59E0B", viewModel, scope, localizeTitle: true);
             viewModel.Initialize();
         }
 
@@ -642,7 +643,7 @@ namespace UniversalMediaOS.WPF.ViewModels
         {
             UniversalMediaOS.Core.Helpers.AppLogger.Log("Opening TV Shows tab.");
             var (viewModel, scope) = CreateScopedViewModel<TvCatalogViewModel>();
-            AddTab("TV Shows", "TV Shows", "\uE7F4", "#10B981", viewModel, scope);
+            AddTab("TV Shows", "TV Shows", "\uE7F4", "#10B981", viewModel, scope, localizeTitle: true);
             viewModel.Initialize();
         }
 
@@ -651,7 +652,7 @@ namespace UniversalMediaOS.WPF.ViewModels
         {
             UniversalMediaOS.Core.Helpers.AppLogger.Log("Opening Cartoons tab.");
             var (viewModel, scope) = CreateScopedViewModel<CartoonCatalogViewModel>();
-            AddTab("Cartoons", "Cartoons", "\uE789", "#F97316", viewModel, scope);
+            AddTab("Cartoons", "Cartoons", "\uE789", "#F97316", viewModel, scope, localizeTitle: true);
             viewModel.Initialize();
         }
 
@@ -665,7 +666,7 @@ namespace UniversalMediaOS.WPF.ViewModels
         private void NavigateToVaDetect()
         {
             var (viewModel, scope) = CreateScopedViewModel<VaDetectViewModel>();
-            AddTab("VA Detect", "VA Detect", "\uE77C", "#F59E0B", viewModel, scope);
+            AddTab("VA Detect", "VA Detect", "\uE77C", "#F59E0B", viewModel, scope, localizeTitle: true);
         }
 
         [RelayCommand]
@@ -687,7 +688,7 @@ namespace UniversalMediaOS.WPF.ViewModels
         private void NavigateToPlayback()
         {
             var (viewModel, scope) = CreateScopedViewModel<PlaybackViewModel>();
-            AddTab("Playback", "Playback", "\uE768", "#06B6D4", viewModel, scope);
+            AddTab("Playback", "Playback", "\uE768", "#06B6D4", viewModel, scope, localizeTitle: true);
         }
 
         [RelayCommand]

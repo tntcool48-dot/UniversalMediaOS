@@ -76,7 +76,9 @@ namespace UniversalMediaOS.WPF.ViewModels
         [ObservableProperty] private int _cornerRadiusPreview = 8;
         [ObservableProperty] private int _uiScalePercent = 100;
         [ObservableProperty] private double _uiScale = 1.0;
-        [ObservableProperty] private string _appearancePreviewStatus = "Preview action ready.";
+        public string AppearancePreviewStatus => _appearancePreviewRunCount == 0
+            ? Helpers.LocalizationRuntime.Translate("Preview action ready.")
+            : string.Format(Helpers.LocalizationRuntime.Translate("Sample action completed ({0})."), _appearancePreviewRunCount);
         [ObservableProperty] private string _malConnectionStatus = "Not connected";
         [ObservableProperty] private bool _isMalConnected;
         [ObservableProperty] private bool _isMalConnecting;
@@ -365,6 +367,7 @@ namespace UniversalMediaOS.WPF.ViewModels
         partial void OnSelectedLanguageChanged(string value)
         {
             NormalizeLanguage();
+            OnPropertyChanged(nameof(AppearancePreviewStatus));
         }
 
         partial void OnPosterFitChanged(string value)
@@ -428,7 +431,7 @@ namespace UniversalMediaOS.WPF.ViewModels
         private void PreviewAppearance()
         {
             _appearancePreviewRunCount++;
-            AppearancePreviewStatus = $"Sample action completed ({_appearancePreviewRunCount}).";
+            OnPropertyChanged(nameof(AppearancePreviewStatus));
         }
 
         [RelayCommand]

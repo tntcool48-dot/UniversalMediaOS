@@ -11,7 +11,8 @@ namespace UniversalMediaOS.WPF.ViewModels
             string icon,
             string accent,
             ObservableObject contentViewModel,
-            IDisposable? lifetime = null)
+            IDisposable? lifetime = null,
+            bool localizeTitle = false)
         {
             Title = title;
             Kind = kind;
@@ -19,9 +20,12 @@ namespace UniversalMediaOS.WPF.ViewModels
             Accent = accent;
             ContentViewModel = contentViewModel;
             Lifetime = lifetime;
+            LocalizeTitle = localizeTitle;
         }
 
         public string Title { get; }
+        // Only app-owned navigation labels opt in; media titles retain their exact text.
+        public bool LocalizeTitle { get; }
         public string Kind { get; }
         public string Icon { get; }
         public string Accent { get; }

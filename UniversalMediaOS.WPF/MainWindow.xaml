@@ -19,6 +19,14 @@
     </WindowChrome.WindowChrome>
 
     <Window.Resources>
+        <Style x:Key="LocalizedTabTitleText" TargetType="TextBlock">
+            <Setter Property="Text" Value="{Binding Title}"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding LocalizeTitle}" Value="True">
+                    <Setter Property="Text" Value="{helpers:LocValue Title}"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
         <Style x:Key="TopMediaButton" TargetType="Button">
             <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True"/>
             <Setter Property="Background" Value="#1A111827"/>
@@ -164,8 +172,8 @@
                 <Button Content="{helpers:Loc Cartoons}" AutomationProperties.Name="Cartoons" Command="{Binding NavigateToCartoonsCommand}" Style="{StaticResource TopMediaButton}" Foreground="#F97316" ToolTip="Open cartoons."/>
             </WrapPanel>
             <WrapPanel>
-                <Button Content="Player" AutomationProperties.Name="Player" Command="{Binding NavigateToPlaybackCommand}" Style="{StaticResource TopMediaButton}" Foreground="#38BDF8" ToolTip="Open the standalone player."/>
-                <Button Content="VA Detect" AutomationProperties.Name="VA Detect" Command="{Binding NavigateToVaDetectCommand}" Style="{StaticResource TopMediaButton}" Foreground="#F59E0B" ToolTip="Find familiar sub and dub voice actors."/>
+                <Button Content="{helpers:Loc Player}" AutomationProperties.Name="Player" Command="{Binding NavigateToPlaybackCommand}" Style="{StaticResource TopMediaButton}" Foreground="#38BDF8" ToolTip="{helpers:Loc Key=Open the standalone player.}"/>
+                <Button Content="{helpers:Loc Key=VA Detect}" AutomationProperties.Name="VA Detect" Command="{Binding NavigateToVaDetectCommand}" Style="{StaticResource TopMediaButton}" Foreground="#F59E0B" ToolTip="{helpers:Loc Key=Find familiar sub and dub voice actors.}"/>
                 <Button Content="{helpers:Loc Key=Watch Together}" AutomationProperties.Name="Watch Together" Command="{Binding NavigateToWatchTogetherCommand}" Style="{StaticResource TopMediaButton}" Foreground="#06B6D4" ToolTip="Open synced watch controls."/>
                 <Button Content="{helpers:Loc Key=My List}" AutomationProperties.Name="My List" Command="{Binding NavigateToMyListCommand}" Style="{StaticResource TopMediaButton}" Foreground="#10B981" ToolTip="Open your tracked media list."/>
                 <Button Content="{helpers:Loc Downloads}" AutomationProperties.Name="Downloads" Command="{Binding NavigateToDownloadsCommand}" Style="{StaticResource TopMediaButton}" Foreground="#8B5CF6" ToolTip="Open completed and local downloads."/>
@@ -243,7 +251,7 @@
                                             <Button.ToolTip>
                                                 <ToolTip>
                                                     <StackPanel>
-                                                        <TextBlock Text="{Binding Title}"/>
+                                                        <TextBlock Style="{StaticResource LocalizedTabTitleText}"/>
                                                         <TextBlock Text="Focus this tab, then press P for picture in picture. Escape restores the app."
                                                                    Margin="0,4,0,0">
                                                             <TextBlock.Style>
@@ -262,7 +270,7 @@
                                             </Button.ToolTip>
                                             <StackPanel Orientation="Horizontal">
                                                 <TextBlock Text="{Binding Icon}" FontFamily="Segoe MDL2 Assets" FontSize="13" Margin="0,0,7,0"/>
-                                                <TextBlock Text="{Binding Title}" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Style="{StaticResource LocalizedTabTitleText}" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
                                             </StackPanel>
                                         </Button>
 
@@ -388,7 +396,7 @@
                               ToolTip="Show detailed service health.">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="&#xE930;" FontFamily="Segoe MDL2 Assets" Foreground="{Binding SettingsViewModel.ServiceSummaryBrush}" FontSize="11" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                        <TextBlock Text="{Binding SettingsViewModel.ServiceSummaryText}" Foreground="{Binding SettingsViewModel.ServiceSummaryBrush}" FontSize="12" FontWeight="Bold" VerticalAlignment="Center"/>
+                        <TextBlock Text="{helpers:LocValue SettingsViewModel.ServiceSummaryText}" Foreground="{Binding SettingsViewModel.ServiceSummaryBrush}" FontSize="12" FontWeight="Bold" VerticalAlignment="Center"/>
                     </StackPanel>
                 </ToggleButton>
 
