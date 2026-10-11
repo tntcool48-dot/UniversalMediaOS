@@ -680,13 +680,8 @@ public abstract partial class AudiovisualCatalogViewModel : ObservableObject, ID
             foreach (AudiovisualLibraryEntry entry in entries.Where(entry =>
                          !favoritesOnly || entry.IsFavorite))
             {
-                string overview = entry.LastOpenedUtc != null
-                    ? FormatResumeText(entry)
-                    : entry.Status == AudiovisualLibraryStatus.None
-                        ? "Saved in your independent media library."
-                        : $"Library status: {entry.Status}.";
-                var card = new AudiovisualCardViewModel(AudiovisualLibraryMapping.ToMediaItem(entry, Kind) with
-                { Overview = overview }) { IsFavorite = entry.IsFavorite };
+                var card = new AudiovisualCardViewModel(AudiovisualLibraryMapping.ToMediaItem(entry, Kind))
+                { IsFavorite = entry.IsFavorite };
                 Items.Add(card);
             }
 
