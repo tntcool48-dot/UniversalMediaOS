@@ -192,6 +192,7 @@ namespace UniversalMediaOS.WPF.Helpers
             ["Opening stream..."] = "جارٍ فتح الفيديو...",
             ["Starting playback..."] = "جارٍ بدء التشغيل...",
             ["Preparing stream..."] = "جارٍ تجهيز الفيديو...",
+            ["Saving progress before continuing..."] = "جارٍ حفظ التقدم قبل المتابعة...",
             ["Buffering..."] = "جارٍ التخزين المؤقت...",
             ["Playback failed"] = "فشل التشغيل",
             ["Audio language unverified."] = "لغة الصوت غير مؤكدة.",

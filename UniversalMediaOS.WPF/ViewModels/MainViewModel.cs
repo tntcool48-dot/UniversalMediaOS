@@ -703,7 +703,11 @@ namespace UniversalMediaOS.WPF.ViewModels
             var players = Tabs.Select(tab => tab.ContentViewModel).OfType<PlaybackViewModel>().Distinct().ToArray();
             if (sessionEnding)
                 return Task.WhenAll(players.Select(player => player.FlushResumeForSessionEndingAsync()));
-            foreach (var player in players) player.SetTabActive(false);
+            foreach (var player in players)
+            {
+                player.CancelPendingResumeAdmission();
+                player.SetTabActive(false);
+            }
             return Task.WhenAll(players.Select(player => player.FlushResumeAsync()));
         }
 

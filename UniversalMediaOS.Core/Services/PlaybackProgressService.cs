@@ -20,6 +20,34 @@ public sealed class PlaybackProgressService
     private long _persistenceSequence;
     private long _sequence;
 
+    public const int PersistenceAdmissionThreshold = 64;
+    public int PendingPersistenceCount => _pendingPersistence.Count;
+    public bool IsPersistenceAdmissionFull => PendingPersistenceCount >= PersistenceAdmissionThreshold;
+
+    public async Task WaitForPersistenceAdmissionAsync(CancellationToken cancellationToken)
+    {
+        while (IsPersistenceAdmissionFull)
+        {
+            Task[] pending = _pendingPersistence.Values.ToArray();
+            if (pending.Length == 0) return;
+            await Task.WhenAny(pending).WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    public async Task<T> RunSerializedPersistenceAsync<T>(Func<Task<T>> operation,
+        CancellationToken cancellationToken = default)
+    {
+        // Reserve ordering before an operation awaits its earlier read/save.
+        // Legacy and canonical paths share one worker instead of busy-waiting
+        // on SQLite from one ThreadPool thread per legacy player.
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try { return await operation().ConfigureAwait(false); }
+        finally { _gate.Release(); }
+    }
+
+    public Task RunSerializedPersistenceAsync(Func<Task> operation)
+        => RunSerializedPersistenceAsync(async () => { await operation().ConfigureAwait(false); return 0; });
+
     public void TrackPendingPersistence(Task operation)
     {
         if (operation.IsCompletedSuccessfully) return;

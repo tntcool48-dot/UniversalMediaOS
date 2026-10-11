@@ -70,6 +70,14 @@ namespace UniversalMediaOS.WPF.ViewModels
             public bool Captured { get; set; }
         }
         private readonly List<Task> _pendingResumeLoads = [];
+        private const int ResumeAdmissionThreshold = 30; // Two final-write/read slots remain available.
+        private Action? _deferredResumeRequest;
+        private TaskCompletionSource? _resumeAdmissionCompleted;
+        private readonly CancellationTokenSource _resumeAdmissionCancellation = new();
+        private Task _resumeAdmissionWorker = Task.CompletedTask;
+        private bool _playAfterResumeAdmission;
+        [ObservableProperty] private bool _isPersistenceWaiting;
+        public bool IsPersistenceControlsAvailable => !IsPersistenceWaiting;
         private Task<(PlaybackProgressSession? Session, double Position)> _resumeLoadRead =
             Task.FromResult<(PlaybackProgressSession?, double)>((null, 0));
         private Task<PlaybackProgressSession?> _progressSessionReady = Task.FromResult<PlaybackProgressSession?>(null);
@@ -346,12 +354,14 @@ namespace UniversalMediaOS.WPF.ViewModels
 
         public bool CanGoToPreviousEpisode =>
             !IsDisposed && !_isDisposing &&
+            !IsPersistenceWaiting &&
             !IsEpisodeNavigationBusy &&
             TryGetNavigationEpisode(out int episode) &&
             episode > _episodeContext!.FirstEpisode;
 
         public bool CanGoToNextEpisode =>
             !IsDisposed && !_isDisposing &&
+            !IsPersistenceWaiting &&
             !IsEpisodeNavigationBusy &&
             TryGetNavigationEpisode(out int episode) &&
             episode < _episodeContext!.LastEpisode;
@@ -398,7 +408,7 @@ namespace UniversalMediaOS.WPF.ViewModels
 
             _nativeOpening = (s, e) => RunOnDispatcher(() =>
             {
-                if (HasNativeBufferingFailure) return;
+                if (HasNativeBufferingFailure || IsPersistenceWaiting) return;
                 IsPlaybackBusy = true;
                 HasPlaybackError = false;
                 PlaybackErrorText = string.Empty;
@@ -409,7 +419,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             {
                 RunOnDispatcher(() =>
                 {
-                    if (HasNativeBufferingFailure)
+                    if (HasNativeBufferingFailure || IsPersistenceWaiting)
                     {
                         MediaPlayer.SetPause(true);
                         return;
@@ -436,7 +446,7 @@ namespace UniversalMediaOS.WPF.ViewModels
                 if (_isDisposing || IsDisposed) return;
                 RunOnDispatcher(() =>
                 {
-                    if (HasNativeBufferingFailure) return;
+                    if (HasNativeBufferingFailure || IsPersistenceWaiting) return;
                     CancelNativeBufferingWatch();
                     SaveCurrentResumePosition(force: true, synchronous: false);
                     IsPlaying = false;
@@ -449,6 +459,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             };
             _nativeStopped = (s, e) => RunOnDispatcher(() =>
             {
+                if (IsPersistenceWaiting) return;
                 _nativePlaybackStarted = false;
                 CancelNativeBufferingWatch();
                 IsPlaying = false;
@@ -532,7 +543,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             RunOnDispatcher(() =>
             {
                 if (_stopRequested || IsWebViewActive) return;
-                if (HasNativeBufferingFailure) return;
+                if (HasNativeBufferingFailure || IsPersistenceWaiting) return;
                 if (e.Time > 0)
                 {
                     Interlocked.Increment(ref _startupWatchGeneration);
@@ -695,6 +706,7 @@ namespace UniversalMediaOS.WPF.ViewModels
 
         public void PlayPending()
         {
+            if (IsPersistenceWaiting) { _playAfterResumeAdmission = true; return; }
             if (!IsTabActive || _pendingMedia == null || string.IsNullOrEmpty(PendingMediaPath))
             {
                 return;
@@ -731,12 +743,14 @@ namespace UniversalMediaOS.WPF.ViewModels
 
         public void BeginUserSeek()
         {
+            if (IsPersistenceWaiting) return;
             _resumeSeekApplied = true;
             IsSeekingFromSlider = true;
         }
 
         public void CommitUserSeek(double value)
         {
+            if (IsPersistenceWaiting) { IsSeekingFromSlider = false; return; }
             if (IsWebViewActive)
             {
                 double durationMilliseconds = PlaybackDuration;
@@ -798,6 +812,13 @@ namespace UniversalMediaOS.WPF.ViewModels
             string? validatedHlsVariant = null)
         {
             if (_isDisposing || IsDisposed) return;
+            var admissionHeaders = CopyRequestHeaders(requestHeaders);
+            var admissionSubtitles = MediaSubtitleTrack.Copy(subtitles);
+            var admissionCaptions = localCaptionPaths?.ToArray();
+            if (DeferResumeSourceChange(() => LoadMedia(urlOrPath, title, referer, episodeNumber,
+                totalEpisodes, malId, episodeContext, contentType, userAgent, cookie, admissionHeaders,
+                audiovisualContext, admissionSubtitles, audioNotice, reloadPositionSeconds, pauseAfterReload,
+                admissionCaptions, validatedHlsVariant))) return;
             CancelEpisodeNavigation();
             ResetNativeBufferingState();
             if (localCaptionPaths != null)
@@ -1248,6 +1269,10 @@ namespace UniversalMediaOS.WPF.ViewModels
             AudiovisualPlaybackContext? audiovisualContext = null)
         {
             if (_isDisposing || IsDisposed) return;
+            var admissionHeaders = CopyRequestHeaders(requestHeaders);
+            if (DeferResumeSourceChange(() => LoadEmbed(embedUrl, title, episodeNumber, totalEpisodes,
+                malId, episodeContext, referer, contentType, userAgent, cookie, admissionHeaders,
+                audiovisualContext))) return;
             IReadOnlyDictionary<string, string> capturedHeaders = CopyRequestHeaders(requestHeaders);
             string effectiveReferer = FirstNonEmpty(referer, FindHeader(capturedHeaders, "Referer"));
             string effectiveUserAgent = FirstNonEmpty(userAgent, FindHeader(capturedHeaders, "User-Agent"));
@@ -1297,6 +1322,107 @@ namespace UniversalMediaOS.WPF.ViewModels
 
         internal string BrowserAudioPreference => _episodeContext?.AudioPreference ?? string.Empty;
 
+        partial void OnIsPersistenceWaitingChanged(bool value)
+        {
+            OnPropertyChanged(nameof(IsPersistenceControlsAvailable));
+            UpdateEpisodeNavigationState();
+        }
+
+        private bool DeferResumeSourceChange(Action request, bool sourceChange = true)
+        {
+            lock (_resumePersistenceGate)
+            {
+                int pending = _pendingResumeLoads.Count(task => !task.IsCompleted) +
+                    _pendingResumeSaves.Count(entry => !entry.Value.IsCompleted);
+                if (_deferredResumeRequest == null && pending < ResumeAdmissionThreshold &&
+                    !_playbackProgress.IsPersistenceAdmissionFull) return false;
+                bool alreadyWaiting = _deferredResumeRequest != null;
+                _deferredResumeRequest = request; // One latest unaccepted request; never replace accepted writes.
+                if (sourceChange)
+                {
+                    // Old caption/quality/navigation continuations must not
+                    // replace the latest request while its unit is still waiting.
+                    CancelEpisodeNavigation();
+                    Interlocked.Increment(ref _playbackGeneration);
+                    Interlocked.Increment(ref _qualityDiscoveryGeneration);
+                }
+                if (alreadyWaiting) return true;
+
+                IsPersistenceWaiting = true;
+                _pauseWhenStarted = true;
+                DeactivateWatchTogetherPlayback();
+                PauseForInactiveTab();
+                Interlocked.Increment(ref _startupWatchGeneration);
+                ResetNativeBufferingState();
+                IsPlaybackBusy = true;
+                PlaybackStatusText = "Saving progress before continuing...";
+                var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                _resumeAdmissionCompleted = completed;
+                Task priorApplied = ResumeLoadCompleted;
+                ResumeLoadCompleted = completed.Task;
+                var dispatcher = App.Current?.Dispatcher ??
+                    System.Windows.Threading.Dispatcher.FromThread(Thread.CurrentThread);
+                Task preceding = Task.WhenAll(_pendingResumeSaves.Values.Concat(_pendingResumeLoads));
+                _resumeAdmissionWorker = AdmitLatestResumeRequestAsync(preceding, priorApplied, dispatcher, completed);
+                return true;
+            }
+        }
+
+        private async Task AdmitLatestResumeRequestAsync(Task preceding, Task priorApplied,
+            System.Windows.Threading.Dispatcher? dispatcher, TaskCompletionSource completed)
+        {
+            CancellationToken token = _resumeAdmissionCancellation.Token;
+            try
+            {
+                await preceding.WaitAsync(token).ConfigureAwait(false);
+                bool admitted = false;
+                Task loaded = Task.CompletedTask;
+                while (!admitted)
+                {
+                    await _playbackProgress.WaitForPersistenceAdmissionAsync(token).ConfigureAwait(false);
+                    token.ThrowIfCancellationRequested();
+                    void Admit()
+                    {
+                        if (token.IsCancellationRequested || IsDisposed || _isDisposing) return;
+                        if (_playbackProgress.IsPersistenceAdmissionFull) return;
+                        Action? latest;
+                        lock (_resumePersistenceGate)
+                        {
+                            latest = _deferredResumeRequest;
+                            _deferredResumeRequest = null;
+                        }
+                        if (latest == null) { admitted = true; return; }
+                        IsPersistenceWaiting = false;
+                        IsPlaybackBusy = false;
+                        PlaybackStatusText = "Paused";
+                        latest();
+                        loaded = ReferenceEquals(ResumeLoadCompleted, completed.Task) ? priorApplied : ResumeLoadCompleted;
+                        if (_playAfterResumeAdmission) { _playAfterResumeAdmission = false; PlayPending(); }
+                        admitted = true;
+                    }
+                    if (dispatcher is { HasShutdownStarted: false })
+                        await dispatcher.InvokeAsync(Admit, System.Windows.Threading.DispatcherPriority.Normal, token).Task.ConfigureAwait(false);
+                    else if (dispatcher == null) Admit();
+                    else throw new OperationCanceledException(token);
+                }
+                await loaded.WaitAsync(token).ConfigureAwait(false);
+                completed.TrySetResult();
+            }
+            catch (OperationCanceledException) { completed.TrySetCanceled(); }
+            catch (Exception ex)
+            {
+                completed.TrySetException(ex);
+                AppLogger.Log($"[Resume] Deferred playback request failed: {ex.Message}", "WARNING");
+            }
+        }
+
+        internal void CancelPendingResumeAdmission()
+        {
+            try { _resumeAdmissionCancellation.Cancel(); } catch (ObjectDisposedException) { }
+            lock (_resumePersistenceGate) _deferredResumeRequest = null;
+            _resumeAdmissionCompleted?.TrySetCanceled();
+        }
+
         internal WebPlaybackRequestContext GetWebPlaybackRequestContext() => new(
             _lastMediaReferer,
             _lastMediaContentType,
@@ -1306,6 +1432,7 @@ namespace UniversalMediaOS.WPF.ViewModels
 
         public void ReportWebPageLoaded()
         {
+            if (IsPersistenceWaiting) return;
             if (IsDisposed || !IsWebViewActive || IsPlaying || HasPlaybackError) return;
             IsPlaybackBusy = false;
             PlaybackStatusText = "Press Play in the page";
@@ -1314,6 +1441,7 @@ namespace UniversalMediaOS.WPF.ViewModels
 
         public void ReportWebPlaybackProgress(double currentSeconds, double durationSeconds, bool ended, bool? paused = null)
         {
+            if (IsPersistenceWaiting) { if (paused == false) PauseForInactiveTab(); return; }
             if (IsDisposed || !IsWebViewActive)
             {
                 return;
@@ -1330,7 +1458,7 @@ namespace UniversalMediaOS.WPF.ViewModels
                 PlaybackDuration = durationSeconds * 1000;
                 if (!ended && paused.HasValue)
                 {
-                    if (!IsPlaying && !paused.Value) RequestProgressOwnership();
+                    if (!IsPlaying && !paused.Value && !RequestProgressOwnership()) return;
                     IsPlaying = !paused.Value;
                     PlaybackStatusText = paused.Value ? "Paused" : "Playing";
                 }
@@ -1382,6 +1510,7 @@ namespace UniversalMediaOS.WPF.ViewModels
 
         public void ReportWebPlaybackAction(string action, double currentSeconds, double durationSeconds)
         {
+            if (IsPersistenceWaiting) return;
             if (IsDisposed || !IsWebViewActive || string.IsNullOrWhiteSpace(action))
             {
                 return;
@@ -1410,7 +1539,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             if (credibleVideo)
             {
                 PlaybackDuration = durationSeconds * 1000;
-                if (normalized == "play") RequestProgressOwnership();
+                if (normalized == "play" && !RequestProgressOwnership()) return;
             }
             if (normalized is "seek" or "seeked" or "seeking") _resumeSeekApplied = true;
 
@@ -1505,7 +1634,7 @@ namespace UniversalMediaOS.WPF.ViewModels
         public bool TryConsumePendingWebResumePosition(out double seconds)
         {
             seconds = 0;
-            if (!IsWebViewActive || _resumeSeekApplied || _pendingResumePositionSeconds <= MinimumResumePositionSeconds)
+            if (IsPersistenceWaiting || !IsWebViewActive || _resumeSeekApplied || _pendingResumePositionSeconds <= MinimumResumePositionSeconds)
             {
                 return false;
             }
@@ -1519,9 +1648,10 @@ namespace UniversalMediaOS.WPF.ViewModels
         [RelayCommand]
         private void TogglePlayPause()
         {
+            if (IsPersistenceWaiting) return;
             AppLogger.Log("TogglePlayPause command invoked.");
             if (!IsTabActive || _isDisposing || IsDisposed) return;
-            if (!IsPlaying) RequestProgressOwnership();
+            if (!IsPlaying && !RequestProgressOwnership()) return;
             if (IsWebViewActive)
             {
                 _pauseWhenStarted = false;
@@ -1638,7 +1768,7 @@ namespace UniversalMediaOS.WPF.ViewModels
         [RelayCommand(AllowConcurrentExecutions = false)]
         private async Task RetryPlayback()
         {
-            if (_isDisposing || IsDisposed || IsEpisodeNavigationBusy) return;
+            if (_isDisposing || IsDisposed || IsEpisodeNavigationBusy || IsPersistenceWaiting) return;
             if (HasPlaybackError && _failedNavigationEpisode is int episode && _episodeContext != null)
             {
                 await NavigateToEpisodeAsync(episode);
@@ -1818,6 +1948,7 @@ namespace UniversalMediaOS.WPF.ViewModels
 
         private void SeekRelative(TimeSpan offset)
         {
+            if (IsPersistenceWaiting) return;
             if (IsWebViewActive)
             {
                 double durationMilliseconds = PlaybackDuration;
@@ -2584,15 +2715,18 @@ namespace UniversalMediaOS.WPF.ViewModels
             {
                 if (context != null) return await _playbackProgress.OpenAsync(context, preceding, cancellationToken).ConfigureAwait(false);
                 _ = _databaseContext.Database.GetDbConnection(); // Freeze this player's destination before yielding.
-                await preceding.WaitAsync(cancellationToken).ConfigureAwait(false);
-                await _resumeDatabaseLock.WaitAsync(cancellationToken).ConfigureAwait(false);
-                try
+                return await _playbackProgress.RunSerializedPersistenceAsync(async () =>
                 {
-                    double position = await Task.Run(() => EnsureResumeDatabaseCreated()
-                        ? _databaseContext.GetResumeState(media, unit) : 0, cancellationToken).ConfigureAwait(false);
-                    return (null, position);
-                }
-                finally { _resumeDatabaseLock.Release(); }
+                    await preceding.WaitAsync(cancellationToken).ConfigureAwait(false);
+                    await _resumeDatabaseLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+                    try
+                    {
+                        double position = await Task.Run(() => EnsureResumeDatabaseCreated()
+                            ? _databaseContext.GetResumeState(media, unit) : 0, cancellationToken).ConfigureAwait(false);
+                        return ((PlaybackProgressSession?)null, position);
+                    }
+                    finally { _resumeDatabaseLock.Release(); }
+                }, cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -2628,7 +2762,7 @@ namespace UniversalMediaOS.WPF.ViewModels
 
         private void ApplyPendingResumeSeek()
         {
-            if (IsDisposed || IsWebViewActive || _resumeSeekApplied || _pendingResumePositionSeconds <= 0)
+            if (IsPersistenceWaiting || IsDisposed || IsWebViewActive || _resumeSeekApplied || _pendingResumePositionSeconds <= 0)
             {
                 return;
             }
@@ -2799,9 +2933,10 @@ namespace UniversalMediaOS.WPF.ViewModels
         private static async Task<PlaybackProgressSession?> LoadedSessionAsync(
             Task<(PlaybackProgressSession? Session, double Position)> read) => (await read.ConfigureAwait(false)).Session;
 
-        private void RequestProgressOwnership()
+        private bool RequestProgressOwnership()
         {
-            if (_progressContext == null) return;
+            if (_progressContext == null) return true;
+            if (DeferResumeSourceChange(TogglePlayPause, sourceChange: false)) return false;
             lock (_resumePersistenceGate)
             {
                 // A later explicit owner must not move an accepted write across it.
@@ -2811,10 +2946,12 @@ namespace UniversalMediaOS.WPF.ViewModels
                 _pendingResumeLoads.Add(_progressSessionReady);
                 _playbackProgress.TrackPendingPersistence(_progressSessionReady);
             }
+            return true;
         }
 
         internal Task FlushResumeForSessionEndingAsync()
         {
+            CancelPendingResumeAdmission();
             SetTabActive(false);
             Task pending = FlushResumeAsync();
             // Freeze the final observation before OnExit disposes the player.
@@ -2834,8 +2971,11 @@ namespace UniversalMediaOS.WPF.ViewModels
         private async Task SaveLegacyProgressAfterLoadAsync(Task<(PlaybackProgressSession? Session, double Position)> read,
             ResumeSaveSlot slot)
         {
-            await read.ConfigureAwait(false);
-            await SaveResumePositionAsync(slot).ConfigureAwait(false);
+            await _playbackProgress.RunSerializedPersistenceAsync(async () =>
+            {
+                await read.ConfigureAwait(false);
+                await SaveResumePositionAsync(slot).ConfigureAwait(false);
+            }).ConfigureAwait(false);
         }
 
         private async Task SaveResumePositionAsync(ResumeSaveSlot slot)
@@ -2906,6 +3046,8 @@ namespace UniversalMediaOS.WPF.ViewModels
             }
             finally
             {
+                try { await _resumeAdmissionWorker.ConfigureAwait(false); } catch { }
+                _resumeAdmissionCancellation.Dispose();
                 _databaseContext.Dispose();
                 _resumeDatabaseLock.Dispose();
                 _resumeLoadCancellation?.Dispose();
@@ -3243,6 +3385,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             }
 
             _isDisposing = true;
+            CancelPendingResumeAdmission();
             lock (_malProgressGate)
             {
                 _malProgressSyncCts?.Cancel();

@@ -68,6 +68,31 @@
             <Setter Property="Foreground" Value="#031412"/>
         </Style>
 
+        <DataTemplate x:Key="PersistenceWaitingOverlayTemplate">
+            <Border HorizontalAlignment="Center" VerticalAlignment="Center" Padding="24,18"
+                    CornerRadius="12" Background="#F2101720" BorderBrush="#334155" BorderThickness="1">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Collapsed"/>
+                        <Style.Triggers>
+                            <MultiDataTrigger>
+                                <MultiDataTrigger.Conditions>
+                                    <Condition Binding="{Binding IsPersistenceWaiting}" Value="True"/>
+                                    <Condition Binding="{Binding IsTabActive}" Value="True"/>
+                                </MultiDataTrigger.Conditions>
+                                <Setter Property="Visibility" Value="Visible"/>
+                            </MultiDataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel Width="260">
+                    <ProgressBar IsIndeterminate="True" Height="4" Foreground="#2DD4BF" Background="#334155"/>
+                    <TextBlock Text="{helpers:Loc Saving progress before continuing...}" Margin="0,12,0,0"
+                               Foreground="#F8FAFC" TextWrapping="Wrap" TextAlignment="Center"/>
+                </StackPanel>
+            </Border>
+        </DataTemplate>
+
         <!-- Native overlays live in a separate HWND: their own visibility must
              follow the selected tab, as well as native/browser playback mode. -->
         <DataTemplate x:Key="PlaybackStateOverlayTemplate">
@@ -224,7 +249,8 @@
                                            ToolTip="Drag here to move the picture-in-picture window."/>
                             </DockPanel>
                             </Border>
-                            <Grid x:Name="OptionsArea" Grid.Row="1" Margin="0,6,0,8">
+                            <Grid x:Name="OptionsArea" Grid.Row="1" Margin="0,6,0,8"
+                                  IsEnabled="{Binding IsPersistenceControlsAvailable}">
                                 <Border x:Name="OptionsPanel" HorizontalAlignment="Right" VerticalAlignment="Top"
                                         MaxWidth="850" MaxHeight="{Binding ActualHeight, ElementName=OptionsArea}"
                                         Padding="10" CornerRadius="6" Background="#ED111827">
@@ -299,6 +325,7 @@
                                 </Border>
                             </Grid>
                             <Border x:Name="TransportPanel" Grid.Row="2" Padding="8,6" CornerRadius="6"
+                                    IsEnabled="{Binding IsPersistenceControlsAvailable}"
                                     Background="#D9050507" MouseLeave="ControlsLayer_MouseLeave">
                                 <Grid>
                                     <Grid.RowDefinitions>
@@ -360,11 +387,14 @@
                             </Border>
                         </Grid>
                     </Border>
+                    <ContentPresenter Content="{Binding}" ContentTemplate="{StaticResource PersistenceWaitingOverlayTemplate}"
+                                      Panel.ZIndex="3"/>
                 </Grid>
             </vlc:VideoView>
 
             <wv2:WebView2CompositionControl x:Name="WebViewPlayer"
                                             Visibility="Collapsed"
+                                            IsEnabled="{Binding IsPersistenceControlsAvailable}"
                                             MinWidth="1"
                                             MinHeight="1"
                                             HorizontalAlignment="Stretch"
@@ -379,6 +409,7 @@
                     Style="{StaticResource ControlButtonStyle}"
                     Visibility="{Binding IsPictureInPictureMode, Converter={StaticResource BoolToVisibility}}"
                     AutomationProperties.Name="Exit picture in picture"/>
+              <ContentPresenter Content="{Binding}" ContentTemplate="{StaticResource PersistenceWaitingOverlayTemplate}"/>
             </Grid>
         </Grid>
 

@@ -17,6 +17,251 @@ public sealed class ResumeDispatcherContentionTests(ITestOutputHelper output)
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public void AcceptedUnitChangesStayBoundedAndRetainLatestRequestBehindALockedWriter(bool catalog)
+    {
+        using var profile = new IsolatedProfile();
+        RecoveryLayoutTests.RunSta(() =>
+        {
+            using var player = CreatePlayer(profile, catalog);
+            var (work, unit) = SaveInitial(player, profile);
+            const string nextWork = "av:fixture:show:accepted-units";
+            string targetWork = catalog ? nextWork : "42";
+            string Unit(int episode) => catalog ? $"season:1:episode:{episode}" : episode.ToString();
+            using (var seed = new DatabaseContext())
+            {
+                seed.SaveResumeState(targetWork, Unit(200), 371);
+                seed.SaveResumeState(work, "adjacent-unit", 57);
+            }
+            var accepted = new Dictionary<int, double>();
+            int maximumPending = 0;
+            player.PlaybackTime = 120_000;
+            var elapsed = Stopwatch.StartNew();
+            using (var writer = new WriterLock(profile.ConnectionString!, work, unit, 5000))
+            {
+                elapsed.Restart();
+                for (int episode = 1; episode <= 200; episode++)
+                {
+                    player.LoadEmbed("https://fixture.invalid/accepted/" + episode, "Accepted unit fixture",
+                        episode.ToString(), malId: 42, audiovisualContext: catalog ? new(nextWork,
+                            new() { Kind = AudiovisualMediaKind.Television, ContentForm = AudiovisualContentForm.Series },
+                            new() { SeasonNumber = 1, EpisodeNumber = episode }, "Accepted unit fixture", "", new()) : null);
+                    // A source which has not been admitted owns no playback yet.
+                    // Its latest request is retained while the current unit stays paused.
+                    if (episode < 200 && !player.IsPersistenceWaiting)
+                    {
+                        accepted[episode] = 120 + episode;
+                        player.PlaybackTime = (120 + episode) * 1000;
+                        player.SetTabActive(false);
+                        player.SetTabActive(true);
+                    }
+                    maximumPending = Math.Max(maximumPending,
+                        player.PendingResumeLoadCount + player.PendingResumeSaveCount);
+                }
+                elapsed.Stop();
+                Assert.True(player.IsPersistenceWaiting);
+                double heldPosition = player.PlaybackTime;
+                player.BeginUserSeek();
+                player.CommitUserSeek(999_000);
+                player.SkipForwardCommand.Execute(null);
+                player.TogglePlayPauseCommand.Execute(null);
+                Assert.Equal(heldPosition, player.PlaybackTime);
+                Assert.False(player.IsPersistenceControlsAvailable);
+            }
+            WaitForResumeLoad(player);
+            Assert.True(player.TryConsumePendingWebResumePosition(out double restored));
+            Assert.Equal(371, restored);
+            using var verify = new DatabaseContext();
+            foreach (var (episode, position) in accepted)
+                Assert.Equal(position, verify.GetResumeState(targetWork, Unit(episode)));
+            Assert.Equal(120, verify.GetResumeState(work, unit));
+            Assert.Equal(57, verify.GetResumeState(work, "adjacent-unit"));
+            output.WriteLine($"{(catalog ? "Catalog" : "Legacy")} 200 requested units: {accepted.Count} admitted units, {maximumPending} maximum pending operations, {elapsed.Elapsed.TotalMilliseconds:0.000} ms.");
+            Assert.InRange(maximumPending, 1, 32);
+            Assert.InRange(accepted.Count, 1, 31);
+            Assert.InRange(elapsed.Elapsed.TotalMilliseconds, 0, 500);
+        });
+    }
+
+    [Fact]
+    public void SharedAdmissionBoundsUnitBurstsAcrossIndependentPlayersAndKeepsEveryAcceptedPosition()
+    {
+        using var profile = new IsolatedProfile();
+        RecoveryLayoutTests.RunSta(() =>
+        {
+            const int playerCount = 20;
+            const string sharedWork = "av:fixture:show:shared-admission";
+            var progress = new PlaybackProgressService(new(Path.Combine(profile.Root, "library.json")));
+            var players = new List<PlaybackViewModel>();
+            var accepted = new Dictionary<(string Work, string Unit), double>();
+            bool Catalog(int index) => index % 2 == 0;
+            string Work(int index) => Catalog(index) ? sharedWork : (4200 + index).ToString();
+            AudiovisualPlaybackContext Episode(int episode) => new(sharedWork,
+                new() { Kind = AudiovisualMediaKind.Television, ContentForm = AudiovisualContentForm.Series },
+                new() { SeasonNumber = 1, EpisodeNumber = episode }, "Shared admission fixture", "", new());
+            string Unit(int index, int episode) => Catalog(index) ? $"season:1:episode:{episode}" : episode.ToString();
+            try
+            {
+                for (int index = 0; index < playerCount; index++)
+                {
+                    var database = new TrackingDatabaseContext();
+                    profile.Track(progress, database);
+                    var player = new PlaybackViewModel(database, null, null, playbackProgress: progress);
+                    players.Add(player);
+                    player.LoadEmbed("https://fixture.invalid/shared/" + index, "Shared initial unit",
+                        (index + 1).ToString(), malId: 4200 + index,
+                        audiovisualContext: Catalog(index) ? Episode(index + 1) : null);
+                    WaitForResumeLoad(player);
+                    player.ReportWebPlaybackProgress(90, 600, false, paused: true);
+                }
+                progress.FlushAsync().WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+                using (var seed = new DatabaseContext())
+                {
+                    profile.ConnectionString = seed.Database.GetConnectionString()!;
+                    for (int index = 0; index < playerCount; index++)
+                        seed.SaveResumeState(Work(index), Unit(index, (index + 1) * 1000 + 200), 371 + index);
+                    seed.SaveResumeState(sharedWork, "adjacent-unit", 57);
+                }
+                int maximumPending = 0;
+                var elapsed = Stopwatch.StartNew();
+                using (var writer = new WriterLock(profile.ConnectionString!, sharedWork, Unit(0, 1), 5000))
+                {
+                    elapsed.Restart();
+                    for (int round = 1; round <= 200; round++)
+                    {
+                        for (int index = 0; index < playerCount; index++)
+                        {
+                            var player = players[index];
+                            int episode = (index + 1) * 1000 + round;
+                            player.LoadEmbed("https://fixture.invalid/shared/" + episode, "Shared requested unit",
+                                episode.ToString(), malId: 4200 + index,
+                                audiovisualContext: Catalog(index) ? Episode(episode) : null);
+                            if (!player.IsPersistenceWaiting && round < 200)
+                            {
+                                double position = 120 + round + index;
+                                accepted[(Work(index), Unit(index, episode))] = position;
+                                player.PlaybackTime = position * 1000;
+                                player.SetTabActive(false);
+                                player.SetTabActive(true);
+                            }
+                            maximumPending = Math.Max(maximumPending, progress.PendingPersistenceCount);
+                        }
+                    }
+                    elapsed.Stop();
+                    Assert.Contains(players, player => player.IsPersistenceWaiting);
+                }
+                foreach (var player in players) WaitForResumeLoad(player);
+                using var verify = new DatabaseContext();
+                foreach (var (key, position) in accepted)
+                    Assert.Equal(position, verify.GetResumeState(key.Work, key.Unit));
+                for (int index = 0; index < playerCount; index++)
+                {
+                    Assert.True(players[index].TryConsumePendingWebResumePosition(out double restored));
+                    Assert.Equal(371 + index, restored);
+                    Assert.False(players[index].IsPersistenceWaiting);
+                }
+                Assert.Equal(57, verify.GetResumeState(sharedWork, "adjacent-unit"));
+                output.WriteLine($"20 mixed catalog/legacy players / 4,000 requested units: {accepted.Count} admitted units, {maximumPending} maximum shared pending operations, {elapsed.Elapsed.TotalMilliseconds:0.000} ms.");
+                // Every live producer retains two slots for final observations;
+                // admission backpressure must not drop those accepted saves.
+                Assert.InRange(maximumPending, 1, PlaybackProgressService.PersistenceAdmissionThreshold + 2 * playerCount);
+                Assert.InRange(accepted.Count, 1, 100);
+                Assert.InRange(elapsed.Elapsed.TotalMilliseconds, 0, 1000);
+            }
+            finally { foreach (var player in players) player.Dispose(); }
+        });
+    }
+
+    [Fact]
+    public void RepeatedExplicitOwnershipChangesUseBackpressureAndRetainTheFinalAcceptedPosition()
+    {
+        using var profile = new IsolatedProfile();
+        RecoveryLayoutTests.RunSta(() =>
+        {
+            var progress = new PlaybackProgressService(new(Path.Combine(profile.Root, "library.json")));
+            var database = new TrackingDatabaseContext();
+            profile.Track(progress, database);
+            using var player = new PlaybackViewModel(database, null, null, playbackProgress: progress);
+            player.LoadEmbed("https://fixture.invalid/ownership", "Ownership fixture", audiovisualContext: Context());
+            var (work, unit) = SaveInitial(player, profile);
+            var barrier = progress.Open(Context()).Session;
+            int maximumPending = 0;
+            double acceptedPosition;
+            int playCommands = 0;
+            player.WebPlaybackCommandRequested += (_, request) =>
+            {
+                if (request.Action == "play") playCommands++;
+            };
+            using (var writer = new WriterLock(profile.ConnectionString!, work, unit, 5000))
+            {
+                // Reserve the ordering gate with real SQLite IO before the burst.
+                // Otherwise superseded observations may all skip before any
+                // write starts, legitimately never reaching the admission limit.
+                Task blocked = progress.SaveAsync(progress.Capture(barrier, 90, 600, false)!);
+                progress.TrackPendingPersistence(blocked);
+                for (int index = 0; index < 200; index++)
+                {
+                    player.ReportWebPlaybackAction("play", 120 + index, 600);
+                    player.ReportWebPlaybackAction("pause", 120 + index, 600);
+                    maximumPending = Math.Max(maximumPending,
+                        player.PendingResumeLoadCount + player.PendingResumeSaveCount);
+                }
+                acceptedPosition = player.PlaybackTime / 1000;
+                Assert.True(player.IsPersistenceWaiting);
+            }
+            WaitForResumeLoad(player);
+            AssertPersisted(work, unit, acceptedPosition);
+            Assert.True(playCommands > 0);
+            Assert.False(player.IsPersistenceWaiting);
+            output.WriteLine($"200 explicit ownership changes: {maximumPending} maximum pending operations, final accepted position {acceptedPosition} seconds.");
+            Assert.InRange(maximumPending, 1, 32);
+        });
+    }
+
+    [Fact]
+    public void ClosingBeforeAdmissionCancelsOnlyTheUnacceptedSourceAndKeepsAcceptedProgress()
+    {
+        using var profile = new IsolatedProfile();
+        RecoveryLayoutTests.RunSta(() =>
+        {
+            using var player = CreatePlayer(profile, true);
+            var (work, unit) = SaveInitial(player, profile);
+            var accepted = new Dictionary<int, double>();
+            const string nextWork = "av:fixture:show:close-admission";
+            using (var seed = new DatabaseContext()) seed.SaveResumeState(nextWork, "season:1:episode:200", 371);
+            player.PlaybackTime = 120_000;
+            using (var writer = new WriterLock(profile.ConnectionString!, work, unit, 5000))
+            {
+                for (int episode = 1; episode <= 200; episode++)
+                {
+                    player.LoadEmbed("https://fixture.invalid/close-admission/" + episode, "Close admission fixture",
+                        episode.ToString(), audiovisualContext: new(nextWork,
+                            new() { Kind = AudiovisualMediaKind.Television, ContentForm = AudiovisualContentForm.Series },
+                            new() { SeasonNumber = 1, EpisodeNumber = episode }, "Close admission fixture", "", new()));
+                    if (!player.IsPersistenceWaiting)
+                    {
+                        accepted[episode] = 120 + episode;
+                        player.PlaybackTime = (120 + episode) * 1000;
+                        player.SetTabActive(false);
+                        player.SetTabActive(true);
+                    }
+                }
+                Assert.True(player.IsPersistenceWaiting);
+                Task admission = player.ResumeLoadCompleted;
+                player.Dispose();
+                Assert.True(admission.IsCanceled);
+                Assert.True(player.IsDisposed);
+            }
+            foreach (var (episode, position) in accepted)
+                AssertPersisted(nextWork, $"season:1:episode:{episode}", position);
+            AssertPersisted(work, unit, 120);
+            using var verify = new DatabaseContext();
+            Assert.Equal(371, verify.GetResumeState(nextWork, "season:1:episode:200"));
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public void SupersededUnsavedUnitReadsDoNotAccumulateBehindALockedWriter(bool catalog)
     {
         using var profile = new IsolatedProfile();
