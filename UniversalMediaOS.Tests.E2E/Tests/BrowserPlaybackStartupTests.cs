@@ -280,14 +280,14 @@ public sealed class BrowserPlaybackStartupTests
             }
             var resources = new XElement(wpf + "Grid.Resources",
                 new XElement(wpf + "BooleanToVisibilityConverter", new XAttribute(x + "Key", "BoolToVisibility")),
-                document.Descendants().Where(e => (string?)e.Attribute(x + "Key") is "ControlButtonStyle" or "PrimaryControlButtonStyle" or "PlaybackStateOverlayTemplate")
+                document.Descendants().Where(e => (string?)e.Attribute(x + "Key") is "ControlButtonStyle" or "PrimaryControlButtonStyle" or "PlaybackStateOverlayTemplate" or "PersistenceWaitingOverlayTemplate")
                     .Select(e => new XElement(e)));
             surface.AddFirst(resources);
             surface.Add(new XAttribute(XNamespace.Xmlns + "x", x),
                 new XAttribute(XNamespace.Xmlns + "helpers", "clr-namespace:UniversalMediaOS.WPF.Helpers;assembly=UniversalMediaOS.WPF"));
             foreach (var attribute in surface.DescendantsAndSelf().Attributes().Where(a => a.Name.LocalName is "Click" or "MouseMove" or "MouseLeftButtonDown").ToArray()) attribute.Remove();
             var visual = (Grid)XamlReader.Parse(surface.ToString());
-            visual.DataContext = new { IsWebViewActive = true, IsPictureInPictureMode = false, IsPlaybackBusy = busy, HasPlaybackError = error };
+            visual.DataContext = new { IsWebViewActive = true, IsPictureInPictureMode = false, IsPlaybackBusy = busy, HasPlaybackError = error, IsPersistenceWaiting = false, IsTabActive = true };
             visual.Measure(new Size(900, 500));
             visual.Arrange(new Rect(0, 0, 900, 500));
             visual.UpdateLayout();
