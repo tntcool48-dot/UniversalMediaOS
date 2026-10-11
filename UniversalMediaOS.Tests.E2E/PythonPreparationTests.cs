@@ -108,6 +108,63 @@ public sealed class PythonPreparationTests
         Assert.Equal(3, runner.Probes);
     }
 
+    [Theory]
+    [InlineData(true, "python_missing")]
+    [InlineData(false, "pip_failed")]
+    public async Task ExplicitRepairRechecksRuntimeAndImportsAfterWarmReadiness(bool runtimeMissing, string code)
+    {
+        bool importsReady = true;
+        var runner = new FakeRunner((_, _) => Task.FromResult(importsReady ? "[]" : "[\"httpx\"]"));
+        using var fixture = new Fixture(runner);
+        await fixture.Python.EnsureScraperReadyAsync();
+        if (runtimeMissing) runner.VersionOutput = "Python 2.7.0";
+        else { importsReady = false; runner.PipExit = 1; }
+
+        await fixture.Python.EnsureScraperReadyAsync(forceRefresh: true);
+
+        Assert.Equal(PythonPreparationState.Failed, fixture.Python.Snapshot.State);
+        Assert.Equal(code, fixture.Python.Snapshot.DiagnosticCode);
+        Assert.False(fixture.Python.IsAvailable);
+        Assert.Null(fixture.Python.ResolvePythonExecutable());
+
+        runner.VersionOutput = "Python 3.12.0";
+        importsReady = true;
+        await fixture.Python.EnsureScraperReadyAsync(forceRefresh: true);
+        Assert.Equal(PythonPreparationState.Ready, fixture.Python.Snapshot.State);
+        Assert.True(fixture.Python.IsAvailable);
+    }
+
+    [Fact]
+    public async Task ForcedRepairSharesFreshWorkAndDoesNotCancelAnotherWaiter()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var runner = new FakeRunner(async (probe, token) =>
+        {
+            if (probe > 1) { entered.TrySetResult(); await release.Task.WaitAsync(token); }
+            return "[]";
+        });
+        using var fixture = new Fixture(runner);
+        await fixture.Python.EnsureScraperReadyAsync();
+
+        Task repair = fixture.Python.EnsureScraperReadyAsync(forceRefresh: true);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(PythonPreparationState.Preparing, fixture.Python.Snapshot.State);
+        Assert.False(fixture.Python.IsAvailable);
+        Task ordinaryWaiter = fixture.Python.EnsureScraperReadyAsync();
+        using var canceled = new CancellationTokenSource();
+        Task canceledRepair = fixture.Python.EnsureScraperReadyAsync(canceled.Token, forceRefresh: true);
+        canceled.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => canceledRepair);
+        release.TrySetResult();
+        await Task.WhenAll(repair, ordinaryWaiter).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.True(fixture.Python.IsAvailable);
+        Assert.Equal(2, runner.Probes);
+        await fixture.Python.EnsureScraperReadyAsync();
+        Assert.Equal(2, runner.Probes);
+    }
+
     [Fact]
     public async Task MissingScriptsFailWithoutLaunchingOrInstalling()
     {
@@ -189,11 +246,12 @@ public sealed class PythonPreparationTests
         public int Probes { get; private set; }
         public int Calls { get; private set; }
         public int PipExit { get; set; }
+        public string VersionOutput { get; set; } = "Python 3.12.0";
         public IReadOnlyList<string>? InstallArguments { get; private set; }
         public async Task<PreparationProcessResult> RunAsync(string executable, IReadOnlyList<string> arguments, CancellationToken token)
         {
             Calls++;
-            if (arguments[0] == "--version") return new(0, "Python 3.12.0");
+            if (arguments[0] == "--version") return new(0, VersionOutput);
             if (arguments[0] == "-m") { InstallArguments = arguments.ToArray(); return new(PipExit, ""); }
             if (arguments[1].StartsWith("import ast", StringComparison.Ordinal)) return new(0, "");
             return new(0, await probe(++Probes, token));

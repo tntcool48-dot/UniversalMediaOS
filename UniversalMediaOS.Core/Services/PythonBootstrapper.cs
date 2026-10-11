@@ -56,7 +56,7 @@ public sealed class PythonBootstrapper : IDisposable
     // Compatibility accessor: health checks no longer launch synchronous Python probes.
     public string? ResolvePythonExecutable() => Snapshot.State == PythonPreparationState.Ready ? _resolvedPython : null;
 
-    public Task EnsureScraperReadyAsync(CancellationToken token = default)
+    public Task EnsureScraperReadyAsync(CancellationToken token = default, bool forceRefresh = false)
     {
         token.ThrowIfCancellationRequested();
         lock (_gate)
@@ -64,7 +64,7 @@ public sealed class PythonBootstrapper : IDisposable
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (_preparationTask is { IsCompleted: false }) return _preparationTask.WaitAsync(token);
             string? revision = Revision(_sourceDir);
-            if (revision != null && _snapshot.State == PythonPreparationState.Ready && _readyRevision == revision &&
+            if (!forceRefresh && revision != null && _snapshot.State == PythonPreparationState.Ready && _readyRevision == revision &&
                 revision == Revision(_scraperDir)) return Task.CompletedTask;
             _preparationCts?.Dispose();
             _preparationCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);

@@ -591,7 +591,8 @@ namespace UniversalMediaOS.WPF.ViewModels
         [RelayCommand]
         private async Task RepairServicesAsync()
         {
-            await Task.WhenAll(Task.Run(() => _dependencies.EnsureDependenciesAsync()), _python.EnsureScraperReadyAsync());
+            await Task.WhenAll(Task.Run(() => _dependencies.EnsureDependenciesAsync()),
+                _python.EnsureScraperReadyAsync(forceRefresh: true));
             RefreshServiceHealth();
         }
 
