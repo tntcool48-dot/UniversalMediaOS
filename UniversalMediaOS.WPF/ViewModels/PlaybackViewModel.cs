@@ -135,6 +135,11 @@ namespace UniversalMediaOS.WPF.ViewModels
         private bool _lastLoadWasWeb;
         private int _startupWatchGeneration;
         private int _playbackGeneration;
+        private int _nativeBufferingWatchGeneration;
+        private int _nativeBufferingOwnerGeneration;
+        private bool _nativePlaybackStarted;
+        private bool _nativeBufferingWatchActive;
+        private (bool Paused, double PositionSeconds)? _nativeBufferingRetry;
         private EpisodePlaybackContext? _episodeContext;
         public AudiovisualPlaybackContext? AudiovisualContext { get; private set; }
         private CancellationTokenSource? _episodeNavigationCts;
@@ -398,30 +403,14 @@ namespace UniversalMediaOS.WPF.ViewModels
                 PlaybackErrorText = string.Empty;
                 PlaybackStatusText = "Opening stream...";
             });
-            _nativeBuffering = (s, e) => RunOnDispatcher(() =>
-            {
-                if (_stopRequested || IsWebViewActive || HasPlaybackError) return;
-                bool buffering = e.Cache < 99.5f;
-                IsPlaybackBusy = buffering;
-                if (buffering)
-                {
-                    PlaybackStatusText = $"Buffering {Math.Clamp(e.Cache, 0, 100):0}%";
-                }
-                else if (_mediaPlayer.State == VLCState.Paused || _pauseWhenStarted)
-                {
-                    // Paused seeks finish buffering without another Playing or
-                    // Paused event. Clear the last percentage when data is ready.
-                    PlaybackStatusText = "Paused";
-                }
-                else if (IsPlaying)
-                {
-                    PlaybackStatusText = "Playing";
-                }
-            });
+            _nativeBuffering = (s, e) => ReportNativeBuffering(e.Cache);
             _nativePlaying = (s, e) =>
             {
                 RunOnDispatcher(() =>
                 {
+                    _nativePlaybackStarted = true;
+                    _nativeBufferingRetry = null;
+                    CancelNativeBufferingWatch();
                     IsPlaying = true;
                     IsPlaybackBusy = false;
                     HasPlaybackError = false;
@@ -441,6 +430,7 @@ namespace UniversalMediaOS.WPF.ViewModels
                 if (_isDisposing || IsDisposed) return;
                 RunOnDispatcher(() =>
                 {
+                    CancelNativeBufferingWatch();
                     SaveCurrentResumePosition(force: true, synchronous: false);
                     IsPlaying = false;
                     IsPlaybackBusy = false;
@@ -452,6 +442,8 @@ namespace UniversalMediaOS.WPF.ViewModels
             };
             _nativeStopped = (s, e) => RunOnDispatcher(() =>
             {
+                _nativePlaybackStarted = false;
+                CancelNativeBufferingWatch();
                 IsPlaying = false;
                 PlaybackTime = 0;
                 IsPlaybackBusy = false;
@@ -799,6 +791,7 @@ namespace UniversalMediaOS.WPF.ViewModels
         {
             if (_isDisposing || IsDisposed) return;
             CancelEpisodeNavigation();
+            ResetNativeBufferingState();
             if (localCaptionPaths != null)
             {
                 string mediaDirectory = Path.GetDirectoryName(Path.GetFullPath(urlOrPath)) ?? string.Empty;
@@ -1668,7 +1661,9 @@ namespace UniversalMediaOS.WPF.ViewModels
             }
             else
             {
-                ReloadNativeSelection(SelectedQuality, resumeOnError: true);
+                ReloadNativeSelection(SelectedQuality,
+                    resumeOnError: _nativeBufferingRetry?.Paused != true,
+                    resumePositionSeconds: _nativeBufferingRetry?.PositionSeconds);
             }
         }
 
@@ -1699,6 +1694,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             AppLogger.Log($"Playback error: {safeMessage}", "ERROR");
             RunOnDispatcher(() =>
             {
+                CancelNativeBufferingWatch();
                 _failedNavigationEpisode = failedNavigationEpisode;
                 // A retained unit's referer does not establish a website for
                 // the requested unit whose navigation failed.
@@ -1716,6 +1712,62 @@ namespace UniversalMediaOS.WPF.ViewModels
         {
             int generation = Interlocked.Increment(ref _startupWatchGeneration);
             _ = WatchPlaybackStartupAsync(generation, isWeb);
+        }
+
+        internal int NativeBufferingWatchGeneration => Volatile.Read(ref _nativeBufferingWatchGeneration);
+
+        internal void ReportNativeBuffering(float cache) => RunOnDispatcher(() =>
+        {
+            if (_stopRequested || IsWebViewActive || HasPlaybackError) return;
+            bool buffering = cache < 99.5f;
+            if (buffering && _nativePlaybackStarted && !_nativeBufferingWatchActive)
+            {
+                _nativeBufferingWatchActive = true;
+                _nativeBufferingOwnerGeneration = Volatile.Read(ref _playbackGeneration);
+                int generation = Interlocked.Increment(ref _nativeBufferingWatchGeneration);
+                // A delayed callback must not keep a closed player, its media or
+                // its temporary-file lease alive.
+                _ = WatchNativeBufferingAsync(new WeakReference<PlaybackViewModel>(this), generation);
+            }
+            else if (!buffering)
+            {
+                CancelNativeBufferingWatch();
+            }
+            IsPlaybackBusy = buffering;
+            if (buffering) PlaybackStatusText = $"Buffering {Math.Clamp(cache, 0, 100):0}%";
+            else if (MediaPlayer.State == VLCState.Paused || _pauseWhenStarted) PlaybackStatusText = "Paused";
+            else if (IsPlaying) PlaybackStatusText = "Playing";
+        });
+
+        private static async Task WatchNativeBufferingAsync(WeakReference<PlaybackViewModel> owner, int generation)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(30));
+            if (owner.TryGetTarget(out var player)) player.CheckNativeBufferingTimeout(generation);
+        }
+
+        internal void CheckNativeBufferingTimeout(int generation) => RunOnDispatcher(() =>
+        {
+            if (generation != Volatile.Read(ref _nativeBufferingWatchGeneration) ||
+                _nativeBufferingOwnerGeneration != Volatile.Read(ref _playbackGeneration) ||
+                !_nativeBufferingWatchActive || !_nativePlaybackStarted || !IsPlaybackBusy ||
+                _stopRequested || IsWebViewActive || HasPlaybackError) return;
+            bool paused = !IsPlaying || _pauseWhenStarted || !IsTabActive;
+            _nativeBufferingRetry = (paused, GetCurrentPlaybackPositionSeconds());
+            _pauseWhenStarted = paused;
+            ReportPlaybackError("The native stream stopped responding for 30 seconds. Retry it or choose another source.");
+        });
+
+        private void CancelNativeBufferingWatch()
+        {
+            _nativeBufferingWatchActive = false;
+            Interlocked.Increment(ref _nativeBufferingWatchGeneration);
+        }
+
+        private void ResetNativeBufferingState()
+        {
+            CancelNativeBufferingWatch();
+            _nativePlaybackStarted = false;
+            _nativeBufferingRetry = null;
         }
 
         private async Task WatchPlaybackStartupAsync(int generation, bool isWeb)
@@ -2022,10 +2074,11 @@ namespace UniversalMediaOS.WPF.ViewModels
             }
         }
 
-        private void ReloadNativeSelection(PlaybackQualityOption? option, bool resumeOnError = false, bool restart = false)
+        private void ReloadNativeSelection(PlaybackQualityOption? option, bool resumeOnError = false, bool restart = false,
+            double? resumePositionSeconds = null)
         {
             if (_isDisposing || IsDisposed || IsWebViewActive || string.IsNullOrWhiteSpace(_lastMediaSource)) return;
-            double positionSeconds = restart ? 0 : GetCurrentPlaybackPositionSeconds();
+            double positionSeconds = restart ? 0 : resumePositionSeconds ?? GetCurrentPlaybackPositionSeconds();
             bool paused = !IsTabActive || (!restart &&
                 (_pauseWhenStarted || (!IsPlaying && !(resumeOnError && HasPlaybackError))));
             PlaybackQualityOption[] options = QualityOptions.ToArray();
@@ -2130,6 +2183,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             try
             {
                 CancelEpisodeNavigation();
+                ResetNativeBufferingState();
                 Interlocked.Increment(ref _startupWatchGeneration);
                 _stopRequested = true;
                 if (saveResume)

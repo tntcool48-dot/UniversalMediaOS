@@ -274,8 +274,12 @@ namespace UniversalMediaOS.Core.Routing
                 Cookie = stream.Cookie,
                 UserAgent = DesktopUserAgent,
                 Subtitles = MediaSubtitleTrack.Copy(stream.Subtitles),
-                AudioNotice = !HasEnglishAudio(stream) && stream.SelectedAudio == "dub"
-                    ? "Dub server selected · audio language unverified" : string.Empty
+                AudioNotice = stream.SelectedAudio switch
+                {
+                    "dub" when !HasEnglishAudio(stream) => "Dub server selected · audio language unverified",
+                    "sub" when !HasJapaneseAudio(stream) => "Sub server selected · audio language unverified",
+                    _ => string.Empty
+                }
             };
         }
 
@@ -286,6 +290,10 @@ namespace UniversalMediaOS.Core.Routing
         private static bool HasEnglishAudio(ScraperStreamResult stream) =>
             stream.AudioLanguages?.Any(language => string.Equals(language, "eng", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(language, "en", StringComparison.OrdinalIgnoreCase)) == true;
+
+        private static bool HasJapaneseAudio(ScraperStreamResult stream) =>
+            stream.AudioLanguages?.Any(language => string.Equals(language, "jpn", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(language, "ja", StringComparison.OrdinalIgnoreCase)) == true;
 
         private static bool HasRequestedDub(ScraperStreamResult stream) =>
             HasEnglishAudio(stream) || (stream.SelectedAudio == "dub" &&

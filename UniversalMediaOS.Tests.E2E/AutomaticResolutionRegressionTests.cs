@@ -248,6 +248,37 @@ public sealed class AutomaticResolutionRegressionTests
         });
     }
 
+    [Theory]
+    [InlineData("jpn", true)]
+    [InlineData("ja", true)]
+    [InlineData("JPN", true)]
+    [InlineData("eng", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    [InlineData("und", false)]
+    [InlineData("unknown", false)]
+    public async Task NativeSubDoesNotInferAudioLanguageFromServerOrCaptions(string? language, bool japaneseDeclared)
+    {
+        var scraper = new StubResolver
+        {
+            Result = new ScraperStreamResult("https://example.com/episode.mp4", null, null, null, null, null, false, null)
+            {
+                AudioLanguages = [language!],
+                SelectedAudio = "sub",
+                Subtitles = [new MediaSubtitleTrack("https://captions.example/en.vtt", "English", "en")]
+            }
+        };
+        await WithRouter(scraper, async router =>
+        {
+            var source = await router.ResolveBestSourceAsync("Fixture", "2", "", audioPreference: "sub");
+            Assert.NotNull(source);
+            Assert.Equal(1, scraper.Calls);
+            Assert.Equal(SourceTier.Tier1_PythonScraper, source.Tier);
+            Assert.Equal("English", Assert.Single(source.Subtitles).Label);
+            Assert.Equal(japaneseDeclared ? "" : "Sub server selected · audio language unverified", source.AudioNotice);
+        });
+    }
+
     private static async Task WithRouter(StubResolver scraper, Func<TripleNetHandoff, Task> assertion)
     {
         string root = Path.Combine(Path.GetTempPath(), "UniversalMediaOS.Tests", Guid.NewGuid().ToString("N"));

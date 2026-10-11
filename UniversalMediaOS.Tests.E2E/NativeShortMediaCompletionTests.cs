@@ -230,6 +230,131 @@ public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
             }
         });
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public Task PostStartNativeBufferingTimeoutPreservesUnitClockAndRetryIntent(bool paused)
+        => OnDispatcher(async () =>
+        {
+            string? previous = Environment.GetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable);
+            string parent = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "UniversalMediaOS.Tests"));
+            string root = Path.Combine(parent, "NativeBufferingDeadline-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, root);
+            string? connectionString = null;
+            PlaybackProgressService? progress = null;
+            const string work = "anime:anilist:731903";
+            try
+            {
+                string video = Path.Combine(root, "buffering.mkv");
+                using var encodingDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                var encoded = await new PreparationProcessRunner().RunAsync("ffmpeg", ["-nostdin", "-hide_banner", "-v", "error",
+                    "-f", "lavfi", "-i", "testsrc=size=160x90:rate=10", "-t", "45", "-c:v", "mpeg4", "-y", video], encodingDeadline.Token);
+                Assert.Equal(0, encoded.ExitCode);
+                using (var seed = new DatabaseContext())
+                {
+                    seed.Database.EnsureCreated();
+                    connectionString = seed.Database.GetConnectionString();
+                    seed.SaveResumeState(work, "episode:2", 17);
+                    seed.SaveResumeState(work, "episode:3", 11);
+                }
+                var context = new EpisodePlaybackContext(1, 3, (_, _) => Task.FromResult<ResolvedEpisodePlayback?>(null),
+                    "sub", new AnimePlaybackIdentity(731903));
+                progress = new(new AudiovisualLibraryService());
+                using (var memory = new MemoryVideo())
+                using (var player = new PlaybackViewModel(new DatabaseContext(), null, null, playbackProgress: progress))
+                using (var adjacent = new PlaybackViewModel(new DatabaseContext(), null, null, playbackProgress: progress))
+                {
+                    memory.Attach(player.MediaPlayer);
+                    player.Volume = 0;
+                    player.LoadMedia(video, "Buffering episode 2", episodeNumber: "2", episodeContext: context);
+                    player.PlayPending();
+                    await Wait(() => player.IsPlaying && memory.Frames >= 2 && player.MediaPlayer.Time >= 16_800, player);
+                    if (paused)
+                    {
+                        player.TogglePlayPauseCommand.Execute(null);
+                        await Wait(() => !player.IsPlaying && player.MediaPlayer.State == VLCState.Paused, player);
+                    }
+                    adjacent.LoadMedia(video, "Separate episode 3", episodeNumber: "3", episodeContext: context);
+                    adjacent.SetTabActive(false);
+                    long clock = player.MediaPlayer.Time;
+                    int previousWatch = player.NativeBufferingWatchGeneration;
+                    // Controlled VLC protocol input follows real decoded native playback.
+                    // The expiry callback is invoked directly instead of sleeping 30 seconds.
+                    player.ReportNativeBuffering(0);
+                    await Wait(() => player.IsPlaybackBusy, player);
+                    int watch = player.NativeBufferingWatchGeneration;
+                    Assert.True(watch > previousWatch);
+                    player.ReportNativeBuffering(25);
+                    await Task.Delay(50);
+                    Assert.Equal(watch, player.NativeBufferingWatchGeneration);
+                    player.CheckNativeBufferingTimeout(previousWatch);
+                    await Task.Delay(50);
+                    Assert.False(player.HasPlaybackError);
+                    player.CheckNativeBufferingTimeout(watch);
+                    await Wait(() => player.HasPlaybackError, player);
+                    Assert.Contains("stopped responding for 30 seconds", player.PlaybackErrorText);
+                    Assert.False(player.IsPlaybackBusy);
+                    Assert.False(player.IsPlaying);
+                    Assert.Equal(video, player.SourceInput);
+                    Assert.Equal("Buffering episode 2", player.MediaTitle);
+                    Assert.Contains("Episode 2", player.EpisodeInfo);
+                    Assert.Equal(0, player.Volume);
+                    Assert.False(adjacent.HasPlaybackError);
+                    Assert.Equal("Separate episode 3", adjacent.MediaTitle);
+
+                    int frames = memory.Frames;
+                    player.RetryPlaybackCommand.Execute(null);
+                    await Wait(() => !player.HasPlaybackError && memory.Frames > frames &&
+                        player.MediaPlayer.Time >= clock - 300 &&
+                        (paused ? player.MediaPlayer.State == VLCState.Paused : player.IsPlaying), player);
+                    Assert.Equal(!paused, player.IsPlaying);
+                    Assert.InRange(player.MediaPlayer.Time, clock - 300, clock + 1_500);
+                    Assert.Equal(video, player.SourceInput);
+                    Assert.Equal(0, player.Volume);
+
+                    player.ReportNativeBuffering(0);
+                    await Wait(() => player.IsPlaybackBusy, player);
+                    int recoveredWatch = player.NativeBufferingWatchGeneration;
+                    player.ReportNativeBuffering(100);
+                    await Wait(() => !player.IsPlaybackBusy, player);
+                    player.CheckNativeBufferingTimeout(recoveredWatch);
+                    await Task.Delay(50);
+                    Assert.False(player.HasPlaybackError);
+
+                    player.ReportNativeBuffering(0);
+                    await Wait(() => player.IsPlaybackBusy, player);
+                    int replacedWatch = player.NativeBufferingWatchGeneration;
+                    player.LoadMedia(video, "Replacement episode 3", episodeNumber: "3", episodeContext: context);
+                    player.CheckNativeBufferingTimeout(replacedWatch);
+                    await Task.Delay(50);
+                    Assert.False(player.HasPlaybackError);
+                    Assert.Equal("Replacement episode 3", player.MediaTitle);
+                    player.Dispose();
+                    player.CheckNativeBufferingTimeout(player.NativeBufferingWatchGeneration);
+                    await Task.Delay(50);
+                    Assert.False(player.HasPlaybackError);
+                }
+                await progress.FlushAsync().WaitAsync(TimeSpan.FromSeconds(5));
+                using var verify = new DatabaseContext();
+                Assert.Equal(11, verify.GetResumeState(work, "episode:3"));
+                Assert.InRange(verify.GetResumeState(work, "episode:2"), 16.7, 20.5);
+            }
+            finally
+            {
+                if (progress != null) await progress.FlushAsync().WaitAsync(TimeSpan.FromSeconds(5));
+                Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, previous);
+                if (connectionString != null)
+                {
+                    using var connection = new Microsoft.Data.Sqlite.SqliteConnection(connectionString);
+                    Microsoft.Data.Sqlite.SqliteConnection.ClearPool(connection);
+                }
+                Assert.StartsWith(parent + Path.DirectorySeparatorChar, root, StringComparison.OrdinalIgnoreCase);
+                Assert.Null(new DirectoryInfo(root).LinkTarget);
+                if (Directory.Exists(root)) Directory.Delete(root, true);
+            }
+        });
+
     [Fact]
     public Task PausedDisplayRedrawDecodesAnotherFrameWithoutResumeOrSourceReplacement()
         => OnDispatcher(async () =>
