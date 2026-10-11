@@ -32,3 +32,5 @@ Tested source is `24bc0c8` plus this batch. No new physical package, visible mon
 ## Remaining limitations
 
 The waiting notice, selectors and native-source admission still need qualification in the actual packaged window. This controlled matrix is not all-provider/media acceptance. Forced termination, persistence after exit beyond the 15-second normal/three-second session-end deadlines, real Windows shutdown, portable configuration migration and final release remain open. Original profiles, permanent/temporary media ownership, keyless catalog defaults and provider matching were unchanged. Six unrelated untracked paths remain untouched. The grouped persistence gate remains open.
+
+Published on main as **`4c8a2b8964ad4b5095d20978f4983f1679198255`**. Its single [hosted checkpoint](https://github.com/tntcool48-dot/UniversalMediaOS/actions/runs/38146056964) is in progress at this recorded checkpoint. No full pass is claimed for this source. The preceding completed full source is `9e33b70` (1,221 passes / zero failures / 22 unchanged skips).
