@@ -357,6 +357,7 @@
             <Grid.RowDefinitions>
                 <RowDefinition Height="56"/>
                 <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
             <Border Grid.Row="0"
@@ -646,25 +647,45 @@
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
 
-                        <Border Style="{StaticResource SurfaceCard}"
-                                Margin="0,8,0,20"
-                                Visibility="{Binding IsDownloading, Converter={StaticResource BoolToVisibility}}">
-                            <StackPanel>
-                                <TextBlock Text="Downloading video" Style="{StaticResource SubtitleText}" FontWeight="Bold"/>
-                                <ProgressBar Minimum="0" Maximum="100" Value="{Binding DownloadPercentage}" Height="5" Margin="0,10,0,6"/>
-                                <Button Content="Cancel download"
-                                        Command="{Binding CancelDownloadCommand}"
-                                        Style="{StaticResource DangerButton}"
-                                        HorizontalAlignment="Left"
-                                        Margin="0,10,0,0"/>
-                            </StackPanel>
-                        </Border>
-
-                        <TextBlock Text="{Binding DownloadStatusText}" Style="{StaticResource CaptionText}"
-                                   TextWrapping="Wrap" Margin="0,0,0,16"/>
                     </StackPanel>
                 </Grid>
             </ScrollViewer>
+
+            <Border Grid.Row="2" Margin="12,8,12,12">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource SurfaceCard}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding DownloadStatusText}" Value="">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Text="Downloading video" Style="{StaticResource SubtitleText}"
+                               FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,12,0"
+                               Visibility="{Binding IsDownloading, Converter={StaticResource BoolToVisibility}}"/>
+                    <TextBlock Grid.Column="1" Text="{Binding DownloadStatusText}"
+                               Style="{StaticResource CaptionText}" TextWrapping="Wrap"
+                               VerticalAlignment="Center"/>
+                    <Button Grid.Column="2" Content="Cancel download"
+                            Command="{Binding CancelDownloadCommand}"
+                            Style="{StaticResource DangerButton}" Margin="12,0,0,0"
+                            Visibility="{Binding IsDownloading, Converter={StaticResource BoolToVisibility}}"/>
+                    <ProgressBar Grid.Row="1" Grid.ColumnSpan="3" Minimum="0" Maximum="100"
+                                 Value="{Binding DownloadPercentage}" Height="5" Margin="0,10,0,0"
+                                 Visibility="{Binding IsDownloading, Converter={StaticResource BoolToVisibility}}"/>
+                </Grid>
+            </Border>
         </Grid>
     </Grid>
 </UserControl>
