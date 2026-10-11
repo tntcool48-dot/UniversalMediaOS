@@ -2813,6 +2813,16 @@ namespace UniversalMediaOS.WPF.ViewModels
             }
         }
 
+        internal Task FlushResumeForSessionEndingAsync()
+        {
+            SetTabActive(false);
+            Task pending = FlushResumeAsync();
+            // Freeze the final observation before OnExit disposes the player.
+            // Teardown must not enqueue another save or add a per-tab wait.
+            lock (_resumePersistenceGate) _resumePersistenceClosed = true;
+            return pending;
+        }
+
         internal Task FlushResumeAsync()
         {
             if (IsDisposed || _isDisposing) return Task.CompletedTask;

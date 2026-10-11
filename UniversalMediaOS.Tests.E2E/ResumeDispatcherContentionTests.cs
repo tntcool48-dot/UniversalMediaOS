@@ -385,6 +385,119 @@ public sealed class ResumeDispatcherContentionTests(ITestOutputHelper output)
         });
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SessionEndingCapturesAndDrainsExactProgressWithoutPumpingTheDispatcher(bool catalog)
+    {
+        using var profile = new IsolatedProfile();
+        RecoveryLayoutTests.RunSta(() =>
+        {
+            var progress = new PlaybackProgressService(new(Path.Combine(profile.Root, "library.json")));
+            var database = new TrackingDatabaseContext();
+            profile.Track(progress, database);
+            using var player = new PlaybackViewModel(database, null, null, playbackProgress: progress);
+            player.LoadEmbed("https://fixture.invalid/session-end", "Session-end fixture", "1", malId: 42,
+                audiovisualContext: catalog ? Context() : null);
+            var (work, unit) = SaveInitial(player, profile);
+            using (var seed = new DatabaseContext()) seed.SaveResumeState(work, "adjacent-unit", 57);
+            player.PlaybackTime = 120_000;
+            int dispatcherThread = Environment.CurrentManagedThreadId;
+            var elapsed = Stopwatch.StartNew();
+            using (var writer = new WriterLock(profile.ConnectionString!, work, unit, 300))
+            {
+                elapsed.Restart();
+                Assert.True(UniversalMediaOS.WPF.App.DrainPlaybackProgressForSessionEnding(() =>
+                {
+                    Assert.Equal(dispatcherThread, Environment.CurrentManagedThreadId);
+                    return player.FlushResumeForSessionEndingAsync();
+                }, progress, TimeSpan.FromSeconds(3)));
+                elapsed.Stop();
+                Assert.False(player.IsPlaying);
+                Assert.False(database.Disposed);
+            }
+            output.WriteLine($"{(catalog ? "Catalog" : "Legacy")} session-end drain: {elapsed.Elapsed.TotalMilliseconds:0.000} ms, no dispatcher pump.");
+            using var verify = new DatabaseContext();
+            Assert.Equal(120, verify.GetResumeState(work, unit));
+            Assert.Equal(57, verify.GetResumeState(work, "adjacent-unit"));
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SessionEndingDeadlineDoesNotAddPerPlayerCloseWaitOrCancelAcceptedProgress(bool catalog)
+    {
+        using var profile = new IsolatedProfile();
+        RecoveryLayoutTests.RunSta(() =>
+        {
+            var progress = new PlaybackProgressService(new(Path.Combine(profile.Root, "library.json")));
+            var database = new TrackingDatabaseContext();
+            profile.Track(progress, database);
+            using var player = new PlaybackViewModel(database, null, null, playbackProgress: progress);
+            player.LoadEmbed("https://fixture.invalid/session-end", "Session-end fixture", "1", malId: 42,
+                audiovisualContext: catalog ? Context() : null);
+            var (work, unit) = SaveInitial(player, profile);
+            using (var seed = new DatabaseContext()) seed.SaveResumeState(work, "adjacent-unit", 57);
+            player.PlaybackTime = 120_000;
+            using (var writer = new WriterLock(profile.ConnectionString!, work, unit, 5000))
+            {
+                var elapsed = Stopwatch.StartNew();
+                Assert.False(UniversalMediaOS.WPF.App.DrainPlaybackProgressForSessionEnding(
+                    player.FlushResumeForSessionEndingAsync, progress, TimeSpan.FromMilliseconds(100)));
+                elapsed.Stop();
+                Assert.InRange(elapsed.Elapsed.TotalMilliseconds, 75, 1000);
+                Assert.False(progress.FlushAsync().IsCompleted);
+                elapsed.Restart();
+                player.Dispose();
+                elapsed.Stop();
+                Assert.False(database.Disposed);
+                Assert.InRange(elapsed.Elapsed.TotalMilliseconds, 0, 500);
+                output.WriteLine($"{(catalog ? "Catalog" : "Legacy")} post-deadline player teardown: {elapsed.Elapsed.TotalMilliseconds:0.000} ms.");
+            }
+            progress.FlushAsync().WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+            using var verify = new DatabaseContext();
+            Assert.Equal(120, verify.GetResumeState(work, unit));
+            Assert.Equal(57, verify.GetResumeState(work, "adjacent-unit"));
+        });
+    }
+
+    [Fact]
+    public void SessionEndingDrainsAcceptedProgressFromAnAlreadyRemovedPlayer()
+    {
+        using var profile = new IsolatedProfile();
+        RecoveryLayoutTests.RunSta(() =>
+        {
+            var progress = new PlaybackProgressService(new(Path.Combine(profile.Root, "library.json")));
+            var database = new TrackingDatabaseContext();
+            profile.Track(progress, database);
+            using var player = new PlaybackViewModel(database, null, null, playbackProgress: progress);
+            player.LoadEmbed("https://fixture.invalid/removed", "Removed player", "1", malId: 42,
+                audiovisualContext: Context());
+            var (work, unit) = SaveInitial(player, profile);
+            player.PlaybackTime = 120_000;
+            using (var writer = new WriterLock(profile.ConnectionString!, work, unit, 2500))
+            {
+                player.Dispose(); // The normal tab-close two-second wait expires.
+                Assert.True(player.IsDisposed);
+                Assert.False(progress.FlushAsync().IsCompleted);
+                Assert.True(UniversalMediaOS.WPF.App.DrainPlaybackProgressForSessionEnding(
+                    () => Task.CompletedTask, progress, TimeSpan.FromSeconds(3)));
+            }
+            using var verify = new DatabaseContext();
+            Assert.Equal(120, verify.GetResumeState(work, unit));
+        });
+    }
+
+    [Fact]
+    public void SessionEndingWithoutPlaybackReturnsImmediately()
+    {
+        var elapsed = Stopwatch.StartNew();
+        Assert.True(UniversalMediaOS.WPF.App.DrainPlaybackProgressForSessionEnding(
+            () => Task.CompletedTask, null, TimeSpan.FromSeconds(3)));
+        Assert.InRange(elapsed.Elapsed.TotalMilliseconds, 0, 500);
+    }
+
     [Fact]
     public async Task ACloseWaitDeadlineDoesNotCancelAcceptedPersistence()
     {

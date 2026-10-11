@@ -259,6 +259,42 @@ namespace UniversalMediaOS.WPF
             });
         }
 
+        protected override void OnSessionEnding(SessionEndingCancelEventArgs e)
+        {
+            base.OnSessionEnding(e);
+            if (e.Cancel) return;
+
+            // WPF calls Shutdown after this synchronous event. The normal
+            // asynchronous window-close drain is not a session-ending barrier.
+            try
+            {
+                var viewModel = MainWindow?.DataContext as MainViewModel;
+                var progress = Services.GetService<PlaybackProgressService>();
+                bool drained = DrainPlaybackProgressForSessionEnding(
+                    () => viewModel?.FlushPlaybackProgressAsync(sessionEnding: true) ?? Task.CompletedTask,
+                    progress, TimeSpan.FromSeconds(3));
+                UniversalMediaOS.Core.Helpers.AppLogger.Log(drained
+                    ? "[Resume] Accepted playback progress drained before Windows session end."
+                    : "[Resume] Windows session-end deadline elapsed with playback progress still pending.",
+                    drained ? "INFO" : "WARNING");
+            }
+            catch (Exception ex)
+            {
+                UniversalMediaOS.Core.Helpers.AppLogger.Log(
+                    $"[Resume] Windows session-end progress drain failed: {ex.Message}", "WARNING");
+            }
+        }
+
+        internal static bool DrainPlaybackProgressForSessionEnding(
+            Func<Task> captureCurrentPlayers, PlaybackProgressService? progress, TimeSpan deadline)
+        {
+            // Capture keys/positions on the UI thread before teardown, then wait
+            // only for worker IO. This event cannot await a dispatcher continuation.
+            Task drain = Task.WhenAll(captureCurrentPlayers(), progress?.FlushAsync() ?? Task.CompletedTask);
+            try { drain.WaitAsync(deadline).GetAwaiter().GetResult(); return true; }
+            catch (TimeoutException) { return false; }
+        }
+
         protected override void OnExit(ExitEventArgs e)
         {
             try { _episodeAlertCts?.Cancel(); } catch { }
