@@ -398,6 +398,7 @@ namespace UniversalMediaOS.WPF.ViewModels
 
             _nativeOpening = (s, e) => RunOnDispatcher(() =>
             {
+                if (HasNativeBufferingFailure) return;
                 IsPlaybackBusy = true;
                 HasPlaybackError = false;
                 PlaybackErrorText = string.Empty;
@@ -408,6 +409,11 @@ namespace UniversalMediaOS.WPF.ViewModels
             {
                 RunOnDispatcher(() =>
                 {
+                    if (HasNativeBufferingFailure)
+                    {
+                        MediaPlayer.SetPause(true);
+                        return;
+                    }
                     _nativePlaybackStarted = true;
                     _nativeBufferingRetry = null;
                     CancelNativeBufferingWatch();
@@ -430,6 +436,7 @@ namespace UniversalMediaOS.WPF.ViewModels
                 if (_isDisposing || IsDisposed) return;
                 RunOnDispatcher(() =>
                 {
+                    if (HasNativeBufferingFailure) return;
                     CancelNativeBufferingWatch();
                     SaveCurrentResumePosition(force: true, synchronous: false);
                     IsPlaying = false;
@@ -525,6 +532,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             RunOnDispatcher(() =>
             {
                 if (_stopRequested || IsWebViewActive) return;
+                if (HasNativeBufferingFailure) return;
                 if (e.Time > 0)
                 {
                     Interlocked.Increment(ref _startupWatchGeneration);
@@ -1716,6 +1724,8 @@ namespace UniversalMediaOS.WPF.ViewModels
 
         internal int NativeBufferingWatchGeneration => Volatile.Read(ref _nativeBufferingWatchGeneration);
 
+        private bool HasNativeBufferingFailure => HasPlaybackError && _nativeBufferingRetry.HasValue;
+
         internal void ReportNativeBuffering(float cache) => RunOnDispatcher(() =>
         {
             if (_stopRequested || IsWebViewActive || HasPlaybackError) return;
@@ -1753,8 +1763,12 @@ namespace UniversalMediaOS.WPF.ViewModels
                 _stopRequested || IsWebViewActive || HasPlaybackError) return;
             bool paused = !IsPlaying || _pauseWhenStarted || !IsTabActive;
             _nativeBufferingRetry = (paused, GetCurrentPlaybackPositionSeconds());
+            // Hold the native decoder after failure. Late clock/Playing events
+            // must not erase Retry or resume video behind a false Play state.
+            // Retry retains the separately captured original play/pause intent.
             _pauseWhenStarted = paused;
             ReportPlaybackError("The native stream stopped responding for 30 seconds. Retry it or choose another source.");
+            MediaPlayer.SetPause(true);
         });
 
         private void CancelNativeBufferingWatch()

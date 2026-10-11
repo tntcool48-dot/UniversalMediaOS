@@ -303,6 +303,16 @@ public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
                     Assert.False(adjacent.HasPlaybackError);
                     Assert.Equal("Separate episode 3", adjacent.MediaTitle);
 
+                    long failureClock = player.MediaPlayer.Time;
+                    // Real VLC time/paused events can arrive after the expiry.
+                    // They must not silently clear Retry or leave Play beside moving video.
+                    await Task.Delay(650);
+                    Assert.True(player.HasPlaybackError, "Late native events must retain the post-start failure until Retry.");
+                    Assert.Equal("Playback failed", player.PlaybackStatusText);
+                    Assert.False(player.IsPlaying);
+                    Assert.Equal(VLCState.Paused, player.MediaPlayer.State);
+                    Assert.InRange(player.MediaPlayer.Time, failureClock - 300, failureClock + 500);
+
                     int frames = memory.Frames;
                     player.RetryPlaybackCommand.Execute(null);
                     await Wait(() => !player.HasPlaybackError && memory.Frames > frames &&
