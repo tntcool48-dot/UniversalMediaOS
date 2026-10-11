@@ -213,9 +213,19 @@ public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
                 Assert.True(pausedClock >= beforePause - 100, "Refreshing the paused clock must not seek backwards.");
                 Assert.InRange(Math.Abs(player.PlaybackTime - pausedClock), 0, 1);
                 Assert.False(player.IsPlaying);
+                // A paused decoder may settle at a newer position without another
+                // UI progress event. Exercise that gap with a real native seek.
+                player.MediaPlayer.Time = pausedClock + 2_000;
+                await Wait(() => player.MediaPlayer.Time >= pausedClock + 1_750, player);
+                player.SetTabActive(false);
+                long inactiveClock = player.MediaPlayer.Time;
+                Assert.InRange(Math.Abs(player.PlaybackTime - inactiveClock), 0, 1);
                 await player.FlushResumeAsync().WaitAsync(TimeSpan.FromSeconds(5));
                 using var verify = new DatabaseContext();
-                Assert.Equal(pausedClock / 1000.0, verify.GetResumeState(work, unit), 3);
+                Assert.Equal(inactiveClock / 1000.0, verify.GetResumeState(work, unit), 3);
+                player.SetTabActive(true);
+                Assert.False(player.IsPlaying);
+                Assert.InRange(Math.Abs(player.PlaybackTime - verify.GetResumeState(work, unit) * 1000), 0, 1);
                 Assert.Equal(57, verify.GetResumeState(work, "other-cut"));
             }
             finally

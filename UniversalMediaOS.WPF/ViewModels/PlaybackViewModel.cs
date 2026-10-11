@@ -452,15 +452,7 @@ namespace UniversalMediaOS.WPF.ViewModels
                     // observation for the visible clock, persistence and peers;
                     // updating the display must not be interpreted as a seek.
                     double pausedSeconds = GetCurrentPlaybackPositionSeconds();
-                    _isUpdatingTimeFromPlayer = true;
-                    try
-                    {
-                        PlaybackTime = pausedSeconds * 1000.0;
-                    }
-                    finally
-                    {
-                        _isUpdatingTimeFromPlayer = false;
-                    }
+                    RefreshNativeClock(pausedSeconds);
                     QueueResumeSave(pausedSeconds, ended: false, force: true, synchronous: false);
                     IsPlaying = false;
                     IsPlaybackBusy = false;
@@ -2813,6 +2805,19 @@ namespace UniversalMediaOS.WPF.ViewModels
             }
         }
 
+        private void RefreshNativeClock(double positionSeconds)
+        {
+            _isUpdatingTimeFromPlayer = true;
+            try
+            {
+                PlaybackTime = positionSeconds * 1000.0;
+            }
+            finally
+            {
+                _isUpdatingTimeFromPlayer = false;
+            }
+        }
+
         private void SaveCurrentResumePosition(bool force, bool synchronous)
         {
             if (_playbackEnded)
@@ -2821,6 +2826,10 @@ namespace UniversalMediaOS.WPF.ViewModels
             }
 
             double positionSeconds = GetCurrentPlaybackPositionSeconds();
+            // A paused decoder's clock may settle after its Paused event. Forced
+            // tab/source/close saves must keep the display on the saved snapshot.
+            if (!IsWebViewActive && !HasPlaybackError && !IsPersistenceWaiting)
+                RefreshNativeClock(positionSeconds);
             QueueResumeSave(positionSeconds, ended: false, force: force, synchronous: synchronous);
         }
 
