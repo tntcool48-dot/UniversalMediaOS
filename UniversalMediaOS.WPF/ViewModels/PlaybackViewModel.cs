@@ -2264,9 +2264,9 @@ namespace UniversalMediaOS.WPF.ViewModels
             long position = MediaPlayer.Time;
             if (position < 0) return false;
             // Display and embedded-caption changes can leave an outdated paused
-            // picture. Decode the existing input at its own clock without starting
-            // playback or publishing a user seek.
-            MediaPlayer.Time = position;
+            // picture. Reprocess just before the paused clock so a bounded cue is
+            // decoded again, without starting playback or publishing a user seek.
+            MediaPlayer.Time = position > 0 ? position - 1 : position;
             AppLogger.Log($"[PlaybackView] Redrew paused native frame at {position} ms.");
             return true;
         }

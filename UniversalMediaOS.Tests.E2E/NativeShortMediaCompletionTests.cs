@@ -774,16 +774,19 @@ public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
     public void LocalFileCompletionRejectsPrematureMissingAndInvalidPositions(double position, double duration, bool expected) =>
         Assert.Equal(expected, PlaybackViewModel.IsCredibleCompletion(position, duration, isLocalFile: true));
 
-    private static async Task Wait(Func<bool> condition, PlaybackViewModel player)
+    private static async Task Wait(Func<bool> condition, PlaybackViewModel player, Func<string>? details = null)
     {
         var timer = Stopwatch.StartNew();
         while (!condition() && timer.Elapsed < TimeSpan.FromSeconds(12)) await Task.Delay(25);
         Assert.True(condition(), $"status={player.PlaybackStatusText}, position={player.PlaybackTime}, " +
-            $"duration={player.PlaybackDuration}, error={player.PlaybackErrorText}");
+            $"duration={player.PlaybackDuration}, error={player.PlaybackErrorText}" +
+            (details == null ? string.Empty : "; " + details()));
     }
 
-    [Fact]
-    public Task PausedEmbeddedCaptionRestorationRepaintsWithoutStartingPlayback()
+    [Theory]
+    [InlineData("ass")]
+    [InlineData("srt")]
+    public Task PausedEmbeddedCaptionRestorationRepaintsWithoutStartingPlayback(string subtitleCodec)
         => OnDispatcher(async () =>
         {
             string? previous = Environment.GetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable);
@@ -795,11 +798,13 @@ public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
             try
             {
                 string video = Path.Combine(root, "embedded.mkv"), caption = Path.Combine(root, "embedded.en.srt");
-                File.WriteAllText(caption, "1\n00:00:00,000 --> 00:00:30,000\nEmbedded English cue\n");
+                File.WriteAllText(caption, "1\n00:00:00,000 --> 00:00:03,000\nEmbedded English cue\n\n" +
+                    "2\n00:00:04,000 --> 00:00:08,000\nBounded English cue\nSecond line\n");
                 using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
                 var encoded = await new PreparationProcessRunner().RunAsync("ffmpeg", ["-nostdin", "-hide_banner", "-v", "error",
-                    "-f", "lavfi", "-i", "color=c=black:size=160x90:rate=10", "-i", caption,
-                    "-map", "0:v", "-map", "1:s", "-t", "30", "-c:v", "mpeg4", "-c:s", "ass",
+                    "-f", "lavfi", "-i", "color=c=black:size=160x90:rate=24", "-i", caption,
+                    "-map", "0:v", "-map", "1:s", "-t", "15", "-c:v", subtitleCodec == "srt" ? "libx264" : "mpeg4",
+                    "-g", "60", "-c:s", subtitleCodec,
                     "-metadata:s:s:0", "language=eng", "-metadata:s:s:0", "title=English", "-y", video], deadline.Token);
                 Assert.Equal(0, encoded.ExitCode);
                 File.Delete(caption); // The player must use the embedded track, not a discovered sidecar.
@@ -826,10 +831,33 @@ public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
                 player.ToggleCaptionsCommand.Execute(null);
                 await Wait(() => player.SelectedCaption?.Key == "off" && memory.BrightPixels == 0, player);
                 player.ToggleCaptionsCommand.Execute(null);
-                await Wait(() => player.SelectedCaption is { Key: not "off" } && memory.BrightPixels > 5, player);
+                await Wait(() => player.SelectedCaption is { Key: not "off" } && memory.BrightPixels > 5, player,
+                    () => $"caption={player.SelectedCaption?.Key}, spu={player.MediaPlayer.Spu}, native time={player.MediaPlayer.Time}, frames={memory.Frames}, bright pixels={memory.BrightPixels}");
+                Assert.InRange(player.MediaPlayer.Time, position - 100, position + 100);
+
+                // A full-video cue cannot catch a dropped subtitle packet after a
+                // paused seek. Check a later multiline cue and its following gap.
+                int beforeSeek = memory.Frames;
+                player.BeginUserSeek();
+                player.CommitUserSeek(5_000);
+                await Wait(() => memory.Frames > beforeSeek && player.MediaPlayer.Time >= 4_900 &&
+                    memory.BrightPixels > 5, player);
+                Assert.True(memory.BrightPixels > 5, $"The bounded {subtitleCodec} cue must render after a paused seek.");
+                player.ToggleCaptionsCommand.Execute(null);
+                await Wait(() => player.SelectedCaption?.Key == "off" && memory.BrightPixels == 0, player);
+                player.ToggleCaptionsCommand.Execute(null);
+                await Wait(() => player.SelectedCaption is { Key: not "off" } && memory.BrightPixels > 5, player,
+                    () => $"caption={player.SelectedCaption?.Key}, spu={player.MediaPlayer.Spu}, native time={player.MediaPlayer.Time}, frames={memory.Frames}, bright pixels={memory.BrightPixels}");
+                Assert.InRange(player.MediaPlayer.Time, 4_900, 5_100);
+                beforeSeek = memory.Frames;
+                player.BeginUserSeek();
+                player.CommitUserSeek(10_000);
+                await Wait(() => memory.Frames > beforeSeek && player.MediaPlayer.Time >= 9_900 &&
+                    memory.BrightPixels == 0, player);
+                Assert.Equal(0, memory.BrightPixels);
                 Assert.Equal(VLCState.Paused, player.MediaPlayer.State);
                 Assert.False(player.IsPlaying);
-                Assert.InRange(player.MediaPlayer.Time, position - 100, position + 100);
+                Assert.InRange(player.MediaPlayer.Time, 9_900, 10_100);
                 Assert.Equal(video, player.SourceInput);
                 Assert.Equal(0, unexpectedStarts);
             }
