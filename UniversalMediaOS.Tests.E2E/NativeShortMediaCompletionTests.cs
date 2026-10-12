@@ -826,6 +826,7 @@ public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
                 await Wait(() => !player.IsPlaying && player.MediaPlayer.State == VLCState.Paused, player);
                 await Task.Delay(150);
                 long position = player.MediaPlayer.Time;
+                int embeddedId = player.SelectedCaption!.NativeId;
                 int unexpectedStarts = 0;
                 player.MediaPlayer.Playing += (_, _) => Interlocked.Increment(ref unexpectedStarts);
                 player.ToggleCaptionsCommand.Execute(null);
@@ -833,6 +834,8 @@ public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
                 player.ToggleCaptionsCommand.Execute(null);
                 await Wait(() => player.SelectedCaption is { Key: not "off" } && memory.BrightPixels > 5, player,
                     () => $"caption={player.SelectedCaption?.Key}, spu={player.MediaPlayer.Spu}, native time={player.MediaPlayer.Time}, frames={memory.Frames}, bright pixels={memory.BrightPixels}");
+                await player.EmbeddedCaptionPreparation;
+                Assert.NotEqual(embeddedId, player.SelectedCaption!.NativeId);
                 Assert.InRange(player.MediaPlayer.Time, position - 100, position + 100);
 
                 // A full-video cue cannot catch a dropped subtitle packet after a
@@ -860,6 +863,10 @@ public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
                 Assert.InRange(player.MediaPlayer.Time, 9_900, 10_100);
                 Assert.Equal(video, player.SourceInput);
                 Assert.Equal(0, unexpectedStarts);
+                player.Dispose();
+                await player.EmbeddedCaptionPreparation;
+                Assert.Empty(Directory.GetFiles(Path.Combine(root, "Local", "UniversalMediaOS", "NativeCaptions"), "*", SearchOption.AllDirectories));
+                Assert.True(File.Exists(video));
             }
             finally
             {
