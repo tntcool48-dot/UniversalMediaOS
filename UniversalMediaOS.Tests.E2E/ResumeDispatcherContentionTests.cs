@@ -534,10 +534,11 @@ public sealed class ResumeDispatcherContentionTests(ITestOutputHelper output)
             Title = "Load contention fixture" }, new() { SeasonNumber = season, EpisodeNumber = 1 },
         "Load contention fixture", "", new());
 
-    internal static void WaitForResumeLoad(PlaybackViewModel player)
+    internal static void WaitForResumeLoad(PlaybackViewModel player, Func<string>? databaseDetails = null)
     {
         if (Thread.CurrentThread.GetApartmentState() == ApartmentState.STA)
-            PumpUntil(() => player.ResumeLoadCompleted.IsCompleted, () => ResumeLoadDetails(player));
+            PumpUntil(() => player.ResumeLoadCompleted.IsCompleted, () => ResumeLoadDetails(player) +
+                (databaseDetails == null ? string.Empty : "\n" + databaseDetails()));
         player.ResumeLoadCompleted.WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
     }
 
@@ -552,7 +553,8 @@ public sealed class ResumeDispatcherContentionTests(ITestOutputHelper output)
             $"pending reads={player.PendingResumeLoadCount}; pending saves={player.PendingResumeSaveCount}; " +
             $"database gate={gate?.CurrentCount}; disposed={player.IsDisposed}; " +
             $"dispatcher thread={dispatcher.Thread.ManagedThreadId}, alive={dispatcher.Thread.IsAlive}, shutdown={dispatcher.HasShutdownStarted}; " +
-            $"pumping thread={Thread.CurrentThread.ManagedThreadId}; available workers={workers}, completion ports={completionPorts}.";
+            $"pumping thread={Thread.CurrentThread.ManagedThreadId}; available workers={workers}, completion ports={completionPorts}; " +
+            $"worker threads={ThreadPool.ThreadCount}, queued work={ThreadPool.PendingWorkItemCount}.";
     }
 
     private static void PumpUntil(Func<bool> condition, Func<string>? failureDetails = null)

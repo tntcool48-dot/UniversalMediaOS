@@ -3,6 +3,7 @@ using System.IO;
 using System.Net.Http;
 using System.Text.Json;
 using LibVLCSharp.Shared;
+using Microsoft.EntityFrameworkCore;
 using UniversalMediaOS.Core.Data;
 using UniversalMediaOS.Core.Services;
 using UniversalMediaOS.Core.Streaming;
@@ -300,11 +301,12 @@ public sealed class SubtitleHandoffTests
         {
             _ = System.Windows.Threading.Dispatcher.CurrentDispatcher;
             using var profile = new CaptionTestDataScope();
-            using var player = new PlaybackViewModel(new DatabaseContext());
+            var database = new ResumeProbeDatabaseContext();
+            using var player = new PlaybackViewModel(database);
             player.SetTabActive(false);
             player.LoadMedia("https://video.example/fixture.mp4", "Fixture",
                 reloadPositionSeconds: seconds, pauseAfterReload: pause);
-            ResumeDispatcherContentionTests.WaitForResumeLoad(player);
+            ResumeDispatcherContentionTests.WaitForResumeLoad(player, () => database.Diagnostics);
             Assert.Equal(seconds, typeof(PlaybackViewModel).GetField("_pendingResumePositionSeconds", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(player));
             Assert.Equal(pause, typeof(PlaybackViewModel).GetField("_pauseWhenStarted", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(player));
             Assert.False(player.IsPlaying);
@@ -343,6 +345,28 @@ public sealed class SubtitleHandoffTests
 
     private static Media CurrentMedia(PlaybackViewModel player) =>
         (Media)typeof(PlaybackViewModel).GetField("_currentMedia", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(player)!;
+
+    private sealed class ResumeProbeDatabaseContext : DatabaseContext
+    {
+        private string _lastDatabaseEvent = "No database event observed.";
+        private long _lastEventAt = System.Diagnostics.Stopwatch.GetTimestamp();
+
+        public string Diagnostics => $"Last database event ({System.Diagnostics.Stopwatch.GetElapsedTime(Volatile.Read(ref _lastEventAt)).TotalSeconds:0.000}s ago): " +
+            Volatile.Read(ref _lastDatabaseEvent);
+
+        protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+        {
+            base.OnConfiguring(optionsBuilder);
+            optionsBuilder.LogTo(message =>
+            {
+                // This isolated test uses fixture IDs only. Capture the database
+                // phase without moving schema setup or weakening its deadline.
+                string summary = message.Replace('\r', ' ').Replace('\n', ' ');
+                Volatile.Write(ref _lastDatabaseEvent, summary[..Math.Min(summary.Length, 1000)]);
+                Volatile.Write(ref _lastEventAt, System.Diagnostics.Stopwatch.GetTimestamp());
+            }, [DbLoggerCategory.Database.Name], Microsoft.Extensions.Logging.LogLevel.Debug);
+        }
+    }
 
     private sealed class CaptionTestDataScope : IDisposable
     {
