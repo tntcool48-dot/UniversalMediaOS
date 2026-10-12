@@ -252,10 +252,56 @@ public sealed class SeasonLibraryDownloadTests
         Assert.Empty(Directory.GetDirectories(fixture.Temporary));
         fixture.Catalog.Requests.Clear();
         int transfers = fixture.Handler.Requests;
-        await fixture.ViewModel.DownloadSeasonCommand.ExecuteAsync(null);
+        using var reopened = new TestViewModel(fixture.Catalog,
+            new AudiovisualLibraryService(Path.Combine(fixture.Permanent, "fresh-catalog.json")),
+            fixture.Download, new(fixture.Http), new Dialog(), new Launcher());
+        await reopened.OpenItemAsync(new()
+        {
+            Title = "Series renamed",
+            Identity = Identity with { Title = "Series renamed" }
+        });
+        await reopened.DownloadSeasonCommand.ExecuteAsync(null);
         Assert.Empty(fixture.Catalog.Requests);
         Assert.Equal(transfers, fixture.Handler.Requests);
         Assert.Equal(2, fixture.Published().Length);
+    }
+
+    [Fact]
+    public async Task RenamedMovieReusesOnlyItsCanonicalFeatureAndPreservesTheSavedFiles()
+    {
+        using var fixture = new Fixture();
+        var identity = new AudiovisualIdentity
+        {
+            Kind = AudiovisualMediaKind.Movie, ContentForm = AudiovisualContentForm.Feature,
+            Title = "Movie", Year = 2010, PrimaryId = new("wikidata", "item", "Q925587"),
+            ImdbId = "tt1727587"
+        };
+        var source = Source(Unit()) with
+        {
+            Identity = identity, Unit = AudiovisualUnit.Feature,
+            Evidence = new() { Origin = SourceEvidenceOrigin.ProviderItem, Identity = identity, Unit = AudiovisualUnit.Feature }
+        };
+        var context = new AudiovisualPlaybackContext("av:wikidata:item:Q925587", identity,
+            AudiovisualUnit.Feature, "Movie", "", source);
+        var saved = await fixture.Download.DownloadLibraryAsync(source, context);
+        byte[] originalBytes = File.ReadAllBytes(saved.FilePath);
+        string originalMetadata = File.ReadAllText(saved.MetadataPath);
+        int transfers = fixture.Handler.Requests;
+        var renamed = new AudiovisualPlaybackContext(context.WorkKey, identity with { Title = "Renamed movie" },
+            AudiovisualUnit.Feature, "Renamed movie", "", source);
+
+        var found = await fixture.Download.FindLibraryDownloadAsync(renamed);
+        Assert.NotNull(found);
+        Assert.Equal(saved.FilePath, found.FilePath);
+        var otherWork = new AudiovisualPlaybackContext("av:wikidata:item:Q282456", renamed.Identity,
+            AudiovisualUnit.Feature, renamed.Title, "", source);
+        Assert.Null(await fixture.Download.FindLibraryDownloadAsync(otherWork));
+        Assert.Null(await fixture.Download.FindLibraryDownloadAsync(renamed, preferredLanguage: "en"));
+        Assert.Equal(transfers, fixture.Handler.Requests);
+        Assert.Equal(originalBytes, File.ReadAllBytes(saved.FilePath));
+        Assert.Equal(originalMetadata, File.ReadAllText(saved.MetadataPath));
+        Assert.Single(fixture.Published());
+        Assert.Empty(Directory.GetDirectories(fixture.Temporary));
     }
 
     [Fact]
@@ -510,6 +556,7 @@ public sealed class SeasonLibraryDownloadTests
         public Catalog Catalog { get; } = new();
         public Handler Handler { get; } = new();
         private readonly HttpClient _http;
+        public HttpClient Http => _http;
         public DomainHotSwapper Config { get; }
         public AuthorizedMediaDownloadService Download { get; }
         public AudiovisualLibraryService Library { get; }

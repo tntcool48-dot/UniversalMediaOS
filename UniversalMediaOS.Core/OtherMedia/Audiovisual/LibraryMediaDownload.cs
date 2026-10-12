@@ -52,11 +52,7 @@ public sealed partial class AuthorizedMediaDownloadService
     public async Task<LibraryMediaDownloadResult?> FindLibraryDownloadAsync(AudiovisualPlaybackContext context,
         string? preferredLanguage = null, CancellationToken token = default)
     {
-        string parent = GetLibraryParent(context);
-        if (!Directory.Exists(parent)) return null;
-        string prefix = context.Unit.IsFeature ? "Feature" : $"S{context.Unit.SeasonNumber:00}E{context.Unit.EpisodeNumber:00}";
-        foreach (string revision in Directory.EnumerateDirectories(parent, prefix + "-*")
-            .OrderByDescending(Directory.GetLastWriteTimeUtc).Take(50))
+        foreach (string revision in GetLibraryRevisions(context).Take(50))
         {
             token.ThrowIfCancellationRequested();
             try
@@ -85,6 +81,34 @@ public sealed partial class AuthorizedMediaDownloadService
         }
         return null;
     }
+
+    private IEnumerable<string> GetLibraryRevisions(AudiovisualPlaybackContext context)
+    {
+        string current = GetLibraryParent(context);
+        string work = context.Unit.IsFeature ? current : Path.GetDirectoryName(current)!;
+        string category = Path.GetDirectoryName(work)!;
+        string suffix = "-" + GetLibraryWorkHash(context.WorkKey);
+        string prefix = context.Unit.IsFeature ? "Feature" : $"S{context.Unit.SeasonNumber:00}E{context.Unit.EpisodeNumber:00}";
+        // A display-title change must not strand an independently identified saved unit.
+        // Keep the current folder first and retain the shared 50-revision lookup bound.
+        IEnumerable<string> previous = Directory.Exists(category)
+            ? Directory.EnumerateDirectories(category, "*" + suffix)
+                .Where(path => !path.Equals(work, StringComparison.OrdinalIgnoreCase) &&
+                    (File.GetAttributes(path) & FileAttributes.ReparsePoint) == 0)
+                .Take(50).OrderByDescending(Directory.GetLastWriteTimeUtc)
+                .Select(path => context.Unit.IsFeature ? path : Path.Combine(path, Path.GetFileName(current)))
+            : [];
+        foreach (string parent in new[] { current }.Concat(previous))
+        {
+            if (!Directory.Exists(parent)) continue;
+            foreach (string revision in Directory.EnumerateDirectories(parent, prefix + "-*")
+                .OrderByDescending(Directory.GetLastWriteTimeUtc).Take(50))
+                yield return revision;
+        }
+    }
+
+    private static string GetLibraryWorkHash(string workKey) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(workKey)))[..16].ToLowerInvariant();
 
     /// <summary>Publishes a checked local video and its captions without transferring ownership of temporary files.</summary>
     public async Task<LibraryMediaDownloadResult> DownloadLibraryAsync(AudiovisualSource source,
@@ -161,7 +185,7 @@ public sealed partial class AuthorizedMediaDownloadService
             throw new InvalidOperationException("Choose a permanent download folder outside the temporary playback cache.");
         string category = context.Identity.Kind switch
         { AudiovisualMediaKind.Movie => "Movies", AudiovisualMediaKind.Television => "TV Shows", _ => "Cartoons" };
-        string workHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(context.WorkKey)))[..16].ToLowerInvariant();
+        string workHash = GetLibraryWorkHash(context.WorkKey);
         string workTitle = SanitizeFileName(context.Title);
         if (workTitle.Length > 48) workTitle = workTitle[..48];
         string parent = Path.Combine(root, category, workTitle + "-" + workHash);
