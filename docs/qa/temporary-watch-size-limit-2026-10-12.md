@@ -1,0 +1,11 @@
+# Temporary Movie configured-size rejection — October 12, 2026
+
+Source **f050187 / PID 54248** reused the existing verified package and private profile on the second monitor. Before launch, the normal app closed and retained all 13 exact resume positions. Exact original configuration bytes were saved, then only the private `OtherMediaMaximumDownloadBytes` setting was set to **1,048,576 bytes**, the supported minimum. This exercises the existing configured-size policy without filling the user drive or injecting a disk-space result.
+
+The same original Sintel (2010, Wikidata Q925587, feature) catalog Details resolved a verified Internet Archive direct source. Actual Watch via download showed **Download Failed** with **“The media file is larger than the configured download limit.”** Its root capture was 1280×800 at 2880,478 on the second monitor. Acknowledging the dialog retained **Download failed** in the fixed footer and released the busy action state. The temporary root was empty; no media/player/website opened.
+
+The same app process was retained through the intervening elapsed interval; it was not restarted or relabeled because observation expired. The catalog lookup began on October 11, while the actual Watch action/error observation occurred October 12 at 06:32 local. No continuous observation across that interval is claimed.
+
+Normal test-process close then retained all 13 rows. Its configuration differed from the original only by the one test key; the exact original **640 bytes** were restored, with SHA-256 **20cc130d0e69fde72bbc503bab2eaf0e67a88944dd4d362908e4f33a476cf44b**. The test limit is removed and the cache remains empty. Receipt: `.artifacts/implementation/package-smoke-20261009/temporary-size-limit-physical-f050187-20261012.json`.
+
+This qualifies one HTTP temporary Movie declared-size limit dialog, visible retained failure and cleanup. Actual low-reserve/physical disk-full, permanent/torrent paths and current-profile permanent coexistence remain unqualified. No source build, media download or automated scope ran for this check. The source's already-completed checkpoint remains **1,236 passed / zero failures / 22 unchanged skips**; it was not repeated. Books remain deferred.

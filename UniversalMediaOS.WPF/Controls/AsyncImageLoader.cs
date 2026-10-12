@@ -341,7 +341,9 @@ namespace UniversalMediaOS.WPF.Controls
             if (host.Equals("mangadex.org", StringComparison.OrdinalIgnoreCase) ||
                 host.EndsWith(".mangadex.org", StringComparison.OrdinalIgnoreCase) ||
                 host.Equals("mangadex.network", StringComparison.OrdinalIgnoreCase) ||
-                host.EndsWith(".mangadex.network", StringComparison.OrdinalIgnoreCase))
+                host.EndsWith(".mangadex.network", StringComparison.OrdinalIgnoreCase) ||
+                host.Equals("commons.wikimedia.org", StringComparison.OrdinalIgnoreCase) ||
+                host.Equals("upload.wikimedia.org", StringComparison.OrdinalIgnoreCase))
                 request.Headers.UserAgent.ParseAdd(UniversalMediaOS.Core.Services.MangaService.ClientUserAgent);
             return request;
         }
