@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
@@ -43,9 +44,16 @@ namespace UniversalMediaOS.Core.Routing
                 {
                     foreach (var c in cookies)
                     {
-                        if (c.StartsWith("SID="))
+                        string session = c.Split(';')[0].Trim();
+                        int separator = session.IndexOf('=');
+                        if (separator <= 0 || separator == session.Length - 1) continue;
+                        string name = session[..separator];
+                        bool portSession = name.StartsWith("QBT_SID_", StringComparison.Ordinal) &&
+                            int.TryParse(name.AsSpan(8), NumberStyles.None, CultureInfo.InvariantCulture, out int port) &&
+                            port is > 0 and <= 65535;
+                        if (name == "SID" || portSession)
                         {
-                            Cookie = c.Split(';')[0];
+                            Cookie = session;
                             return true;
                         }
                     }
@@ -88,7 +96,18 @@ namespace UniversalMediaOS.Core.Routing
                 if (response.IsSuccessStatusCode)
                 {
                     var body = await response.Content.ReadAsStringAsync(token);
-                    return body.Trim().Equals("Ok.", StringComparison.OrdinalIgnoreCase);
+                    if (body.Trim().Equals("Ok.", StringComparison.OrdinalIgnoreCase)) return true;
+
+                    // New WebUI versions report one accepted or pending add as
+                    // JSON. Retain ownership while metadata resolves so the
+                    // native fallback cannot write the same transfer files.
+                    using var result = JsonDocument.Parse(body);
+                    var root = result.RootElement;
+                    return root.ValueKind == JsonValueKind.Object &&
+                        root.TryGetProperty("failure_count", out var failures) && failures.TryGetInt32(out int failed) && failed == 0 &&
+                        root.TryGetProperty("success_count", out var successes) && successes.TryGetInt32(out int added) &&
+                        root.TryGetProperty("pending_count", out var pending) && pending.TryGetInt32(out int awaiting) &&
+                        ((added == 1 && awaiting == 0) || (added == 0 && awaiting == 1));
                 }
                 return false;
             }
