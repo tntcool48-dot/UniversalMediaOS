@@ -5,6 +5,7 @@ using System.Text.Json;
 using LibVLCSharp.Shared;
 using Microsoft.EntityFrameworkCore;
 using UniversalMediaOS.Core.Data;
+using UniversalMediaOS.Core.OtherMedia;
 using UniversalMediaOS.Core.Services;
 using UniversalMediaOS.Core.Streaming;
 using UniversalMediaOS.WPF.ViewModels;
@@ -290,6 +291,67 @@ public sealed class SubtitleHandoffTests
         Assert.True((bool)typeof(PlaybackViewModel).GetField("_pauseWhenStarted", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(player)!);
         player.TogglePlayPauseCommand.Execute(null);
         Assert.False((bool)typeof(PlaybackViewModel).GetField("_pauseWhenStarted", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(player)!);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void OpeningKnownNativeSourcePreservesUnitPositionAndRequestContext(int selectedUnit)
+    {
+        RecoveryLayoutTests.RunSta(() =>
+        {
+            _ = System.Windows.Threading.Dispatcher.CurrentDispatcher;
+            using var profile = new CaptionTestDataScope();
+            var contexts = new[]
+            {
+                new AudiovisualPlaybackContext("av:local:open:movie", new() { ContentForm = AudiovisualContentForm.Feature },
+                    AudiovisualUnit.Feature, "Movie", "", new()),
+                new AudiovisualPlaybackContext("av:local:open:series", new() { ContentForm = AudiovisualContentForm.Series },
+                    new() { SeasonNumber = 1, EpisodeNumber = 1 }, "Series", "", new()),
+                new AudiovisualPlaybackContext("av:local:open:series", new() { ContentForm = AudiovisualContentForm.Series },
+                    new() { SeasonNumber = 2, EpisodeNumber = 1 }, "Series", "", new())
+            };
+            double[] positions = [17, 37, 79];
+            using (var seed = new DatabaseContext())
+            {
+                seed.Database.EnsureCreated();
+                for (int i = 0; i < contexts.Length; i++)
+                    seed.SaveResumeState(contexts[i].WorkKey, contexts[i].UnitKey!, positions[i]);
+            }
+            using var proxy = new HlsLoopbackProxy();
+            using var player = new PlaybackViewModel(new DatabaseContext(), null, null, hlsProxy: proxy);
+            player.SetTabActive(false); // Staged native media must not start a decoder/window.
+            const string source = "https://video.example/fixture.mp4?token=a%2fb";
+            var context = contexts[selectedUnit];
+            player.LoadMedia(source, context.Title, referer: "https://video.example/item", cookie: "session=test",
+                requestHeaders: new Dictionary<string, string> { ["X-Test"] = "retained" }, audiovisualContext: context,
+                subtitles: [new("https://video.example/english.vtt", "English", "en")
+                    { InlineVtt = "WEBVTT\n\n00:00:01.000 --> 00:00:05.000\nNative cue\n" }], audioNotice: "Audio unverified");
+            ResumeDispatcherContentionTests.WaitForResumeLoad(player);
+            player.PlaybackDuration = 120_000;
+            player.BeginUserSeek();
+            player.CommitUserSeek(42_500);
+            player.SourceInput = "  " + source + "  ";
+            player.OpenSourceCommand.Execute(null);
+            ResumeDispatcherContentionTests.WaitForResumeLoad(player);
+            Assert.Same(context, player.AudiovisualContext);
+            Assert.Equal(context.Title, player.MediaTitle);
+            Assert.Equal(source, player.SourceInput);
+            Assert.Equal("Audio unverified", player.AudioNotice);
+            Assert.Single(CurrentMedia(player).Slaves);
+            Assert.Equal(42.5, typeof(PlaybackViewModel).GetField("_pendingResumePositionSeconds", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(player));
+            Assert.True((bool)typeof(PlaybackViewModel).GetField("_pauseWhenStarted", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(player)!);
+            var headers = (IReadOnlyDictionary<string, string>)typeof(PlaybackViewModel).GetField("_lastMediaRequestHeaders", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(player)!;
+            Assert.Equal("retained", headers["X-Test"]);
+            player.SourceInput = "https://video.example/unrelated.mp4";
+            player.OpenSourceCommand.Execute(null);
+            ResumeDispatcherContentionTests.WaitForResumeLoad(player);
+            Assert.Null(player.AudiovisualContext);
+            using var verify = new DatabaseContext();
+            for (int i = 0; i < contexts.Length; i++)
+                if (i != selectedUnit) Assert.Equal(positions[i], verify.GetResumeState(contexts[i].WorkKey, contexts[i].UnitKey!));
+        });
     }
 
     [Theory]

@@ -1101,6 +1101,14 @@ namespace UniversalMediaOS.WPF.ViewModels
         private void OpenSource()
         {
             string source = SourceInput.Trim();
+            if (!IsWebViewActive && _currentMedia != null &&
+                string.Equals(NormalizeMediaSource(source), NormalizeMediaSource(_lastMediaSource), StringComparison.Ordinal))
+            {
+                // Reopening the known input must retain its unit, request context
+                // and current pause/clock instead of treating it as a new title.
+                ReloadNativeSelection(null);
+                return;
+            }
             var saved = File.Exists(source) ? AuthorizedMediaDownloadService.ReadLibraryPlayback(source) : null;
             if (saved != null)
             {
