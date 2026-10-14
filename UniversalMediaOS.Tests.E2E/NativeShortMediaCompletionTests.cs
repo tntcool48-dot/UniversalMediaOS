@@ -831,10 +831,22 @@ public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
                 player.MediaPlayer.Playing += (_, _) => Interlocked.Increment(ref unexpectedStarts);
                 player.ToggleCaptionsCommand.Execute(null);
                 await Wait(() => player.SelectedCaption?.Key == "off" && memory.BrightPixels == 0, player);
+                int offDuringRegistration = 0;
+                EventHandler<MediaPlayerESAddedEventArgs> interruptRegistration = (_, args) =>
+                {
+                    if (args.Type == TrackType.Text && args.Id != embeddedId &&
+                        Interlocked.Exchange(ref offDuringRegistration, 1) == 0)
+                        player.RunOnDispatcher(() => player.ToggleCaptionsCommand.Execute(null));
+                };
+                player.MediaPlayer.ESAdded += interruptRegistration;
+                player.ToggleCaptionsCommand.Execute(null);
+                await player.EmbeddedCaptionPreparation;
+                player.MediaPlayer.ESAdded -= interruptRegistration;
+                Assert.Equal(1, offDuringRegistration);
+                await Wait(() => player.SelectedCaption?.Key == "off" && player.MediaPlayer.Spu == -1 && memory.BrightPixels == 0, player);
                 player.ToggleCaptionsCommand.Execute(null);
                 await Wait(() => player.SelectedCaption is { Key: not "off" } && memory.BrightPixels > 5, player,
                     () => $"caption={player.SelectedCaption?.Key}, spu={player.MediaPlayer.Spu}, native time={player.MediaPlayer.Time}, frames={memory.Frames}, bright pixels={memory.BrightPixels}");
-                await player.EmbeddedCaptionPreparation;
                 Assert.NotEqual(embeddedId, player.SelectedCaption!.NativeId);
                 Assert.InRange(player.MediaPlayer.Time, position - 100, position + 100);
 

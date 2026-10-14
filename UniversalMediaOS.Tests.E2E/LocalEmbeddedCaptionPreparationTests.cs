@@ -1,4 +1,5 @@
 using UniversalMediaOS.Core.Services;
+using UniversalMediaOS.WPF.ViewModels;
 using System;
 using System.IO;
 using System.Threading;
@@ -17,6 +18,7 @@ public sealed class LocalEmbeddedCaptionPreparationTests
             {"index":3,"codec_name":"ass","tags":{"language":"eng","title":"Dialogue"}}]}
             """;
         Assert.Equal((3, "ass"), LocalEmbeddedCaptionPreparation.SelectTrack(json, "en", "Dialogue"));
+        Assert.Equal((3, "ass"), LocalEmbeddedCaptionPreparation.SelectTrack(json, "English", "Dialogue"));
         Assert.Null(LocalEmbeddedCaptionPreparation.SelectTrack(json, "ja", "Dialogue"));
         Assert.Null(LocalEmbeddedCaptionPreparation.SelectTrack(json, "en", "Signs"));
     }
@@ -30,6 +32,16 @@ public sealed class LocalEmbeddedCaptionPreparationTests
             """;
         Assert.Null(LocalEmbeddedCaptionPreparation.SelectTrack(json, "en", ""));
         Assert.Equal((3, "srt"), LocalEmbeddedCaptionPreparation.SelectTrack(json, "en", "Dialogue"));
+    }
+
+    [Fact]
+    public void DeclaredLanguageNameMatchesCodeWithoutInferringFromDisplayLabel()
+    {
+        var named = PlaybackTrackOption.Native(3, "Track 2", "English", "", "Subtitle");
+        var coded = PlaybackTrackOption.Native(3, "Track 2", "eng", "", "Subtitle");
+        Assert.Equal(coded.Key, named.Key);
+        Assert.Equal("en", named.NativeLanguage);
+        Assert.Empty(PlaybackTrackOption.Native(3, "English", "", "", "Subtitle").NativeLanguage);
     }
 
     [Fact]

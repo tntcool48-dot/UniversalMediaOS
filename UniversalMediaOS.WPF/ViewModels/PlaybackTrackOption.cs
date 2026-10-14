@@ -61,7 +61,9 @@ public sealed record PlaybackTrackOption(string Key, string Label, int NativeId 
         string code = value.Trim().ToLowerInvariant().Replace('_', '-');
         if (code is "" or "und" or "unknown") return "";
         return Languages.FirstOrDefault(culture => culture.TwoLetterISOLanguageName == code ||
-            culture.ThreeLetterISOLanguageName == code)?.TwoLetterISOLanguageName ?? code;
+            culture.ThreeLetterISOLanguageName == code ||
+            culture.EnglishName.Equals(code, StringComparison.OrdinalIgnoreCase) ||
+            culture.NativeName.Equals(code, StringComparison.OrdinalIgnoreCase))?.TwoLetterISOLanguageName ?? code;
     }
 
     private static string? LanguageName(string value)

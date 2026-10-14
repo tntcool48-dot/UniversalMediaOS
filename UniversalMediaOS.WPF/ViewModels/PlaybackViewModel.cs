@@ -687,7 +687,10 @@ namespace UniversalMediaOS.WPF.ViewModels
             if (_suppressTrackSelection || value == null || IsWebViewActive || IsDisposed) return;
             if (_pendingEmbeddedCaptionKey != null && _pendingEmbeddedCaptionKey != value.Key)
             {
-                _embeddedCaptionCancellation?.Cancel();
+                // Extraction can be canceled. Once the native input owns the
+                // file, finish registering it before admitting another slave.
+                if (!_preparedEmbeddedCaptions.ContainsKey(_pendingEmbeddedCaptionKey))
+                    _embeddedCaptionCancellation?.Cancel();
                 _attemptedEmbeddedCaptions.Remove(_pendingEmbeddedCaptionKey);
                 _pendingEmbeddedCaptionKey = null;
             }
@@ -818,6 +821,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             string source = NormalizeMediaSource(_lastMediaSource);
             if (option.Subtitle != null || option.NativeId < 0 || string.IsNullOrEmpty(option.NativeLanguage) ||
                 _lastMediaSubtitles.Count > 0 || _preparedEmbeddedCaptions.Count >= 12 ||
+                _preparedEmbeddedCaptions.Values.Any(prepared => prepared.NativeId < 0) ||
                 _preparedEmbeddedCaptions.ContainsKey(option.Key) ||
                 !Path.IsPathFullyQualified(source) || !File.Exists(source) ||
                 !Path.GetExtension(source).Equals(".mkv", StringComparison.OrdinalIgnoreCase) ||
@@ -842,21 +846,24 @@ namespace UniversalMediaOS.WPF.ViewModels
                 {
                     lease = await new LocalEmbeddedCaptionPreparation().PrepareAsync(source,
                         native.Value.Language ?? "", native.Value.Description ?? "", localBase, cancellation.Token);
-                    if (lease == null || !StillCurrent()) return;
+                    if (lease == null || !SameInput() || _preferredCaptionKey != option.Key) return;
                     var previousIds = MediaPlayer.SpuDescription.Select(t => t.Id).ToHashSet();
-                    if (!MediaPlayer.AddSlave(MediaSlaveType.Subtitle, new Uri(lease.Path).AbsoluteUri, select: true)) return;
+                    previousIds.UnionWith((_currentMedia?.Tracks ?? []).Where(t => t.TrackType == TrackType.Text).Select(t => t.Id));
+                    if (!MediaPlayer.AddSlave(MediaSlaveType.Subtitle, new Uri(lease.Path).AbsoluteUri, select: false)) return;
                     // Once attached, retain the owned file until this input stops,
                     // even if the user changes caption choice during native loading.
                     _preparedEmbeddedCaptions[option.Key] = (option, -1, lease);
                     attached = true;
-                    for (int attempt = 0; attempt < 100 && StillCurrent(); attempt++)
+                    for (int attempt = 0; attempt < 100 && SameInput(); attempt++)
                     {
-                        int id = MediaPlayer.Spu;
-                        if (id >= 0 && !previousIds.Contains(id))
+                        var registered = MediaPlayer.SpuDescription.Where(t => t.Id >= 0 && !previousIds.Contains(t.Id)).Take(2).ToArray();
+                        if (registered.Length == 1)
                         {
+                            int id = registered[0].Id;
                             _preparedEmbeddedCaptions[option.Key] = (option, id, lease);
-                            _pendingEmbeddedCaptionKey = null;
+                            if (_pendingEmbeddedCaptionKey == option.Key) _pendingEmbeddedCaptionKey = null;
                             _restoreCaptionSelection = false;
+                            if (_preferredCaptionKey == option.Key) MediaPlayer.SetSpu(id);
                             RefreshCaptionState();
                             RedrawPausedNativeFrame();
                             AppLogger.Log("Prepared the selected embedded text caption for independent native seeking.");
@@ -864,6 +871,7 @@ namespace UniversalMediaOS.WPF.ViewModels
                         }
                         await Task.Delay(25, cancellation.Token);
                     }
+                    AppLogger.Log("Derived caption registration was not uniquely resolved; retaining original native choices.", "WARNING");
                 }
                 catch (OperationCanceledException) { }
                 catch (Exception ex) { AppLogger.Log($"Local caption preparation unavailable: {ex.Message}", "WARNING"); }
@@ -876,15 +884,15 @@ namespace UniversalMediaOS.WPF.ViewModels
                         _pendingEmbeddedCaptionKey = null;
                         if (!_isDisposing && !IsDisposed && generation == _playbackGeneration)
                         {
-                            var selected = CaptionOptions.FirstOrDefault(t => t.Key == _preferredCaptionKey);
+                            var selected = UniqueTrack(CaptionOptions, _preferredCaptionKey);
                             if (attached && selected != null) MediaPlayer.SetSpu(selected.NativeId);
                             RefreshCaptionState();
                         }
                     }
                     cancellation.Dispose();
                 }
-                bool StillCurrent() => !cancellation.IsCancellationRequested && !_isDisposing && !IsDisposed &&
-                    generation == _playbackGeneration && _preferredCaptionKey == option.Key;
+                bool SameInput() => !cancellation.IsCancellationRequested && !_isDisposing && !IsDisposed &&
+                    generation == _playbackGeneration;
             }
         }
 

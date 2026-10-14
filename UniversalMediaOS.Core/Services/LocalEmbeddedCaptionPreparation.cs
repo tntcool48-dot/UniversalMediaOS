@@ -80,7 +80,9 @@ public sealed class LocalEmbeddedCaptionPreparation
         if (value is "" or "und" or "unknown") return "";
         value = value switch { "ger" => "deu", "fre" => "fra", "dut" => "nld", _ => value };
         return CultureInfo.GetCultures(CultureTypes.NeutralCultures).FirstOrDefault(c =>
-            c.TwoLetterISOLanguageName == value || c.ThreeLetterISOLanguageName == value)?.TwoLetterISOLanguageName ?? value;
+            c.TwoLetterISOLanguageName == value || c.ThreeLetterISOLanguageName == value ||
+            c.EnglishName.Equals(value, StringComparison.OrdinalIgnoreCase) ||
+            c.NativeName.Equals(value, StringComparison.OrdinalIgnoreCase))?.TwoLetterISOLanguageName ?? value;
     }
 }
 
