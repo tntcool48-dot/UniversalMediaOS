@@ -7,6 +7,46 @@ namespace UniversalMediaOS.Tests.E2E;
 
 public sealed class QBitSessionCookieTests
 {
+    [Fact]
+    public async Task SeparateGateLoginsDoNotInheritAnotherJobsCachedSession()
+    {
+        var reservation = new TcpListener(IPAddress.Loopback, 0);
+        reservation.Start();
+        int port = ((IPEndPoint)reservation.LocalEndpoint).Port;
+        reservation.Stop();
+        string origin = $"http://127.0.0.1:{port}";
+        string name = $"QBT_SID_{port}";
+        using var listener = new HttpListener();
+        listener.Prefixes.Add(origin + "/");
+        listener.Start();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var receivedCookies = new List<string?>();
+        var server = Task.Run(async () =>
+        {
+            for (int request = 0; request < 2; request++)
+            {
+                var context = await listener.GetContextAsync().WaitAsync(deadline.Token);
+                try
+                {
+                    string? cookie = context.Request.Headers["Cookie"];
+                    receivedCookies.Add(cookie);
+                    context.Response.StatusCode = 204;
+                    // A valid cached session needs no replacement Set-Cookie.
+                    if (cookie?.Contains(name + "=", StringComparison.Ordinal) != true)
+                        context.Response.Headers.Add("Set-Cookie", name + "=fixture-session; HttpOnly; Path=/");
+                    context.Response.ContentLength64 = 0;
+                }
+                finally { context.Response.Close(); }
+            }
+        });
+        bool first = await new QBitLogicGate(origin).AuthenticateAsync(username: "fixture", password: "fixture", token: deadline.Token);
+        bool second = await new QBitLogicGate(origin).AuthenticateAsync(username: "fixture", password: "fixture", token: deadline.Token);
+        await server;
+        Assert.True(first);
+        Assert.True(second);
+        Assert.All(receivedCookies, cookie => Assert.True(string.IsNullOrEmpty(cookie)));
+    }
+
     [Theory]
     [InlineData("SID=fixture-session; HttpOnly; Path=/", 200, true)]
     [InlineData("QBT_SID_63483=fixture-session; HttpOnly; Path=/", 204, true)]

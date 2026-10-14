@@ -16,7 +16,10 @@ namespace UniversalMediaOS.Core.Routing
 
     public class QBitLogicGate
     {
-        private static readonly HttpClient _httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        // Each gate owns its explicit session. An implicit shared cookie can
+        // suppress Set-Cookie on a later login and misroute a resumed job.
+        private static readonly HttpClient _httpClient = new(new HttpClientHandler { UseCookies = false })
+            { Timeout = TimeSpan.FromSeconds(30) };
         private readonly string _qbitUrl;
         public string Cookie { get; private set; } = string.Empty;
 
