@@ -649,6 +649,13 @@ namespace UniversalMediaOS.WPF.Views
 
         private void PlaybackRoot_PreviewMouseDown(object sender, MouseButtonEventArgs e)
         {
+            if (DataContext is ViewModels.PlaybackViewModel { IsPersistenceWaiting: true })
+            {
+                // Disabled transport controls can pass clicks to the video
+                // beneath them. Consume before seek or fullscreen handlers.
+                e.Handled = true;
+                return;
+            }
             _controlsKeyboardInteraction = false;
             if (e.ChangedButton == MouseButton.Left && e.OriginalSource is Visual visual &&
                 (ReferenceEquals(visual, PlaybackSlider) || PlaybackSlider.IsAncestorOf(visual)))
@@ -831,6 +838,12 @@ namespace UniversalMediaOS.WPF.Views
             }
             if (Keyboard.FocusedElement is TextBox or ComboBox or Slider ||
                 (Keyboard.FocusedElement is System.Windows.Controls.Primitives.ButtonBase && e.Key is Key.Space or Key.Enter)) return;
+
+            if (vm.IsPersistenceWaiting && e.Key is Key.Space or Key.K or Key.Left or Key.Right or Key.M or Key.F or Key.P)
+            {
+                e.Handled = true;
+                return;
+            }
 
             bool handled = true;
             switch (e.Key)

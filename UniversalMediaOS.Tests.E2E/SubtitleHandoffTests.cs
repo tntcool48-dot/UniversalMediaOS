@@ -363,6 +363,13 @@ public sealed class SubtitleHandoffTests
         {
             _ = System.Windows.Threading.Dispatcher.CurrentDispatcher;
             using var profile = new CaptionTestDataScope();
+            using (var setup = new DatabaseContext())
+            {
+                // This case measures explicit reload intent after schema setup,
+                // independently of cold-profile database creation latency.
+                setup.Database.EnsureCreated();
+                Assert.Empty(setup.ResumeStates);
+            }
             var database = new ResumeProbeDatabaseContext();
             using var player = new PlaybackViewModel(database);
             player.SetTabActive(false);
@@ -422,7 +429,7 @@ public sealed class SubtitleHandoffTests
             optionsBuilder.LogTo(message =>
             {
                 // This isolated test uses fixture IDs only. Capture the database
-                // phase without moving schema setup or weakening its deadline.
+                // phase without weakening the resume deadline.
                 string summary = message.Replace('\r', ' ').Replace('\n', ' ');
                 Volatile.Write(ref _lastDatabaseEvent, summary[..Math.Min(summary.Length, 1000)]);
                 Volatile.Write(ref _lastEventAt, System.Diagnostics.Stopwatch.GetTimestamp());
