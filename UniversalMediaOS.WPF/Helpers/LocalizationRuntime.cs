@@ -181,6 +181,32 @@ namespace UniversalMediaOS.WPF.Helpers
             ["Choose subtitles or turn them off"] = "اختر الترجمة أو أوقفها",
             ["Turn subtitles on or off; keep the selected language"] = "شغّل الترجمة أو أوقفها مع الاحتفاظ باللغة المختارة",
             ["Quality advertised by this stream"] = "الجودة التي يعلنها مصدر الفيديو",
+            ["Retry playback"] = "إعادة محاولة التشغيل",
+            ["Open browser fallback"] = "فتح مشغل الموقع البديل",
+            ["Exit picture in picture"] = "الخروج من النافذة المصغرة",
+            ["Restore the app window."] = "استعادة نافذة التطبيق.",
+            ["Drag here to move the picture-in-picture window."] = "اسحب هنا لتحريك النافذة المصغرة.",
+            ["Previous episode"] = "الحلقة السابقة",
+            ["Next episode"] = "الحلقة التالية",
+            ["Stop playback"] = "إيقاف التشغيل",
+            ["Media URL or local file path"] = "رابط الوسائط أو مسار الملف المحلي",
+            ["Direct media URL or local file path; Enter to open."] = "رابط وسائط مباشر أو مسار ملف محلي؛ اضغط Enter للفتح.",
+            ["Open media URL or path"] = "فتح رابط الوسائط أو مسار الملف",
+            ["Choose a local media file"] = "اختيار ملف وسائط محلي",
+            ["Seek video"] = "تغيير موضع الفيديو",
+            ["Seek to a position in the video."] = "الانتقال إلى موضع في الفيديو.",
+            ["Playback volume"] = "مستوى صوت التشغيل",
+            ["Adjust playback volume."] = "ضبط مستوى صوت التشغيل.",
+            ["Toggle picture in picture"] = "تبديل النافذة المصغرة",
+            ["Picture in picture (P)"] = "النافذة المصغرة (P)",
+            ["Toggle fullscreen"] = "تبديل ملء الشاشة",
+            ["Fullscreen (F); Escape to return."] = "ملء الشاشة (F)؛ اضغط Escape للعودة.",
+            ["Play or pause"] = "تشغيل أو إيقاف مؤقت",
+            ["Play or pause (Space or K)"] = "تشغيل أو إيقاف مؤقت (Space أو K)",
+            ["Skip backward 10 seconds"] = "الرجوع 10 ثوانٍ",
+            ["Back 10 seconds (Left arrow)"] = "الرجوع 10 ثوانٍ (السهم الأيسر)",
+            ["Skip forward 30 seconds"] = "التقدم 30 ثانية",
+            ["Forward 30 seconds (Right arrow)"] = "التقدم 30 ثانية (السهم الأيمن)",
             ["Auto"] = "تلقائي",
             ["English (downloaded)"] = "الإنجليزية (ملف منزل)",
             ["Arabic (downloaded)"] = "العربية (ملف منزل)",
@@ -197,6 +223,7 @@ namespace UniversalMediaOS.WPF.Helpers
             ["Playback failed"] = "فشل التشغيل",
             ["Audio language unverified."] = "لغة الصوت غير مؤكدة.",
             ["Audio language unverified; check Audio in the player."] = "لغة الصوت غير مؤكدة؛ تحقق من مسار الصوت في المشغل.",
+            ["Audio tracks tagged {0}; check Audio in the player."] = "مسارات الصوت تحمل الوسوم {0}؛ تحقق من مسار الصوت في المشغل.",
             ["Back to Search"] = "العودة إلى البحث",
             ["Watch Options"] = "خيارات المشاهدة",
             ["Watch Now"] = "شاهد الآن",
@@ -236,10 +263,21 @@ namespace UniversalMediaOS.WPF.Helpers
         public static bool IsArabic(string? language) =>
             string.Equals(language, "Arabic", StringComparison.OrdinalIgnoreCase);
 
-        public static string Translate(string text) =>
-            _language == "Arabic" && Arabic.TryGetValue(text, out var translated)
-                ? translated
-                : text;
+        public static string Translate(string text)
+        {
+            if (_language != "Arabic") return text;
+            if (Arabic.TryGetValue(text, out var translated)) return translated;
+
+            // Translate only the app-owned notice wrapper. Decoder language
+            // tags remain literal metadata and do not establish spoken audio.
+            const string prefix = "Audio tracks tagged ";
+            const string suffix = "; check Audio in the player.";
+            if (text.StartsWith(prefix, StringComparison.Ordinal) && text.EndsWith(suffix, StringComparison.Ordinal) &&
+                text.Length > prefix.Length + suffix.Length)
+                return string.Format(CultureInfo.CurrentCulture, Arabic["Audio tracks tagged {0}; check Audio in the player."],
+                    text[prefix.Length..^suffix.Length]);
+            return text;
+        }
 
         public static void EnableAutoApply(FrameworkElement root, Func<bool> isArabic)
         {

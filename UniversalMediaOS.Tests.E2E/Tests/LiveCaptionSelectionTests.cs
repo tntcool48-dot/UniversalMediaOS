@@ -93,7 +93,12 @@ public sealed class LiveCaptionSelectionTests(ITestOutputHelper output)
         }
         bool arabicControls = false;
         Button? Button(string name) => Window().FindFirstDescendant(cf => cf.ByName(
-            arabicControls && name == "Toggle subtitles" ? "تبديل الترجمة" : name))?.AsButton();
+            arabicControls ? name switch
+            {
+                "Toggle subtitles" => "تبديل الترجمة",
+                "Play or pause" => "تشغيل أو إيقاف مؤقت",
+                _ => name
+            } : name))?.AsButton();
         ComboBox? Captions() => Window().FindFirstDescendant(cf => cf.ByName(arabicControls ? "مسار الترجمة" : "Subtitle track"))?.AsComboBox();
         double Position() => Window().FindFirstDescendant(cf => cf.ByAutomationId("PlaybackSlider"))?
             .Patterns.RangeValue.Pattern.Value.Value ?? 0;

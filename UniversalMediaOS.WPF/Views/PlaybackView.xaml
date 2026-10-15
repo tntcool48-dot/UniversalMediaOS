@@ -158,12 +158,12 @@
                             <Button Content="{helpers:Loc Retry stream}"
                                     Command="{Binding RetryPlaybackCommand}"
                                     Style="{StaticResource PrimaryControlButtonStyle}"
-                                    AutomationProperties.Name="Retry playback"/>
+                                    AutomationProperties.Name="{helpers:Loc Retry playback}"/>
                             <Button Content="{helpers:Loc Open browser player}"
                                     Command="{Binding OpenWebFallbackCommand}"
                                     Style="{StaticResource ControlButtonStyle}"
                                     Visibility="{Binding HasWebFallback, Converter={StaticResource BoolToVisibility}}"
-                                    AutomationProperties.Name="Open browser fallback"/>
+                                    AutomationProperties.Name="{helpers:Loc Open browser fallback}"/>
                         </StackPanel>
                     </StackPanel>
                 </Border>
@@ -237,7 +237,7 @@
                                 <Button DockPanel.Dock="Right" Content="{helpers:Loc Restore}" Click="PictureInPictureButton_Click"
                                         Style="{StaticResource ControlButtonStyle}"
                                         Visibility="{Binding IsPictureInPictureMode, Converter={StaticResource BoolToVisibility}}"
-                                        AutomationProperties.Name="Exit picture in picture" ToolTip="Restore the app window."/>
+                                        AutomationProperties.Name="{helpers:Loc Exit picture in picture}" ToolTip="{helpers:Loc Restore the app window.}"/>
                                 <TextBlock DockPanel.Dock="Right" Text="{Binding EpisodeInfo}" Foreground="#CBD5E1"
                                            VerticalAlignment="Center" Margin="8,0"/>
                                 <TextBlock DockPanel.Dock="Right" Text="{helpers:LocValue PlaybackStatusText}" MaxWidth="160"
@@ -246,7 +246,7 @@
                                 <TextBlock x:Name="MediaTitleText" Text="{Binding MediaTitle}" Foreground="#F8FAFC"
                                            FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
                                            VerticalAlignment="Center" MouseLeftButtonDown="MediaTitleText_MouseLeftButtonDown"
-                                           ToolTip="Drag here to move the picture-in-picture window."/>
+                                           ToolTip="{helpers:Loc Drag here to move the picture-in-picture window.}"/>
                             </DockPanel>
                             </Border>
                             <Grid x:Name="OptionsArea" Grid.Row="1" Margin="0,6,0,8"
@@ -295,11 +295,11 @@
                                         <CheckBox Content="{helpers:Loc Auto next}" IsChecked="{Binding AutoPlayNext, Mode=TwoWay}"
                                                   IsEnabled="{Binding CanGoToNextEpisode}" Foreground="#CBD5E1" VerticalAlignment="Center" Margin="8,0"/>
                                         <Button Content="{helpers:Loc Previous}" Command="{Binding PreviousEpisodeCommand}" IsEnabled="{Binding CanGoToPreviousEpisode}"
-                                                Style="{StaticResource ControlButtonStyle}" AutomationProperties.Name="Previous episode"/>
+                                                Style="{StaticResource ControlButtonStyle}" AutomationProperties.Name="{helpers:Loc Previous episode}"/>
                                         <Button Content="{helpers:Loc Next}" Command="{Binding NextEpisodeCommand}" IsEnabled="{Binding CanGoToNextEpisode}"
-                                                Style="{StaticResource ControlButtonStyle}" AutomationProperties.Name="Next episode"/>
+                                                Style="{StaticResource ControlButtonStyle}" AutomationProperties.Name="{helpers:Loc Next episode}"/>
                                         <Button Content="{helpers:Loc Stop}" Command="{Binding StopCommand}" Style="{StaticResource ControlButtonStyle}"
-                                                AutomationProperties.Name="Stop playback"/>
+                                                AutomationProperties.Name="{helpers:Loc Stop playback}"/>
                                     </WrapPanel>
                                     <Grid Margin="0,6,0,0">
                                         <Grid.ColumnDefinitions>
@@ -309,15 +309,17 @@
                                         </Grid.ColumnDefinitions>
                                         <TextBox Text="{Binding SourceInput, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource AppTextBox}"
                                                  FlowDirection="LeftToRight"
-                                                 Height="34" VerticalContentAlignment="Center" AutomationProperties.Name="Media URL or local file path"
-                                                 ToolTip="Direct media URL or local file path; Enter to open.">
+                                                 Height="34" VerticalContentAlignment="Center" AutomationProperties.Name="{helpers:Loc Media URL or local file path}"
+                                                 ToolTip="{helpers:Loc Direct media URL or local file path; Enter to open.}">
                                             <TextBox.InputBindings><KeyBinding Key="Enter" Command="{Binding OpenSourceCommand}"/></TextBox.InputBindings>
                                         </TextBox>
                                         <Button Grid.Column="1" Content="{helpers:Loc Open URL}" Command="{Binding OpenSourceCommand}"
                                                 Style="{StaticResource PrimaryControlButtonStyle}" Margin="8,0,2,0"
-                                                AutomationProperties.Name="Open media URL or path"/>
+                                                AutomationProperties.AutomationId="OpenPlaybackSource"
+                                                AutomationProperties.Name="{helpers:Loc Open media URL or path}"/>
                                         <Button Grid.Column="2" Content="{helpers:Loc Open File}" Click="OpenMediaFileButton_Click"
-                                                Style="{StaticResource ControlButtonStyle}" AutomationProperties.Name="Choose a local media file"/>
+                                                Style="{StaticResource ControlButtonStyle}" AutomationProperties.AutomationId="ChoosePlaybackFile"
+                                                AutomationProperties.Name="{helpers:Loc Choose a local media file}"/>
                                     </Grid>
                                 </StackPanel>
                                 </ScrollViewer>
@@ -346,7 +348,7 @@
                                         PreviewMouseLeftButtonDown="PlaybackSlider_PreviewMouseLeftButtonDown"
                                         PreviewMouseLeftButtonUp="PlaybackSlider_PreviewMouseLeftButtonUp"
                                         LostMouseCapture="PlaybackSlider_LostMouseCapture"
-                                        AutomationProperties.Name="Seek video" ToolTip="Seek to a position in the video."/>
+                                        AutomationProperties.Name="{helpers:Loc Seek video}" ToolTip="{helpers:Loc Seek to a position in the video.}"/>
                                 <TextBlock Grid.Column="2" Text="{Binding DurationText}" Foreground="#CBD5E1" FontSize="12"
                                            VerticalAlignment="Center" TextAlignment="Right" Width="48"/>
                             </Grid>
@@ -366,21 +368,21 @@
                                         <Slider Width="90" Minimum="0" Maximum="100"
                                                 Value="{Binding Volume, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                                 Foreground="#14B8A6" VerticalAlignment="Center"
-                                                AutomationProperties.Name="Playback volume" ToolTip="Adjust playback volume."/>
+                                                AutomationProperties.Name="{helpers:Loc Playback volume}" ToolTip="{helpers:Loc Adjust playback volume.}"/>
                                     </StackPanel>
                                     <Button Content="PiP" Click="PictureInPictureButton_Click" Style="{StaticResource ControlButtonStyle}"
-                                            AutomationProperties.Name="Toggle picture in picture" ToolTip="Picture in picture (P)"/>
+                                            AutomationProperties.Name="{helpers:Loc Toggle picture in picture}" ToolTip="{helpers:Loc Picture in picture (P)}"/>
                                     <Button Content="{helpers:Loc Full}" Click="FullscreenButton_Click" Style="{StaticResource ControlButtonStyle}"
-                                            AutomationProperties.Name="Toggle fullscreen" ToolTip="Fullscreen (F); Escape to return."/>
+                                            AutomationProperties.Name="{helpers:Loc Toggle fullscreen}" ToolTip="{helpers:Loc Fullscreen (F); Escape to return.}"/>
                                 </StackPanel>
                                 <StackPanel Orientation="Horizontal">
                                     <Button Content="{Binding PlayPauseText}" Command="{Binding TogglePlayPauseCommand}"
                                             Style="{StaticResource PrimaryControlButtonStyle}"
-                                            AutomationProperties.Name="Play or pause" ToolTip="Play or pause (Space or K)"/>
+                                            AutomationProperties.Name="{helpers:Loc Play or pause}" ToolTip="{helpers:Loc Play or pause (Space or K)}"/>
                                     <Button Content="-10s" Command="{Binding SkipBackwardCommand}" Style="{StaticResource ControlButtonStyle}"
-                                            AutomationProperties.Name="Skip backward 10 seconds" ToolTip="Back 10 seconds (Left arrow)"/>
+                                            AutomationProperties.Name="{helpers:Loc Skip backward 10 seconds}" ToolTip="{helpers:Loc Back 10 seconds (Left arrow)}"/>
                                     <Button Content="+30s" Command="{Binding SkipForwardCommand}" Style="{StaticResource ControlButtonStyle}"
-                                            AutomationProperties.Name="Skip forward 30 seconds" ToolTip="Forward 30 seconds (Right arrow)"/>
+                                            AutomationProperties.Name="{helpers:Loc Skip forward 30 seconds}" ToolTip="{helpers:Loc Forward 30 seconds (Right arrow)}"/>
                                 </StackPanel>
                             </DockPanel>
                                 </Grid>
@@ -408,7 +410,7 @@
                     Click="PictureInPictureButton_Click"
                     Style="{StaticResource ControlButtonStyle}"
                     Visibility="{Binding IsPictureInPictureMode, Converter={StaticResource BoolToVisibility}}"
-                    AutomationProperties.Name="Exit picture in picture"/>
+                    AutomationProperties.Name="{helpers:Loc Exit picture in picture}"/>
               <ContentPresenter Content="{Binding}" ContentTemplate="{StaticResource PersistenceWaitingOverlayTemplate}"/>
             </Grid>
         </Grid>
