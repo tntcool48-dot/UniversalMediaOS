@@ -274,7 +274,13 @@ public sealed class DownloadQueueService : IDisposable
         RaiseJobsChanged();
         if (activeCts == null) return true;
 
-        bool stopped = await _executor.PauseActiveAsync(token);
+        bool stopped;
+        try { stopped = await _executor.PauseActiveAsync(token); }
+        catch (Exception error)
+        {
+            AppLogger.Log($"Download pause was not confirmed: {error.Message}", "WARN");
+            stopped = false;
+        }
         if (stopped)
         {
             TryCancel(activeCts);
@@ -284,10 +290,11 @@ public sealed class DownloadQueueService : IDisposable
         lock (_sync)
         {
             if (job.Status == DownloadJobStatus.Pausing)
-                SetStatus(job, DownloadJobStatus.Running, "The torrent client rejected the pause request");
+                SetStatus(job, DownloadJobStatus.Running, "The torrent client could not confirm the pause request");
         }
         PersistQueue();
         RaiseJobsChanged();
+        token.ThrowIfCancellationRequested();
         return false;
     }
 
@@ -351,7 +358,13 @@ public sealed class DownloadQueueService : IDisposable
         RaiseJobsChanged();
         if (activeCts == null) return true;
 
-        bool stopped = await _executor.CancelActiveAsync(token);
+        bool stopped;
+        try { stopped = await _executor.CancelActiveAsync(token); }
+        catch (Exception error)
+        {
+            AppLogger.Log($"Download cancel was not confirmed: {error.Message}", "WARN");
+            stopped = false;
+        }
         if (stopped)
         {
             TryCancel(activeCts);
@@ -361,10 +374,11 @@ public sealed class DownloadQueueService : IDisposable
         lock (_sync)
         {
             if (job.Status == DownloadJobStatus.Cancelling)
-                SetStatus(job, DownloadJobStatus.Running, "The torrent client rejected the cancel request");
+                SetStatus(job, DownloadJobStatus.Running, "The torrent client could not confirm the cancel request");
         }
         PersistQueue();
         RaiseJobsChanged();
+        token.ThrowIfCancellationRequested();
         return false;
     }
 

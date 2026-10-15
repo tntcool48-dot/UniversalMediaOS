@@ -172,6 +172,36 @@ public sealed class DownloadQueueServiceTests
         while (!predicate()) await Task.Delay(20, timeout.Token);
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task UnconfirmedControlRestoresRunningWithoutCancellingTheTransfer(bool cancel, bool requestCancelled)
+    {
+        using var sandbox = new QueueSandbox();
+        using var controlToken = new CancellationTokenSource();
+        var executor = new ControlledExecutor();
+        using var queue = new DownloadQueueService(sandbox.QueuePath, executor);
+        var job = queue.Enqueue("Unconfirmed external control");
+        await executor.WaitForStartAsync(job.Id);
+        await WaitUntilAsync(() => job.Progress == 25);
+        if (requestCancelled) controlToken.Cancel();
+        executor.ControlError = requestCancelled ? new OperationCanceledException(controlToken.Token) : new IOException("WebUI lookup unavailable");
+        Task<bool> Control() => cancel ? queue.CancelAsync(job.Id, controlToken.Token) : queue.PauseAsync(job.Id, controlToken.Token);
+        if (requestCancelled) await Assert.ThrowsAnyAsync<OperationCanceledException>(Control);
+        else Assert.False(await Control());
+
+        Assert.Equal(DownloadJobStatus.Running, job.Status);
+        Assert.True(job.CanPause);
+        Assert.True(job.CanCancel);
+        var persisted = JsonSerializer.Deserialize<List<DownloadQueueJob>>(await File.ReadAllTextAsync(sandbox.QueuePath));
+        Assert.Equal(DownloadJobStatus.Running, Assert.Single(persisted!).Status);
+        executor.ControlError = null;
+        executor.Complete(job.Id, true);
+        await WaitUntilAsync(() => job.Status == DownloadJobStatus.Completed);
+    }
+
     private sealed class ControlledExecutor : IDownloadJobExecutor
     {
         private readonly ConcurrentDictionary<Guid, TaskCompletionSource<DownloadExecutionResult>> _executions = new();
@@ -180,6 +210,7 @@ public sealed class DownloadQueueServiceTests
         public int PauseCalls { get; private set; }
         public int CancelCalls { get; private set; }
         public TaskCompletionSource<bool>? PauseCompletion { get; init; }
+        public Exception? ControlError { get; set; }
 
         public async Task<DownloadExecutionResult> ExecuteAsync(
             DownloadQueueJob job,
@@ -199,12 +230,14 @@ public sealed class DownloadQueueServiceTests
         public Task<bool> PauseActiveAsync(CancellationToken token)
         {
             PauseCalls++;
+            if (ControlError != null) return Task.FromException<bool>(ControlError);
             return PauseCompletion?.Task ?? Task.FromResult(true);
         }
 
         public Task<bool> CancelActiveAsync(CancellationToken token)
         {
             CancelCalls++;
+            if (ControlError != null) return Task.FromException<bool>(ControlError);
             return Task.FromResult(true);
         }
 

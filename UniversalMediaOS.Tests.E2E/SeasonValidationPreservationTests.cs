@@ -3,6 +3,7 @@ using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.Json;
 using UniversalMediaOS.Core.Archiving;
 using UniversalMediaOS.Core.Configuration;
 using UniversalMediaOS.Core.Helpers;
@@ -139,7 +140,7 @@ public sealed class SeasonValidationPreservationTests
                     }
                     else if (path == "/api/v2/torrents/info")
                     {
-                        body = $"[{{\"hash\":\"{Hash}\",\"progress\":1,\"state\":\"stoppedUP\"}}]";
+                        body = JsonSerializer.Serialize(new[] { new { hash = Hash, save_path = Configuration.GetSetting("DownloadDirectory"), progress = 1, state = "stoppedUP" } });
                     }
                     else if (path == "/api/v2/torrents/files")
                     {

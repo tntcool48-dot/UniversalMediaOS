@@ -9,12 +9,12 @@ namespace UniversalMediaOS.Tests.E2E;
 public sealed class QBitAddResponseTests
 {
     [Theory]
-    [InlineData("Ok.", 200, true)]
-    [InlineData("{\"success_count\":1,\"failure_count\":0,\"pending_count\":0,\"added_torrent_ids\":[\"19a349ab37182209c745ed55798debc022db9149\"]}", 200, true)]
-    [InlineData("{\"success_count\":0,\"failure_count\":0,\"pending_count\":1,\"added_torrent_ids\":[]}", 202, true)]
-    [InlineData("{\"success_count\":0,\"failure_count\":1,\"pending_count\":0,\"added_torrent_ids\":[]}", 200, false)]
-    [InlineData("{\"success_count\":1}", 200, false)]
-    public async Task SingleMagnetAcceptsLegacyOrExplicitAcceptedResult(string body, int status, bool expected)
+    [InlineData("Ok.", 200, QBitAddOutcome.Accepted)]
+    [InlineData("{\"success_count\":1,\"failure_count\":0,\"pending_count\":0,\"added_torrent_ids\":[\"19a349ab37182209c745ed55798debc022db9149\"]}", 200, QBitAddOutcome.Accepted)]
+    [InlineData("{\"success_count\":0,\"failure_count\":0,\"pending_count\":1,\"added_torrent_ids\":[]}", 202, QBitAddOutcome.Accepted)]
+    [InlineData("{\"success_count\":0,\"failure_count\":1,\"pending_count\":0,\"added_torrent_ids\":[]}", 200, QBitAddOutcome.Rejected)]
+    [InlineData("{\"success_count\":1}", 200, QBitAddOutcome.Unconfirmed)]
+    public async Task SingleMagnetAcceptsLegacyOrExplicitAcceptedResult(string body, int status, QBitAddOutcome expected)
     {
         var reservation = new TcpListener(IPAddress.Loopback, 0);
         reservation.Start();
@@ -51,7 +51,7 @@ public sealed class QBitAddResponseTests
         });
         var gate = new QBitLogicGate(origin);
         Assert.True(await gate.AuthenticateAsync(username: "fixture", password: "fixture", token: deadline.Token));
-        bool accepted = await gate.AddMagnetAsync("magnet:?xt=urn:btih:19A349AB37182209C745ED55798DEBC022DB9149", "fixture", deadline.Token);
+        QBitAddOutcome accepted = await gate.AddMagnetAsync("magnet:?xt=urn:btih:19A349AB37182209C745ED55798DEBC022DB9149", "fixture", deadline.Token);
         await server;
         Assert.Equal(expected, accepted);
     }

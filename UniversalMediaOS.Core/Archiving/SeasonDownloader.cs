@@ -26,6 +26,7 @@ namespace UniversalMediaOS.Core.Archiving
         private readonly Func<string, long> _availableSpace;
         private readonly object _activeTransferLock = new();
         private string? _activeQBitInfoHash;
+        private bool _qbitAddPending;
         private TorrentManager? _activeMonoTorrentManager;
 
         public string DownloadDirectory => _downloadDir;
@@ -133,6 +134,7 @@ namespace UniversalMediaOS.Core.Archiving
                 List<string> downloadedFiles = new List<string>();
                 bool downloadComplete = false;
                 bool qbitAcceptedTransfer = false;
+                using var ownership = new TorrentDownloadOwnership(_downloadDir, _qbit.Endpoint);
 
                 // 3. Authenticate and Inject into qBittorrent WebUI if running
                 log("[P2P Season Downloader] Checking qBittorrent WebUI status...");
@@ -149,17 +151,38 @@ namespace UniversalMediaOS.Core.Archiving
                 
                 token.ThrowIfCancellationRequested();
 
+                if (ownership.IsReserved && (!qbitAuth || string.IsNullOrEmpty(infoHash)))
+                    throw new TorrentDownloadOwnershipException("qBittorrent may still own downloads in this folder. Restore its connection before retrying; existing files were retained and a second torrent engine was not started.");
+
                 if (qbitAuth && !string.IsNullOrEmpty(infoHash))
                 {
+                    bool alreadyPresent = await _qbit.HasTorrentAsync(infoHash, token, _downloadDir);
+                    ownership.Reserve();
                     lock (_activeTransferLock)
                     {
                         _activeQBitInfoHash = infoHash;
+                        _qbitAddPending = !alreadyPresent;
                     }
 
-                    bool alreadyPresent = await _qbit.HasTorrentAsync(infoHash, token);
-                    bool accepted = alreadyPresent
-                        ? await _qbit.ResumeTorrentAsync(infoHash, token)
-                        : await _qbit.AddMagnetAsync(magnetLink, _downloadDir, token);
+                    bool accepted;
+                    if (alreadyPresent) accepted = await _qbit.ResumeTorrentAsync(infoHash, token);
+                    else
+                    {
+                        QBitAddOutcome outcome = await _qbit.AddMagnetAsync(magnetLink, _downloadDir, token);
+                        if (outcome == QBitAddOutcome.Unconfirmed)
+                            throw new TorrentDownloadOwnershipException("qBittorrent's add response was not confirmed. It may already be downloading; retry will check that connection without starting a second torrent engine. Existing files were retained.");
+                        lock (_activeTransferLock) _qbitAddPending = false;
+                        accepted = outcome == QBitAddOutcome.Accepted;
+                        if (!accepted)
+                        {
+                            // A duplicate may have appeared between lookup and add.
+                            alreadyPresent = await _qbit.HasTorrentAsync(infoHash, token, _downloadDir);
+                            if (alreadyPresent) accepted = await _qbit.ResumeTorrentAsync(infoHash, token);
+                            else if (ownership.WasReserved)
+                                throw new TorrentDownloadOwnershipException("qBittorrent rejected this retry, but an earlier transfer may still own the folder. Restore its connection before retrying; existing files were retained.");
+                            else ownership.ReleaseDefiniteFirstRejection();
+                        }
+                    }
                     if (accepted)
                     {
                         qbitAcceptedTransfer = true;
@@ -176,7 +199,7 @@ namespace UniversalMediaOS.Core.Archiving
                                 {
                                     progressUpdate?.Invoke(p * 0.95); // leave 5% for validation visual feedback
                                 }
-                            }, StallTimeoutSeconds, token);
+                            }, StallTimeoutSeconds, token, _downloadDir);
                         }
                         catch (OperationCanceledException)
                         {
@@ -300,6 +323,7 @@ namespace UniversalMediaOS.Core.Archiving
             }
             catch (InsufficientDownloadSpaceException) { throw; }
             catch (NativeTorrentStorageException) { throw; }
+            catch (TorrentDownloadOwnershipException) { throw; }
             catch (Exception ex)
             {
                 log($"[P2P Season Downloader] CRITICAL ERROR during batch process: {ex.Message}");
@@ -310,6 +334,7 @@ namespace UniversalMediaOS.Core.Archiving
                 lock (_activeTransferLock)
                 {
                     _activeQBitInfoHash = null;
+                    _qbitAddPending = false;
                     _activeMonoTorrentManager = null;
                 }
             }
@@ -326,11 +351,13 @@ namespace UniversalMediaOS.Core.Archiving
             lock (_activeTransferLock)
             {
                 qbitHash = _activeQBitInfoHash;
+                if (_qbitAddPending) return false;
                 monoManager = _activeMonoTorrentManager;
             }
 
             if (!string.IsNullOrWhiteSpace(qbitHash))
             {
+                if (!await _qbit.HasTorrentAsync(qbitHash, token, _downloadDir)) return false;
                 return await _qbit.PauseTorrentAsync(qbitHash, token);
             }
 
@@ -355,11 +382,13 @@ namespace UniversalMediaOS.Core.Archiving
             lock (_activeTransferLock)
             {
                 qbitHash = _activeQBitInfoHash;
+                if (_qbitAddPending) return false;
                 monoManager = _activeMonoTorrentManager;
             }
 
             if (!string.IsNullOrWhiteSpace(qbitHash))
             {
+                if (!await _qbit.HasTorrentAsync(qbitHash, token, _downloadDir)) return false;
                 if (!await _qbit.PauseTorrentAsync(qbitHash, token)) return false;
                 return await _qbit.DeleteTorrentAsync(qbitHash, deleteFiles: false, token);
             }

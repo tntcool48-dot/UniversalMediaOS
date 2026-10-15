@@ -2,12 +2,16 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Net.Http;
+using System.IO;
+using System.Net;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace UniversalMediaOS.Core.Routing
 {
+    public enum QBitAddOutcome { Unconfirmed, Rejected, Accepted }
+
     public class QBitFileInfo
     {
         public string Name { get; set; } = string.Empty;
@@ -21,6 +25,7 @@ namespace UniversalMediaOS.Core.Routing
         private static readonly HttpClient _httpClient = new(new HttpClientHandler { UseCookies = false })
             { Timeout = TimeSpan.FromSeconds(30) };
         private readonly string _qbitUrl;
+        internal string Endpoint => _qbitUrl;
         public string Cookie { get; private set; } = string.Empty;
 
         public QBitLogicGate(string? baseUrl = "http://localhost:8080")
@@ -77,9 +82,9 @@ namespace UniversalMediaOS.Core.Routing
             return false;
         }
 
-        public async Task<bool> AddMagnetAsync(string magnetLink, string savePath, CancellationToken token = default)
+        public async Task<QBitAddOutcome> AddMagnetAsync(string magnetLink, string savePath, CancellationToken token = default)
         {
-            if (string.IsNullOrEmpty(Cookie)) return false;
+            if (string.IsNullOrEmpty(Cookie)) return QBitAddOutcome.Rejected;
 
             try
             {
@@ -99,20 +104,29 @@ namespace UniversalMediaOS.Core.Routing
                 if (response.IsSuccessStatusCode)
                 {
                     var body = await response.Content.ReadAsStringAsync(token);
-                    if (body.Trim().Equals("Ok.", StringComparison.OrdinalIgnoreCase)) return true;
+                    if (body.Trim().Equals("Ok.", StringComparison.OrdinalIgnoreCase)) return QBitAddOutcome.Accepted;
 
                     // New WebUI versions report one accepted or pending add as
                     // JSON. Retain ownership while metadata resolves so the
                     // native fallback cannot write the same transfer files.
                     using var result = JsonDocument.Parse(body);
                     var root = result.RootElement;
-                    return root.ValueKind == JsonValueKind.Object &&
+                    if (root.ValueKind == JsonValueKind.Object &&
                         root.TryGetProperty("failure_count", out var failures) && failures.TryGetInt32(out int failed) && failed == 0 &&
                         root.TryGetProperty("success_count", out var successes) && successes.TryGetInt32(out int added) &&
                         root.TryGetProperty("pending_count", out var pending) && pending.TryGetInt32(out int awaiting) &&
-                        ((added == 1 && awaiting == 0) || (added == 0 && awaiting == 1));
+                        ((added == 1 && awaiting == 0) || (added == 0 && awaiting == 1)))
+                        return QBitAddOutcome.Accepted;
+                    if (root.ValueKind == JsonValueKind.Object &&
+                        root.TryGetProperty("failure_count", out failures) && failures.TryGetInt32(out failed) && failed == 1 &&
+                        root.TryGetProperty("success_count", out successes) && successes.TryGetInt32(out added) && added == 0 &&
+                        root.TryGetProperty("pending_count", out pending) && pending.TryGetInt32(out awaiting) && awaiting == 0)
+                        return QBitAddOutcome.Rejected;
+                    return QBitAddOutcome.Unconfirmed;
                 }
-                return false;
+                return response.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.Unauthorized or
+                    HttpStatusCode.Forbidden or HttpStatusCode.UnsupportedMediaType or HttpStatusCode.Conflict
+                    ? QBitAddOutcome.Rejected : QBitAddOutcome.Unconfirmed;
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
@@ -122,7 +136,8 @@ namespace UniversalMediaOS.Core.Routing
             {
                 System.Diagnostics.Debug.WriteLine($"Failed to add magnet: {ex.Message}");
             }
-            return false;
+            // A transport/body failure does not prove the server did not add it.
+            return QBitAddOutcome.Unconfirmed;
         }
 
         public async Task ShutdownAsync(CancellationToken token = default)
@@ -143,7 +158,7 @@ namespace UniversalMediaOS.Core.Routing
         /// <summary>
         /// Polls the qBittorrent WebUI for download progress until the torrent completes or times out.
         /// </summary>
-        public async Task<bool> MonitorDownloadAsync(string infoHash, Action<string> logger, int stallTimeoutSeconds = 1800, CancellationToken token = default)
+        public async Task<bool> MonitorDownloadAsync(string infoHash, Action<string> logger, int stallTimeoutSeconds = 1800, CancellationToken token = default, string? expectedSavePath = null)
         {
             void Log(string msg) { logger?.Invoke(msg); System.Diagnostics.Debug.WriteLine(msg); }
             if (string.IsNullOrEmpty(Cookie)) return false;
@@ -167,6 +182,7 @@ namespace UniversalMediaOS.Core.Routing
                         if (doc.RootElement.GetArrayLength() > 0)
                         {
                             var torrent = doc.RootElement[0];
+                            ValidateTorrentLocation(torrent, infoHash, expectedSavePath);
                             
                             double progress = 0.0;
                             if (torrent.TryGetProperty("progress", out var progressProp))
@@ -204,6 +220,12 @@ namespace UniversalMediaOS.Core.Routing
                 catch (OperationCanceledException) when (token.IsCancellationRequested)
                 {
                     break;
+                }
+                catch (InvalidDataException)
+                {
+                    // A conflicting owner/location cannot become this transfer
+                    // merely by waiting for its progress to change.
+                    throw;
                 }
                 catch (Exception ex)
                 {
@@ -336,7 +358,7 @@ namespace UniversalMediaOS.Core.Routing
             return false;
         }
 
-        public async Task<bool> HasTorrentAsync(string infoHash, CancellationToken token = default)
+        public async Task<bool> HasTorrentAsync(string infoHash, CancellationToken token = default, string? expectedSavePath = null)
         {
             if (string.IsNullOrWhiteSpace(Cookie) || string.IsNullOrWhiteSpace(infoHash)) return false;
 
@@ -345,12 +367,28 @@ namespace UniversalMediaOS.Core.Routing
                 $"{_qbitUrl}/api/v2/torrents/info?hashes={Uri.EscapeDataString(infoHash)}");
             request.Headers.Add("Cookie", Cookie);
             using var response = await _httpClient.SendAsync(request, token);
-            if (!response.IsSuccessStatusCode) return false;
+            response.EnsureSuccessStatusCode();
 
             string json = await response.Content.ReadAsStringAsync(token);
             using var document = JsonDocument.Parse(json);
-            return document.RootElement.ValueKind == JsonValueKind.Array &&
-                   document.RootElement.GetArrayLength() > 0;
+            if (document.RootElement.ValueKind != JsonValueKind.Array)
+                throw new InvalidDataException("qBittorrent transfer lookup was not confirmed.");
+            if (document.RootElement.GetArrayLength() == 0) return false;
+            if (document.RootElement.GetArrayLength() != 1)
+                throw new InvalidDataException("qBittorrent returned ambiguous transfer ownership.");
+            ValidateTorrentLocation(document.RootElement[0], infoHash, expectedSavePath);
+            return true;
+        }
+
+        private static void ValidateTorrentLocation(JsonElement torrent, string infoHash, string? expectedSavePath)
+        {
+            if (!torrent.TryGetProperty("hash", out var hash) || hash.ValueKind != JsonValueKind.String ||
+                !string.Equals(hash.GetString(), infoHash, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("qBittorrent returned a different torrent; existing transfers were left untouched.");
+            if (expectedSavePath != null &&
+                (!torrent.TryGetProperty("save_path", out var path) || path.ValueKind != JsonValueKind.String ||
+                 !Archiving.TorrentDownloadOwnership.SamePath(path.GetString()!, expectedSavePath)))
+                throw new InvalidDataException("This qBittorrent transfer belongs to a different download folder; it was left untouched.");
         }
 
         public Task<bool> PauseTorrentAsync(string infoHash, CancellationToken token = default)
