@@ -547,11 +547,22 @@ public sealed class ResumeDispatcherContentionTests(ITestOutputHelper output)
         const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
         var read = typeof(PlaybackViewModel).GetField("_resumeLoadRead", flags)?.GetValue(player) as Task;
         var gate = typeof(PlaybackViewModel).GetField("_resumeDatabaseLock", flags)?.GetValue(player) as SemaphoreSlim;
+        var admission = typeof(PlaybackViewModel).GetField("_resumeAdmissionCompleted", flags)?.GetValue(player) as TaskCompletionSource;
+        var admissionWorker = typeof(PlaybackViewModel).GetField("_resumeAdmissionWorker", flags)?.GetValue(player) as Task;
+        var session = typeof(PlaybackViewModel).GetField("_progressSessionReady", flags)?.GetValue(player) as Task;
+        var deferred = typeof(PlaybackViewModel).GetField("_deferredResumeRequest", flags)?.GetValue(player);
+        var progress = typeof(PlaybackViewModel).GetField("_playbackProgress", flags)?.GetValue(player) as PlaybackProgressService;
+        var sharedGate = progress == null ? null :
+            typeof(PlaybackProgressService).GetField("_gate", flags)?.GetValue(progress) as SemaphoreSlim;
         var dispatcher = System.Windows.Application.Current?.Dispatcher ?? System.Windows.Threading.Dispatcher.CurrentDispatcher;
         ThreadPool.GetAvailableThreads(out int workers, out int completionPorts);
-        return $"read={read?.Status}; apply={player.ResumeLoadCompleted.Status}; " +
+        return $"read={read?.Status}; completion={player.ResumeLoadCompleted.Status}; " +
+            $"completion is admission={ReferenceEquals(player.ResumeLoadCompleted, admission?.Task)}; " +
+            $"waiting admission={player.IsPersistenceWaiting}; deferred source={deferred != null}; " +
+            $"admission worker={admissionWorker?.Status}; session={session?.Status}; " +
             $"pending reads={player.PendingResumeLoadCount}; pending saves={player.PendingResumeSaveCount}; " +
-            $"database gate={gate?.CurrentCount}; disposed={player.IsDisposed}; " +
+            $"shared pending={progress?.PendingPersistenceCount}; shared database gate={sharedGate?.CurrentCount}; " +
+            $"legacy database gate={gate?.CurrentCount}; disposed={player.IsDisposed}; " +
             $"dispatcher thread={dispatcher.Thread.ManagedThreadId}, alive={dispatcher.Thread.IsAlive}, shutdown={dispatcher.HasShutdownStarted}; " +
             $"pumping thread={Thread.CurrentThread.ManagedThreadId}; available workers={workers}, completion ports={completionPorts}; " +
             $"worker threads={ThreadPool.ThreadCount}, queued work={ThreadPool.PendingWorkItemCount}.";

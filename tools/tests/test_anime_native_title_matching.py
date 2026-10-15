@@ -36,6 +36,7 @@ class AnimeNativeTitleMatchingTests(unittest.TestCase):
             indexes = stack.enter_context(patch.object(scraper, 'fetch_indexed_sites', return_value=[site]))
             stack.enter_context(patch.object(scraper, 'DRISSION_AVAILABLE', True))
             stack.enter_context(patch.object(scraper, 'launch_browser', return_value=page))
+            stack.enter_context(patch.object(scraper, 'discover_native_catalog_identity', return_value={}))
             close = stack.enter_context(patch.object(scraper, 'close_browser'))
             fetch = stack.enter_context(patch.object(scraper, 'fetch_text', return_value=(200, BASE, html)))
             for name in ('setup_worker_hooks', 'set_navigation_referer', 'stop_media_listener'):
@@ -139,6 +140,34 @@ class AnimeNativeTitleMatchingTests(unittest.TestCase):
         found = scraper.check_episode_identity(self.identity(
             heading=decomposed, title=decomposed + ' Episode 1'), query, '1')
         self.assertEqual('consistent', found['status'])
+
+    def test_catalog_title_starting_with_play_or_watch_keeps_its_own_prefix(self):
+        for title in ('Play It Cool, Guys', 'Watch the Quiet Stars'):
+            with self.subTest(title=title):
+                for observed in (title, title + ' Episode 1', 'Play ' + title + ' Episode 1'):
+                    self.assertTrue(scraper.whole_catalog_title_matches(observed, title))
+                self.assertFalse(scraper.whole_catalog_title_matches(title + ' Season 2 Episode 1', title))
+
+    def test_whole_translated_catalog_title_accepts_apostrophe_typography(self):
+        alias = 'Frieren: Beyond Journey\u2019s End'
+        heading = "Frieren: Beyond Journey's End"
+        self.assertTrue(scraper.whole_catalog_title_matches(heading, alias))
+        self.assertFalse(scraper.whole_catalog_title_matches(heading + ' Season 2', alias))
+        found = scraper.check_episode_identity(self.identity(heading=heading, title=heading),
+            QUERY, '1', [alias], {'mal': 52991})
+        self.assertEqual('consistent', found['status'])
+        self.assertFalse(found['catalog_id_match'])
+
+    def test_selected_episode_number_on_its_own_first_line_keeps_the_complete_unit(self):
+        found = scraper.check_episode_identity(self.identity(
+            title=QUERY, active_episodes=["1\nThe Journey's End"]), QUERY, '1')
+        self.assertEqual('consistent', found['status'])
+        self.assertEqual([1], found['observed_episodes'])
+        for label in ('10\nAnother episode', '1.5\nSpecial', '1-2\nCombined', '1\nEpisode 10'):
+            with self.subTest(label=label):
+                found = scraper.check_episode_identity(self.identity(title=QUERY,
+                    active_episodes=[label]), QUERY, '1', catalog_ids={'mal': 52991})
+                self.assertEqual('conflict', found['status'])
 
     def test_short_or_unbounded_native_queries_remain_unsearchable(self):
         for query in ('旅', '旅人', '旅' * 141, '!?'):

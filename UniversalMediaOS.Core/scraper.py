@@ -298,11 +298,23 @@ def native_title_key(text):
 
 
 def native_title_matches(text, query):
-    key = native_title_key(query)
-    if not key or not isinstance(text, str) or len(text) > 800:
+    return bool(native_title_key(query)) and whole_catalog_title_matches(text, query)
+
+
+def whole_catalog_title_matches(text, query):
+    if not isinstance(query, str) or not query.strip() or len(query) > 140 or \
+            not isinstance(text, str) or len(text) > 800:
         return False
+    key = " ".join(unicodedata.normalize("NFC", query).casefold().split())
     observed = " ".join(unicodedata.normalize("NFC", text).casefold().split())
-    observed = re.sub(r"^watch\s+", "", observed)
+    if not native_title_key(query):
+        # Official translated titles and provider headings can differ only in
+        # apostrophe typography. Preserve every word and the native title itself.
+        for apostrophe in "\u2018\u2019":
+            key = key.replace(apostrophe, "'")
+            observed = observed.replace(apostrophe, "'")
+    if not observed.startswith(key):
+        observed = re.sub(r"^(?:watch|play)\s+", "", observed)
     if observed == key:
         return True
     if not observed.startswith(key):
@@ -342,7 +354,10 @@ def safe_title_aliases(query, aliases=None):
     titles = [query]
     if not isinstance(aliases, (list, tuple)):
         return titles
-    for alias in aliases[:2]:
+    # Internal callers pass the already accepted titles, including the original
+    # native title. It must not consume one of its two translated-title slots.
+    offset = 1 if native_title_key(query) and aliases and aliases[0] == query else 0
+    for alias in aliases[offset:offset + 2]:
         if not isinstance(alias, str) or len(alias) > 140:
             continue
         alias = alias.strip()
@@ -367,6 +382,74 @@ def safe_catalog_ids(ids):
             continue
         result[name] = int(raw)
     return result
+
+
+def _fetch_native_catalog_metadata(query, timeout):
+    import urllib.request
+    graphql = """query ($search: String!) {
+      Page(page: 1, perPage: 25) {
+        pageInfo { hasNextPage }
+        media(search: $search, type: ANIME) {
+          id idMal type title { native english romaji }
+        }
+      }
+    }"""
+    request = urllib.request.Request("https://graphql.anilist.co",
+        data=json.dumps({"query": graphql, "variables": {"search": query}}).encode("utf-8"),
+        headers={"Content-Type": "application/json", "Accept": "application/json",
+                 "User-Agent": "UniversalMediaOS/1.0"}, method="POST")
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        target = urlsplit(response.geturl())
+        if target.scheme != "https" or target.netloc != "graphql.anilist.co" or \
+                target.path not in ("", "/") or target.query or target.fragment:
+            raise ValueError("Catalog response left its authoritative endpoint")
+        raw = response.read(128 * 1024 + 1)
+        if len(raw) > 128 * 1024:
+            raise ValueError("Catalog response exceeded its size limit")
+        return json.loads(raw)
+
+
+def discover_native_catalog_identity(query, deadline=None):
+    """Translate only one complete, uniquely established native catalog title."""
+    key = native_title_key(query)
+    if not key or deadline_expired(deadline):
+        return {}
+    try:
+        payload = _fetch_native_catalog_metadata(query, seconds_left(deadline, 4, minimum=0.01))
+        if deadline_expired(deadline) or not isinstance(payload, dict) or payload.get("errors"):
+            return {}
+        page = (payload.get("data") or {}).get("Page")
+        if not isinstance(page, dict) or not isinstance(page.get("pageInfo"), dict) or \
+                page["pageInfo"].get("hasNextPage") is not False:
+            return {}  # A partial search cannot establish uniqueness.
+        rows = page.get("media")
+        if not isinstance(rows, list) or not 0 < len(rows) <= 25:
+            return {}
+        matches = []
+        seen = set()
+        for row in rows:
+            if not isinstance(row, dict) or row.get("type") != "ANIME" or type(row.get("id")) is not int:
+                return {}
+            ids = safe_catalog_ids({"anilist": row.get("id"), "mal": row.get("idMal")})
+            titles = row.get("title")
+            if "anilist" not in ids or ids["anilist"] in seen or not isinstance(titles, dict) or \
+                    not isinstance(titles.get("native"), str) or not native_title_key(titles["native"]):
+                return {}
+            seen.add(ids["anilist"])
+            if native_title_key(titles["native"]) == key:
+                if row.get("idMal") is not None and (type(row["idMal"]) is not int or "mal" not in ids):
+                    return {}
+                matches.append((titles, ids))
+        if len(matches) != 1:
+            return {}
+        titles, ids = matches[0]
+        aliases = safe_title_aliases(query, [titles.get("english"), titles.get("romaji")])[1:]
+        if not aliases:
+            return {}
+        return {"title_aliases": aliases, "catalog_ids": ids}
+    except Exception as error:
+        log(f"Native-title catalog lookup unavailable: {type(error).__name__}")
+        return {}
 
 
 def safe_catalog_synonym(query, trusted_titles, synonyms, catalog_ids):
@@ -1691,16 +1774,21 @@ def looks_like_candidate_watch_url(url):
 
 
 def score_candidate_url(full_url, context, query, episode_id, title_aliases=None):
-    return max((_score_candidate_title(full_url, context, title, episode_id)
+    whole_titles = bool(native_title_key(query))
+    if whole_titles and native_path_conflicts(full_url, query):
+        return 0
+    return max((_score_candidate_title(full_url, context, title, episode_id, whole_titles)
                 for title in safe_title_aliases(query, title_aliases)), default=0)
 
 
-def _score_candidate_title(full_url, context, query, episode_id):
-    if native_title_key(query):
-        if not native_title_matches(context or "", query) or native_path_conflicts(full_url, query):
+def _score_candidate_title(full_url, context, query, episode_id, whole_titles=False):
+    if native_title_key(query) or whole_titles:
+        if not whole_catalog_title_matches(context or "", query) or native_path_conflicts(full_url, query):
             return 0
         path = unquote(urlparse(full_url).path)
         if variant_conflicts(path, query):
+            return 0
+        if whole_titles and not native_title_key(query) and path_has_conflicting_title(full_url, query_keywords(query)):
             return 0
         # A romanized/opaque URL is only a candidate. No inferred translation
         # or catalog identity is retained before the visited page is checked.
@@ -2045,6 +2133,10 @@ def check_episode_identity(identity, query, episode_id, title_aliases=None, cata
     synonym = safe_catalog_synonym(query, trusted_titles, catalog_synonyms, catalog_ids)
     accepted_titles = trusted_titles + ([synonym] if synonym else [])
     def matches_title(title, accepted):
+        if native_title_key(query):
+            # Catalog translation is not provider evidence. Related shorts and
+            # sequels can share every keyword; the provider must name this work.
+            return whole_catalog_title_matches(title, accepted)
         if native_title_key(accepted):
             return native_title_matches(title, accepted)
         keywords = query_keywords(accepted)
@@ -2065,10 +2157,13 @@ def check_episode_identity(identity, query, episode_id, title_aliases=None, cata
     observed_episodes = set().union(*(episode_claims(title) for title in matching + active))
     unmapped_units = set().union(*(episode_unit_claims(label) for label in matching + active))
     for label in active:
-        if label.strip().isdigit():
-            observed_episodes.add(int(label.strip()))
-        elif re.fullmatch(EPISODE_UNIT_PATTERN, label.strip(), re.I):
-            unmapped_units.add(label.strip().lower())
+        # A selected episode can render its standalone number above its title.
+        # Keep fractional/ranged tokens whole rather than guessing their integer.
+        first_line = label.strip().splitlines()[0].strip() if label.strip() else ""
+        if first_line.isdigit():
+            observed_episodes.add(int(first_line))
+        elif re.fullmatch(EPISODE_UNIT_PATTERN, first_line, re.I):
+            unmapped_units.add(first_line.lower())
     unmapped_units = {unit for unit in unmapped_units if not unit.isdigit()}
     expected_ids = safe_catalog_ids(catalog_ids)
     observed_ids = {"anilist": set(), "mal": set()}
@@ -2625,6 +2720,9 @@ def do_resolve(query, episode_id, max_site_attempts, audio_preference="sub", bud
     except Exception:
         budget_seconds = DEFAULT_RESOLVE_BUDGET_SECONDS
     budget_seconds = max(35, min(budget_seconds, 240))
+    no_supplied_ids = catalog_ids is None or isinstance(catalog_ids, dict) and not catalog_ids
+    no_supplied_aliases = title_aliases is None or isinstance(title_aliases, (list, tuple)) and not title_aliases
+    discover_native = bool(native_title_key(query)) and no_supplied_aliases and no_supplied_ids
     accepted_titles = safe_title_aliases(query, title_aliases)
     catalog_ids = safe_catalog_ids(catalog_ids)
     synonym = safe_catalog_synonym(query, accepted_titles, catalog_synonyms, catalog_ids)
@@ -2657,6 +2755,12 @@ def do_resolve(query, episode_id, max_site_attempts, audio_preference="sub", bud
     browser_fallback = None
     deadline = time.monotonic() + budget_seconds
     try:
+        if discover_native:
+            identity = discover_native_catalog_identity(query, deadline)
+            if identity:
+                accepted_titles = safe_title_aliases(query, identity["title_aliases"])
+                catalog_ids = identity["catalog_ids"]
+                log(f"Native-title catalog established one exact entry; translated titles={len(accepted_titles) - 1}")
         for site in sites:
             if time.monotonic() >= deadline:
                 log("Resolve global deadline reached; returning best available result")
