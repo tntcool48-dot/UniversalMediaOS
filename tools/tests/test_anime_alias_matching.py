@@ -17,6 +17,38 @@ EPISODE_PAGE = 'https://provider.example/watch/sousou-no-frieren/ep-1'
 
 
 class AnimeAliasMatchingTests(unittest.TestCase):
+    def test_secondary_romaji_alias_cannot_rank_the_related_ona_as_the_catalog_series(self):
+        related = 'https://provider.example/watch/jB7ZzBoUG8i9LnBvNyVJh9swXaMBgZRi/sousou-no-frieren-no-mahou'
+        html = (f'<a href="{related}">Sousou no Frieren: \u25cf\u25cf no Mahou</a>'
+                f'<a href="{EPISODE_PAGE}">{ROMAJI}</a>')
+        self.assertEqual([EPISODE_PAGE], scraper.extract_candidate_links(
+            html, 'https://provider.example/search', ENGLISH, '3', [ROMAJI]))
+        page = SimpleNamespace(run_js=lambda *_: [
+            {'href': related, 'text': 'Sousou no Frieren: \u25cf\u25cf no Mahou', 'label': ''},
+            {'href': EPISODE_PAGE, 'text': ROMAJI, 'label': ''}])
+        self.assertEqual([EPISODE_PAGE], scraper.extract_browser_anchor_candidate_links(
+            page, 'https://provider.example', ENGLISH, '3', [ROMAJI]))
+
+    def test_secondary_catalog_alias_does_not_establish_a_related_primary_heading(self):
+        for heading, expected in ((ROMAJI + ' Episode 3', 'consistent'),
+                                  ('Sousou no Frieren: \u25cf\u25cf no Mahou', 'conflict')):
+            for observed_ids in ({}, {'mal': 52991}):
+                with self.subTest(heading=heading, ids=observed_ids):
+                    identity = {'url': 'https://provider.example/watch/AbCd1234',
+                        'heading': heading, 'active_episodes': ['Episode 3'],
+                        'primary_ids': observed_ids}
+                    self.assertEqual(expected, scraper.check_episode_identity(identity,
+                        ENGLISH, '3', [ROMAJI], {'mal': 52991})['status'])
+
+    def test_secondary_whole_alias_survives_its_own_duplicate_card_fields(self):
+        page_url = 'https://provider.example/watch/AbCd1234'
+        html = f'<a href="{page_url}"><img alt="{ROMAJI}">{ROMAJI}</a>'
+        self.assertEqual([page_url], scraper.extract_candidate_links(
+            html, 'https://provider.example/search', ENGLISH, '3', [ROMAJI]))
+        page = SimpleNamespace(run_js=lambda *_: [{'href': page_url, 'text': ROMAJI, 'label': ROMAJI}])
+        self.assertEqual([page_url], scraper.extract_browser_anchor_candidate_links(
+            page, 'https://provider.example', ENGLISH, '3', [ROMAJI]))
+
     def test_english_search_page_can_contain_only_the_same_shows_romaji_title(self):
         html = f'<a href="{EPISODE_PAGE}">{ROMAJI} Episode 1</a>'
         self.assertFalse(scraper.html_is_relevant(html, ENGLISH))

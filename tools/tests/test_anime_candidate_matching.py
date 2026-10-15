@@ -116,6 +116,15 @@ class AnimeCandidateMatchingTests(unittest.TestCase):
         self.assertIn(url + '/ep-2', scraper.episode_url_candidates(url, '2'))
         self.assertIn(url, scraper.episode_url_candidates(url, '2'))
 
+    def test_fixed_watch_route_keeps_the_discovered_path_before_trying_a_new_segment(self):
+        url = 'https://provider.example/watch/AbCd1234/sousou-no-frieren'
+        candidates = scraper.episode_url_candidates(url, '3')
+        self.assertEqual(url + '?ep=3', candidates[0])
+        self.assertIn(url + '/ep-3', candidates)
+        self.assertIn(url, candidates)
+        legacy = 'https://provider.example/watch/sousou-no-frieren'
+        self.assertEqual(legacy + '/ep-3', scraper.episode_url_candidates(legacy, '3')[0])
+
 
 class AnimeNonstandardEpisodeTests(unittest.TestCase):
     def test_fractional_or_range_labels_do_not_claim_an_integer_episode(self):

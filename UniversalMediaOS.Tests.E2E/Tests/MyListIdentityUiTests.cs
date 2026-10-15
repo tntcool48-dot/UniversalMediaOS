@@ -36,8 +36,12 @@ public sealed class MyListIdentityUiTests
         string libraryPath = Path.Combine(fixture.SandboxPath, "Local", "UniversalMediaOS", "OtherMedia", "audiovisual-library.json");
         string originalFavorites = File.ReadAllText(favoritesPath);
         string originalTelevision = JsonSerializer.Serialize(await new AudiovisualLibraryService(libraryPath).GetAsync(tvKey));
-        Window Window() => fixture.App.GetAllTopLevelWindows(fixture.Automation)
-            .Single(window => window.Properties.Name.ValueOrDefault == AppFixture.ExpectedMainWindowTitle);
+        Window Window()
+        {
+            var window = fixture.MainWindow;
+            Assert.Equal(fixture.App.ProcessId, window.Properties.ProcessId.Value);
+            return window;
+        }
         bool Has(string name) => Window().FindAllDescendants(cf => cf.ByName(name)).Any(element => !element.IsOffscreen);
         Button Button(string name) => Window().FindAllDescendants(cf => cf.ByName(name))
             .First(element => !element.IsOffscreen && element.ControlType == ControlType.Button).AsButton();

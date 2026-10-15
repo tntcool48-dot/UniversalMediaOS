@@ -1777,8 +1777,8 @@ def score_candidate_url(full_url, context, query, episode_id, title_aliases=None
     whole_titles = bool(native_title_key(query))
     if whole_titles and native_path_conflicts(full_url, query):
         return 0
-    return max((_score_candidate_title(full_url, context, title, episode_id, whole_titles)
-                for title in safe_title_aliases(query, title_aliases)), default=0)
+    return max((_score_candidate_title(full_url, context, title, episode_id, whole_titles or index > 0)
+                for index, title in enumerate(safe_title_aliases(query, title_aliases))), default=0)
 
 
 def _score_candidate_title(full_url, context, query, episode_id, whole_titles=False):
@@ -1942,7 +1942,7 @@ def extract_candidate_links(html, base_url, query, episode_id, title_aliases=Non
         if not looks_like_candidate_watch_url(full):
             continue
         score = score_candidate_url(full, " ".join(label), query, episode_id, titles)
-        if native_title_key(query):
+        if native_title_key(query) or len(titles) > 1:
             # A title/alt attribute belongs to this same card. Joining it to a
             # translated or duplicated label must not erase exact evidence.
             score = max([score] + [score_candidate_url(full, field, query, episode_id, titles)
@@ -1993,6 +1993,7 @@ def extract_browser_anchor_candidate_links(page, base_url, query, episode_id, ti
         return []
 
     candidates = []
+    whole_aliases = bool(native_title_key(query)) or len(safe_title_aliases(query, title_aliases)) > 1
     for anchor in anchors:
         try:
             href = anchor.get("href") if isinstance(anchor, dict) else ""
@@ -2004,7 +2005,7 @@ def extract_browser_anchor_candidate_links(page, base_url, query, episode_id, ti
                 anchor.get("label", "") if isinstance(anchor, dict) else "",
             ]))
             score = score_candidate_url(full, context, query, episode_id, title_aliases)
-            if native_title_key(query):
+            if whole_aliases:
                 score = max(score, *(score_candidate_url(full, anchor.get(field) or "",
                     query, episode_id, title_aliases) for field in ("text", "label")))
             # Zero is a rejected title, not a low-ranked match. A watch-path
@@ -2118,9 +2119,15 @@ def episode_url_candidates(base_url, episode_id):
             add(parsed._replace(path=replaced_path, query=urlencode(replaced_query)).geturl())
             return candidates  # Never append the original, explicitly wrong unit.
         else:
+            query_candidate = parsed._replace(query=urlencode(query_pairs + [("ep", episode_id)])).geturl()
+            segments = parsed.path.strip("/").split("/")
+            if len(segments) == 3 and all(segments) and segments[0].casefold() == "watch":
+                # Fixed watch/id/slug routers can reject an invented segment.
+                # Keep the discovered route first; observed unit proof still wins.
+                add(query_candidate)
             episode_path = parsed.path.rstrip("/") + f"/ep-{episode_id}"
             add(parsed._replace(path=episode_path).geturl())
-            add(parsed._replace(query=urlencode(query_pairs + [("ep", episode_id)])).geturl())
+            add(query_candidate)
     add(base_url)
     return candidates
 
@@ -2133,7 +2140,7 @@ def check_episode_identity(identity, query, episode_id, title_aliases=None, cata
     synonym = safe_catalog_synonym(query, trusted_titles, catalog_synonyms, catalog_ids)
     accepted_titles = trusted_titles + ([synonym] if synonym else [])
     def matches_title(title, accepted):
-        if native_title_key(query):
+        if native_title_key(query) or accepted in trusted_titles[1:]:
             # Catalog translation is not provider evidence. Related shorts and
             # sequels can share every keyword; the provider must name this work.
             return whole_catalog_title_matches(title, accepted)
