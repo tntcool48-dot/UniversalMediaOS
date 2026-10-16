@@ -56,6 +56,7 @@ namespace UniversalMediaOS.Core.Archiving
                     "Downloads")
                 : dDir;
             Directory.CreateDirectory(_downloadDir);
+            _downloadDir = TorrentDownloadOwnership.NormalizePath(_downloadDir);
 
             _rssParser = rssParser ?? new DualTrackerRssParser(_config);
 

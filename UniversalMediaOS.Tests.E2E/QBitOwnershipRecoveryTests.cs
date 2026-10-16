@@ -1,9 +1,11 @@
 using System.IO;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using UniversalMediaOS.Core.Archiving;
 using UniversalMediaOS.Core.Configuration;
 using UniversalMediaOS.Core.Helpers;
@@ -14,6 +16,72 @@ namespace UniversalMediaOS.Tests.E2E;
 
 public sealed class QBitOwnershipRecoveryTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void JunctionCannotHideAReservedPhysicalParent(bool aliasInAncestor)
+    {
+        using var fixture = new JunctionFixture();
+        using (var owner = new TorrentDownloadOwnership(fixture.Physical, "http://127.0.0.1:9001")) owner.Reserve();
+        string alias = fixture.Link("alias", aliasInAncestor ? fixture.Physical : fixture.Child);
+        string download = aliasInAncestor ? Path.Combine(alias, "child") : alias;
+        var error = Assert.Throws<TorrentDownloadOwnershipException>(() =>
+        {
+            using var unexpected = new TorrentDownloadOwnership(download, "http://127.0.0.1:9002");
+        });
+        Assert.Contains("overlapping", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void SamePhysicalRootAliasReusesTheExistingReservation()
+    {
+        using var fixture = new JunctionFixture();
+        using (var owner = new TorrentDownloadOwnership(fixture.Physical, "http://127.0.0.1:9001")) owner.Reserve();
+        string marker = Path.Combine(fixture.Physical, ".umos-torrent-owner.json");
+        byte[] originalMarker = File.ReadAllBytes(marker);
+        string alias = fixture.Link("alias", fixture.Physical);
+        using (var owner = new TorrentDownloadOwnership(alias, "http://127.0.0.1:9001"))
+        {
+            Assert.True(owner.WasReserved);
+            Assert.True(owner.IsReserved);
+            Assert.True(TorrentDownloadOwnership.SamePath(alias, fixture.Physical));
+        }
+        Assert.Equal(originalMarker, File.ReadAllBytes(marker));
+    }
+
+    [Fact]
+    public void SamePhysicalRootAliasesCannotAcquireTwoWriterLeases()
+    {
+        using var fixture = new JunctionFixture();
+        string alias = fixture.Link("alias", fixture.Physical);
+        using var first = new TorrentDownloadOwnership(fixture.Physical, "http://127.0.0.1:9001");
+        Assert.Throws<TorrentDownloadOwnershipException>(() =>
+        {
+            using var unexpected = new TorrentDownloadOwnership(alias, "http://127.0.0.1:9001");
+        });
+    }
+
+    [Fact]
+    public async Task RetargetingAJunctionAfterConstructionCannotMoveThePostedQBitSavePath()
+    {
+        using var folders = new JunctionFixture();
+        await using var fixture = new TransferFixture();
+        string alias = folders.Link("alias", folders.Physical);
+        fixture.Configuration.SetSetting("DownloadDirectory", alias);
+        using var downloader = fixture.CreateDownloader();
+        folders.Retarget(alias, folders.Foreign);
+
+        var attempt = await fixture.RunAsync(downloader: downloader);
+
+        Assert.Equal(1, fixture.AddCalls);
+        Assert.Equal(folders.Physical, fixture.PostedAddSavePath);
+        Assert.Equal(folders.Physical, downloader.DownloadDirectory);
+        AssertNoNativeFallback(attempt.Messages);
+        Assert.NotNull(attempt.Error); // The fixture returns a malformed add reply; no payload starts.
+        Assert.True(File.Exists(Path.Combine(folders.Physical, ".umos-torrent-owner.json")));
+        Assert.False(File.Exists(Path.Combine(folders.Foreign, ".umos-torrent-owner.json")));
+    }
+
     [Theory]
     [InlineData("malformed")]
     [InlineData("truncated")]
@@ -199,6 +267,74 @@ public sealed class QBitOwnershipRecoveryTests
     private static void AssertNoNativeFallback(IEnumerable<string> messages) => Assert.DoesNotContain(messages, IsNativeFallback);
     private sealed record Attempt(List<string> Messages, Exception? Error);
 
+    private sealed class JunctionFixture : IDisposable
+    {
+        private readonly string _root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "UniversalMediaOS-qbit-junction-" + Guid.NewGuid().ToString("N")));
+        private readonly List<string> _links = [];
+        private readonly byte[] _bytes = Encoding.UTF8.GetBytes("Preserve physical download bytes through alias checks.");
+        private readonly byte[] _foreignBytes = Encoding.UTF8.GetBytes("Preserve foreign bytes after junction retargeting.");
+        public string Physical => Path.Combine(_root, "physical");
+        public string Child => Path.Combine(Physical, "child");
+        public string Foreign => Path.Combine(_root, "foreign");
+        private string Sentinel => Path.Combine(Child, "retained.bin");
+        private string ForeignSentinel => Path.Combine(Foreign, "retained.bin");
+
+        public JunctionFixture()
+        {
+            Directory.CreateDirectory(Child);
+            File.WriteAllBytes(Sentinel, _bytes);
+            Directory.CreateDirectory(Foreign);
+            File.WriteAllBytes(ForeignSentinel, _foreignBytes);
+        }
+
+        public string Link(string name, string target)
+        {
+            string link = Path.GetFullPath(Path.Combine(_root, name));
+            AssertOwned(link);
+            AssertOwned(target);
+            var start = new ProcessStartInfo("cmd.exe") { UseShellExecute = false, CreateNoWindow = true,
+                RedirectStandardOutput = true, RedirectStandardError = true };
+            foreach (string argument in new[] { "/c", "mklink", "/J", link, target }) start.ArgumentList.Add(argument);
+            using var process = Process.Start(start)!;
+            Assert.True(process.WaitForExit(5000), "Owned junction creation must finish.");
+            Assert.True(process.ExitCode == 0, process.StandardError.ReadToEnd());
+            _links.Add(link);
+            Assert.True((File.GetAttributes(link) & FileAttributes.ReparsePoint) != 0);
+            return link;
+        }
+
+        public void Retarget(string link, string target)
+        {
+            AssertOwned(link);
+            AssertOwned(target);
+            Assert.True((File.GetAttributes(link) & FileAttributes.ReparsePoint) != 0);
+            Directory.Delete(link, recursive: false);
+            Assert.True(_links.Remove(link));
+            Assert.Equal(link, Link(Path.GetFileName(link), target));
+        }
+
+        private void AssertOwned(string path) => Assert.StartsWith(_root + Path.DirectorySeparatorChar,
+            Path.GetFullPath(path), StringComparison.OrdinalIgnoreCase);
+
+        public void Dispose()
+        {
+            Assert.Equal(_bytes, File.ReadAllBytes(Sentinel));
+            Assert.Equal(_foreignBytes, File.ReadAllBytes(ForeignSentinel));
+            foreach (string link in _links.AsEnumerable().Reverse())
+            {
+                AssertOwned(link);
+                Assert.True((File.GetAttributes(link) & FileAttributes.ReparsePoint) != 0);
+                Directory.Delete(link, recursive: false);
+                Assert.True(Directory.Exists(Child));
+            }
+            AssertOwned(Physical);
+            Assert.False((File.GetAttributes(_root) & FileAttributes.ReparsePoint) != 0);
+            Assert.StartsWith(Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath())) + Path.DirectorySeparatorChar,
+                Path.GetFullPath(_root), StringComparison.OrdinalIgnoreCase);
+            Directory.Delete(_root, recursive: true);
+        }
+    }
+
     private sealed class TransferFixture : IAsyncDisposable
     {
         private readonly HttpListener _listener = new();
@@ -220,6 +356,7 @@ public sealed class QBitOwnershipRecoveryTests
         public Task? HoldAddReply { get; set; }
         public int LookupStatus { get; set; } = 200;
         public int AddCalls, ResumeCalls, FilesCalls;
+        public string? PostedAddSavePath { get; private set; }
         public byte[] OriginalBytes { get; } = Encoding.UTF8.GetBytes("Retained permanent bytes belonging to an earlier transfer.");
         public string PreservedFile => Path.Combine(Root, "downloads", "earlier.mkv");
 
@@ -292,6 +429,9 @@ public sealed class QBitOwnershipRecoveryTests
                     }
                     else if (path == "/api/v2/torrents/add")
                     {
+                        using var reader = new StreamReader(context.Request.InputStream, Encoding.UTF8);
+                        string requestBody = await reader.ReadToEndAsync(_lifetime.Token);
+                        PostedAddSavePath = Regex.Match(requestBody, "name=\"?savepath\"?\\r?\\n\\r?\\n([^\\r\\n]+)").Groups[1].Value;
                         Interlocked.Increment(ref AddCalls);
                         OnAdd?.Invoke();
                         if (HoldAddReply != null) await HoldAddReply.WaitAsync(_lifetime.Token);

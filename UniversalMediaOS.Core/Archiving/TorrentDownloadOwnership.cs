@@ -101,8 +101,42 @@ internal sealed class TorrentDownloadOwnership : IDisposable
         }
     }
 
-    internal static string NormalizePath(string path) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
-    internal static bool SamePath(string first, string second) => string.Equals(NormalizePath(first), NormalizePath(second), StringComparison.OrdinalIgnoreCase);
+    internal static string NormalizePath(string path)
+    {
+        try { return ResolveDirectory(Path.GetFullPath(path), 0); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            throw new TorrentDownloadOwnershipException("The download folder's physical location could not be verified. Existing files were retained; restore its folder links or access before retrying.", error);
+        }
+    }
+
+    private static string ResolveDirectory(string path, int links)
+    {
+        if (links > 40) throw new IOException("The download folder has too many directory links.");
+        string root = Path.GetPathRoot(path) ?? throw new IOException("The download folder has no filesystem root.");
+        if (!Directory.Exists(root)) throw new DirectoryNotFoundException("The download filesystem root is unavailable.");
+        string current = root;
+        foreach (string part in path[root.Length..].Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+            StringSplitOptions.RemoveEmptyEntries))
+        {
+            var directory = new DirectoryInfo(Path.Combine(current, part));
+            if (!directory.Exists) throw new DirectoryNotFoundException("A download folder component is unavailable.");
+            if ((directory.Attributes & FileAttributes.ReparsePoint) != 0)
+            {
+                if (directory.ResolveLinkTarget(returnFinalTarget: true) is not DirectoryInfo target || !target.Exists)
+                    throw new IOException("A download directory link has no verifiable directory target.");
+                current = ResolveDirectory(Path.GetFullPath(target.FullName), links + 1);
+            }
+            else current = directory.FullName;
+        }
+        return Path.TrimEndingDirectorySeparator(current);
+    }
+
+    internal static bool SamePath(string first, string second)
+    {
+        try { return string.Equals(NormalizePath(first), NormalizePath(second), StringComparison.OrdinalIgnoreCase); }
+        catch (TorrentDownloadOwnershipException) { return false; }
+    }
     public void Dispose() => _lease.Dispose();
     private sealed record Owner(string Directory, string Endpoint);
 }
