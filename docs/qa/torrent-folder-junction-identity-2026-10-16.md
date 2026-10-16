@@ -14,3 +14,6 @@ This qualifies existing root/ancestor junction identity and the destination snap
 
 
 Source **d11c856f091afa5117fe57b64ed3b955604dcf45** is pushed normally to main and published in the existing folder. Both assembly versions match, and complete input/file-set/hash verification passed **189 inputs /1,365 published files**. All thirteen protected positions/configuration and the private Frieren **205.461-second** row are unchanged. No current-source UI/real-transfer run or duplicate broad local scope was performed for this filesystem/API repair. Its one [automatic source checkpoint](https://github.com/tntcool48-dot/UniversalMediaOS/actions/runs/38893377944) is in progress; the preceding 4ef6a0c run also remained in progress at its last observation. Neither is relabeled passed or rerun. Only checkpoint/readable-build metadata and its manifest entry changed after full package verification.
+
+
+The preceding **4ef6a0c** checkpoint later completed passed (**1,313 /zero failures /22 skips**, 13 minutes 10.264 seconds), with original diagnostics retained once. Its source excludes this d11c856 ownership repair; the newer source checkpoint remains separate and in progress.
