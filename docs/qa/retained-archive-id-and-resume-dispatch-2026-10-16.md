@@ -21,3 +21,9 @@ The final direct-ID class contains **13 cases**, including a later blank-title c
 ## Limits and next acceptance
 
 This batch does not close the broad provider or shared-reliability groups. Live Archive availability, catalog-bound DASH, exact cuts, spoken audio, full captions, sustained playback, pressured source replacement, OS shutdown and final package/release acceptance remain open. No original user/profile data or existing downloads were used by these regressions. Books remain deferred; Arabic cartoons remain last.
+
+## Source, package and checkpoint
+
+Source **c95c4f75d75cb87efda80d1433608022d390e5e9** is pushed normally to main and published once in the existing folder. Both assembly versions identify that source. Full hash/file-set verification passed **189 runtime source inputs /1,365 published files**; all three Python source/published pairs match. All fifteen protected resume rows/configuration and the separate anime episode-3 **205.461-second** row/configuration remain unchanged. Existing unrelated untracked paths remain untouched. No new visible UI or live Archive journey is claimed.
+
+Its single [automatic checkpoint](https://github.com/tntcool48-dot/UniversalMediaOS/actions/runs/38908410286) is in progress; no terminal result is claimed. The preceding catalog source 4d8bba9 separately passed 1,345 cases/zero failures/22 unchanged skips. This new candidate remains a recovery build with final release acceptance open.
