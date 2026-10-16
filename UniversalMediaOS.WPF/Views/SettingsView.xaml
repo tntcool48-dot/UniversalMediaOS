@@ -888,7 +888,7 @@
                 <TextBlock Text="{helpers:Loc Language}" Style="{StaticResource DisplayText}" FontSize="22"/>
                 <TextBlock Text="Set your preferred display language" Style="{StaticResource BodyText}" Foreground="{DynamicResource TextMuted}" Margin="0,3,0,20"/>
                 <Border Style="{StaticResource SettingsSectionCard}">
-                    <ComboBox SelectedValue="{Binding SelectedLanguage}" SelectedValuePath="Tag" ToolTip="Choose English or Arabic. Arabic switches the app layout to right-to-left.">
+                    <ComboBox SelectedValue="{Binding SelectedLanguage}" SelectedValuePath="Tag" AutomationProperties.Name="{helpers:Loc Language}" ToolTip="Choose English or Arabic. Arabic switches the app layout to right-to-left.">
                         <ComboBoxItem Content="{helpers:Loc English}" Tag="English"/>
                         <ComboBoxItem Content="{helpers:Loc Arabic}" Tag="Arabic"/>
                     </ComboBox>

@@ -40,7 +40,7 @@ public sealed class MangaTallPageScrollTests
 
         window.Patterns.Window.Pattern.SetWindowVisualState(WindowVisualState.Normal);
         window.Patterns.Transform.Pattern.Resize(1200, 800);
-        Button("Library").Invoke();
+        Button("Manga").Invoke();
         Wait(() => window.FindFirstDescendant(cf => cf.ByName("Open Mock Manga chapters")) != null, "Manga recommendation must load.");
         Button("Open Mock Manga chapters").Invoke();
         Wait(() => window.FindFirstDescendant(cf => cf.ByName("Open chapter 1")) != null, "Native chapter must load.");

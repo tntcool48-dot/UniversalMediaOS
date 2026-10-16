@@ -46,8 +46,8 @@ namespace UniversalMediaOS.Tests.E2E.Tests
         {
             var mainWindow = _fixture.MainWindow;
 
-            // 1. Find the Search navigation button
-            var searchButton = mainWindow.FindFirstDescendant(cf => cf.ByName("Search"))?.AsButton();
+            // 1. Find the Anime navigation button.
+            var searchButton = mainWindow.FindFirstDescendant(cf => cf.ByName("Anime"))?.AsButton();
             Assert.NotNull(searchButton);
 
             // 2. Invoke it

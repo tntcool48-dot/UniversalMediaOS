@@ -21,7 +21,7 @@ namespace UniversalMediaOS.Tests.E2E.Tests
         public void MangaWorkspace_ExposesAnEditableSearchAndWiredSearchCommand()
         {
             Button library = Assert.IsType<Button>(
-                _fixture.MainWindow.FindFirstDescendant(cf => cf.ByName("Library"))?.AsButton());
+                _fixture.MainWindow.FindFirstDescendant(cf => cf.ByName("Manga"))?.AsButton());
             library.Invoke();
 
             Button searchButton = WaitForButton("ExecuteSearch");

@@ -39,7 +39,7 @@ public sealed class MangaTabRetentionTests
             .Where(element => element.Name == "Manga").Select(element => element.AsButton()).ToArray();
         void OpenReader()
         {
-            Button("Library").Invoke();
+            Button("Manga").Invoke();
             Assert.True(SpinWait.SpinUntil(() => Window().FindFirstDescendant(cf => cf.ByName("Open Mock Manga chapters")) != null,
                 TimeSpan.FromSeconds(5)));
             Button("Open Mock Manga chapters").Invoke();

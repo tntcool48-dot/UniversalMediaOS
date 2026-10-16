@@ -59,7 +59,7 @@ public sealed class MangaPageRecoveryUiTests
             if (int.TryParse(Environment.GetEnvironmentVariable("UNIVERSAL_MEDIA_OS_MANGA_PAGE_UI_HOLD_MS"), out int hold))
                 Thread.Sleep(Math.Clamp(hold, 0, 60_000));
         }
-        Button("Library").Invoke();
+        Button("Manga").Invoke();
         WaitFor("Open Mock Manga chapters");
         Button("Open Mock Manga chapters").Invoke();
         WaitFor("Open chapter 1");

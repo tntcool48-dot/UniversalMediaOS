@@ -17,20 +17,34 @@ public sealed class LiveLocalizationTests
         Button Button(string name) => Window().FindFirstDescendant(cf =>
             cf.ByName(name).And(cf.ByControlType(ControlType.Button)))!.AsButton();
         bool HasText(string text) => Window().FindFirstDescendant(cf => cf.ByText(text)) != null;
+        void AssertNavigationNames(string anime, string manga)
+        {
+            var buttons = Window().FindAllDescendants(cf => cf.ByControlType(ControlType.Button));
+            var animeNavigation = Assert.Single(buttons, button =>
+                button.Properties.HelpText.ValueOrDefault == "Open anime search.");
+            var mangaNavigation = Assert.Single(buttons, button =>
+                button.Properties.HelpText.ValueOrDefault == "Open manga search.");
+            Assert.True(SpinWait.SpinUntil(() => animeNavigation.Name == anime && mangaNavigation.Name == manga,
+                TimeSpan.FromSeconds(3)), "The Anime and Manga navigation names must follow their visible localized labels.");
+        }
         void SelectLanguage(string section, string label)
         {
             Window().FindFirstDescendant(cf => cf.ByAutomationId("OpenSettings"))!.AsButton().Invoke();
             Button(section).Invoke();
-            Window().FindFirstDescendant(cf => cf.ByControlType(ControlType.ComboBox))!.AsComboBox().Select(label);
+            var language = Window().FindFirstDescendant(cf => cf.ByControlType(ControlType.ComboBox))!.AsComboBox();
+            Assert.Equal(section, language.Name);
+            language.Select(label);
         }
 
         string config = Path.Combine(fixture.SandboxPath, "Roaming", "UniversalMediaOS", "config.json");
         byte[] savedConfig = File.ReadAllBytes(config);
+        AssertNavigationNames("Anime", "Manga");
         Button("Player").Invoke();
         SelectLanguage("Language", "Arabic");
         Assert.True(SpinWait.SpinUntil(() => HasText("المشغل") && HasText("التعرف على ممثلي الأصوات") &&
             HasText("التشغيل") && HasText("أنمي"), TimeSpan.FromSeconds(3)),
             "Navigation and retained app-owned tab labels must update together.");
+        AssertNavigationNames("أنمي", "مانغا");
         Assert.Equal("افتح المشغل المستقل.", Button("Player").Properties.HelpText.ValueOrDefault);
         Assert.Contains(new[] { "جارٍ فحص الخدمات...", "جارٍ تجهيز الخدمات...", "فحوصات الخدمات معلقة",
             "اجتازت الخدمات الفحوصات", "الخدمات تتطلب الانتباه" }, HasText);
@@ -41,6 +55,7 @@ public sealed class LiveLocalizationTests
         Button("Run appearance sample action").Invoke();
         Assert.True(HasText("اكتمل الإجراء التجريبي (1)."));
         SelectLanguage("اللغة", "الإنجليزية");
+        AssertNavigationNames("Anime", "Manga");
         Button("Appearance").Invoke();
         Assert.True(HasText("Live preview"));
         Assert.True(HasText("Sample action completed (1)."));

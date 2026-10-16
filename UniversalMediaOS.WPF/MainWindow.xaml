@@ -164,8 +164,8 @@
                 Padding="8,6,8,0">
             <controls:GroupedNavigationPanel>
             <WrapPanel>
-                <Button Content="{helpers:Loc Anime}" AutomationProperties.Name="Search" Command="{Binding NavigateToSearchCommand}" Style="{StaticResource TopMediaButton}" Foreground="#A855F7" ToolTip="Open anime search."/>
-                <Button Content="{helpers:Loc Manga}" AutomationProperties.Name="Library" Command="{Binding NavigateToMangaCommand}" Style="{StaticResource TopMediaButton}" Foreground="#EC4899" ToolTip="Open manga search."/>
+                <Button Content="{helpers:Loc Anime}" AutomationProperties.Name="{helpers:Loc Anime}" Command="{Binding NavigateToSearchCommand}" Style="{StaticResource TopMediaButton}" Foreground="#A855F7" ToolTip="Open anime search."/>
+                <Button Content="{helpers:Loc Manga}" AutomationProperties.Name="{helpers:Loc Manga}" Command="{Binding NavigateToMangaCommand}" Style="{StaticResource TopMediaButton}" Foreground="#EC4899" ToolTip="Open manga search."/>
                 <Button Content="{helpers:Loc Movies}" AutomationProperties.Name="Movies" Command="{Binding NavigateToMoviesCommand}" Style="{StaticResource TopMediaButton}" Foreground="#06B6D4" ToolTip="Open movies."/>
                 <Button Content="{helpers:Loc Books}" AutomationProperties.Name="Books" Command="{Binding NavigateToBooksCommand}" Style="{StaticResource TopMediaButton}" Foreground="#F59E0B" ToolTip="Open books."/>
                 <Button Content="{helpers:Loc Key=TV Shows}" AutomationProperties.Name="TV Shows" Command="{Binding NavigateToTvShowsCommand}" Style="{StaticResource TopMediaButton}" Foreground="#10B981" ToolTip="Open TV shows."/>

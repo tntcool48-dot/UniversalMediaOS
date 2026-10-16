@@ -137,7 +137,7 @@ public sealed class MangaExternalReaderUiTests
         }
         public void OpenChapters()
         {
-            Button("Library").Invoke();
+            Button("Manga").Invoke();
             WaitFor("Open Mock Manga chapters");
             Button("Open Mock Manga chapters").Invoke();
             WaitFor("Open chapter 2");

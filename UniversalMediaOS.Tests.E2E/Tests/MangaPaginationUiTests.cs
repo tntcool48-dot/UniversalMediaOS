@@ -32,7 +32,7 @@ public sealed class MangaPaginationUiTests
         bool Has(string name) => Window().FindFirstDescendant(cf => cf.ByName(name)) != null;
         void WaitFor(string name) => Assert.True(SpinWait.SpinUntil(() => Has(name), TimeSpan.FromSeconds(5)), name);
 
-        Button("Library").Invoke();
+        Button("Manga").Invoke();
         WaitFor("Open Mock Manga chapters");
         Button("Open Mock Manga chapters").Invoke();
         WaitFor(warning);
