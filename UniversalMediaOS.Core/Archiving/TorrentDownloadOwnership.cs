@@ -1,6 +1,10 @@
 using System;
+using System.ComponentModel;
 using System.IO;
+using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.Json;
+using Microsoft.Win32.SafeHandles;
 
 namespace UniversalMediaOS.Core.Archiving;
 
@@ -120,12 +124,55 @@ internal sealed class TorrentDownloadOwnership : IDisposable
 
     internal static string NormalizePath(string path)
     {
-        try { return ResolveDirectory(Path.GetFullPath(path), 0); }
+        try
+        {
+            string resolved = ResolveDirectory(Path.GetFullPath(path), 0);
+            return OperatingSystem.IsWindows() ? ResolveWindowsDirectory(resolved) : resolved;
+        }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
             throw new TorrentDownloadOwnershipException("The download folder's physical location could not be verified. Existing files were retained; restore its folder links or access before retrying.", error);
         }
     }
+
+    private static string ResolveWindowsDirectory(string path)
+    {
+        // A SUBST drive is a DOS alias, not a directory reparse point. Ask the
+        // existing directory handle for its final name before checking ancestry
+        // or pinning a save path; this also expands short directory names.
+        string extendedPath = path.StartsWith(@"\\?\", StringComparison.Ordinal) ? path
+            : path.StartsWith(@"\\", StringComparison.Ordinal) ? @"\\?\UNC\" + path[2..]
+            : @"\\?\" + path;
+        using var handle = CreateFile(extendedPath, 0, FileShare.ReadWrite | FileShare.Delete,
+            IntPtr.Zero, 3, 0x02000000, IntPtr.Zero);
+        if (handle.IsInvalid)
+            throw new IOException("The physical download directory could not be opened.", new Win32Exception(Marshal.GetLastWin32Error()));
+        var buffer = new StringBuilder(512);
+        while (true)
+        {
+            uint length = GetFinalPathNameByHandle(handle, buffer, (uint)buffer.Capacity, 0);
+            if (length == 0)
+                throw new IOException("The physical download directory name could not be resolved.", new Win32Exception(Marshal.GetLastWin32Error()));
+            if (length >= buffer.Capacity)
+            {
+                if (length >= 32768) throw new IOException("The physical download directory name is too long.");
+                buffer.Capacity = checked((int)length + 1);
+                continue;
+            }
+            string result = buffer.ToString();
+            if (result.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase)) result = @"\\" + result[8..];
+            else if (result.StartsWith(@"\\?\", StringComparison.Ordinal)) result = result[4..];
+            if (!Path.IsPathFullyQualified(result)) throw new IOException("The physical download directory has no absolute DOS or network name.");
+            return Path.TrimEndingDirectorySeparator(result);
+        }
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle CreateFile(string path, uint access, FileShare sharing,
+        IntPtr security, uint creation, uint flags, IntPtr template);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetFinalPathNameByHandle(SafeFileHandle handle, StringBuilder path, uint maximum, uint flags);
 
     private static string ResolveDirectory(string path, int links)
     {
