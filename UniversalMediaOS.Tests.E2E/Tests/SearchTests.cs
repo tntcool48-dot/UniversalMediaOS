@@ -18,9 +18,10 @@ namespace UniversalMediaOS.Tests.E2E.Tests
             _fixture = fixture;
         }
 
-        private void NavigateTo(string tabName)
+        private void NavigateToSearch()
         {
-            var button = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByName(tabName))?.AsButton();
+            var button = _fixture.MainWindow.FindFirstDescendant(cf =>
+                cf.ByName("Anime").And(cf.ByControlType(ControlType.Button)))?.AsButton();
             Assert.NotNull(button);
             button.Invoke();
             Thread.Sleep(500);
@@ -29,7 +30,7 @@ namespace UniversalMediaOS.Tests.E2E.Tests
         [Fact]
         public void T1_Search_01_Basic_Keyword_Search()
         {
-            NavigateTo("Search");
+            NavigateToSearch();
 
             var searchBox = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByControlType(ControlType.Edit))?.AsTextBox();
             Assert.NotNull(searchBox);
@@ -51,7 +52,7 @@ namespace UniversalMediaOS.Tests.E2E.Tests
         {
             // App only has Anime search in SearchView, Manga in Library view. 
             // In SearchView, we search for Anime and verify results load.
-            NavigateTo("Search");
+            NavigateToSearch();
             var searchBox = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByControlType(ControlType.Edit))?.AsTextBox();
             Assert.NotNull(searchBox);
             searchBox.Text = "Monster";
@@ -69,7 +70,7 @@ namespace UniversalMediaOS.Tests.E2E.Tests
         [Fact(Skip = "Requires a paged mock response and a next-page action; the previous test inspected only the first result list.")]
         public void T1_Search_03_Search_Result_Pagination()
         {
-            NavigateTo("Search");
+            NavigateToSearch();
             // Perform a search that mocks hasNextPage.
             var searchBox = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByControlType(ControlType.Edit))?.AsTextBox();
             Assert.NotNull(searchBox);
@@ -88,7 +89,7 @@ namespace UniversalMediaOS.Tests.E2E.Tests
         [Fact(Skip = "Requires deterministic scored results; the previous test did not inspect fuzzy scores or ordering.")]
         public void T1_Search_04_Fuzzy_Match_Score_Ordering()
         {
-            NavigateTo("Search");
+            NavigateToSearch();
             var searchBox = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByControlType(ControlType.Edit))?.AsTextBox();
             Assert.NotNull(searchBox);
             searchBox.Text = "Slime";
@@ -106,7 +107,7 @@ namespace UniversalMediaOS.Tests.E2E.Tests
         [Fact(Skip = "Requires stopping or faulting the mock scraper endpoint; the previous test did not create an outage.")]
         public void T1_Search_05_Safe_Error_Display_On_Scraper_Offline()
         {
-            NavigateTo("Search");
+            NavigateToSearch();
             var searchBox = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByControlType(ControlType.Edit))?.AsTextBox();
             Assert.NotNull(searchBox);
             searchBox.Text = "Offline";
@@ -124,7 +125,7 @@ namespace UniversalMediaOS.Tests.E2E.Tests
         [Fact]
         public void T2_Search_01_Empty_Search_Input()
         {
-            NavigateTo("Search");
+            NavigateToSearch();
             var searchBox = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByControlType(ControlType.Edit))?.AsTextBox();
             Assert.NotNull(searchBox);
             searchBox.Text = "   "; // spaces
@@ -142,7 +143,7 @@ namespace UniversalMediaOS.Tests.E2E.Tests
         [Fact]
         public void T2_Search_02_Special_Characters_And_SQL_Injection()
         {
-            NavigateTo("Search");
+            NavigateToSearch();
             var searchBox = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByControlType(ControlType.Edit))?.AsTextBox();
             Assert.NotNull(searchBox);
             searchBox.Text = "' OR 1=1; -- <script>alert(1)</script>";
@@ -160,7 +161,7 @@ namespace UniversalMediaOS.Tests.E2E.Tests
         [Fact]
         public void T2_Search_03_Ultra_Long_Query_String()
         {
-            NavigateTo("Search");
+            NavigateToSearch();
             var searchBox = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByControlType(ControlType.Edit))?.AsTextBox();
             Assert.NotNull(searchBox);
             searchBox.Text = new string('A', 1000);
@@ -178,7 +179,7 @@ namespace UniversalMediaOS.Tests.E2E.Tests
         [Fact(Skip = "Requires an explicit null/empty mock response; the previous test relied on an uncontrolled query string.")]
         public void T2_Search_04_Scraper_Returns_Empty_Or_Null()
         {
-            NavigateTo("Search");
+            NavigateToSearch();
             var searchBox = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByControlType(ControlType.Edit))?.AsTextBox();
             Assert.NotNull(searchBox);
             searchBox.Text = "NonExistentShow12345";
@@ -196,7 +197,7 @@ namespace UniversalMediaOS.Tests.E2E.Tests
         [Fact]
         public void T2_Search_05_Rapid_Concurrent_Double_Searches()
         {
-            NavigateTo("Search");
+            NavigateToSearch();
             var searchBox = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByControlType(ControlType.Edit))?.AsTextBox();
             Assert.NotNull(searchBox);
             searchBox.Text = "Bleach";
