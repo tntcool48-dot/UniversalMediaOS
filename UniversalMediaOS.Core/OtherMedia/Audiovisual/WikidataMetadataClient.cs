@@ -95,7 +95,7 @@ internal sealed class WikidataMetadataClient : IAudiovisualMetadataClient
             var fetched = await _requests.FetchAsync(_provider, Url(new()
             {
                 ["action"] = "wbgetentities", ["ids"] = string.Join('|', ids),
-                ["props"] = "labels|descriptions|claims", ["languages"] = "en|mul"
+                ["props"] = "labels|descriptions|claims|aliases", ["languages"] = "en|mul"
             }), token).ConfigureAwait(false);
             outcomes.Add(fetched.Outcome);
             // Do not advance the cursor when enrichment fails: retry must fetch this page.
@@ -105,16 +105,24 @@ internal sealed class WikidataMetadataClient : IAudiovisualMetadataClient
                 return new([], null, [searched.Outcome, fetched.Outcome with
                 { Status = entityFailure, DiagnosticCode = "wikidata_api_error" }], IsPartial: true);
             var entities = document.RootElement.GetProperty("entities");
+            if (entities.ValueKind != JsonValueKind.Object) throw new JsonException();
             var items = new List<AudiovisualMediaItem>();
             bool partial = false;
             foreach (string id in ids)
             {
                 token.ThrowIfCancellationRequested();
-                if (!entities.TryGetProperty(id, out var entity) || entity.TryGetProperty("missing", out _))
-                { partial = true; continue; }
-                var item = ParseEntity(id, entity, request.Kind);
-                if (item != null) items.Add(item);
-                else partial = true;
+                try
+                {
+                    if (!entities.TryGetProperty(id, out var entity) || entity.TryGetProperty("missing", out _))
+                    { partial = true; continue; }
+                    var item = ParseEntity(id, entity, request.Kind);
+                    if (item != null) items.Add(item);
+                    else partial = true;
+                }
+                catch (Exception ex) when (ex is JsonException or InvalidOperationException or KeyNotFoundException or FormatException or OverflowException)
+                {
+                    partial = true;
+                }
             }
             if (_includePosters)
             {
@@ -213,10 +221,31 @@ internal sealed class WikidataMetadataClient : IAudiovisualMetadataClient
             {
                 PrimaryId = new("wikidata", "item", id), Kind = kind,
                 ContentForm = AudiovisualContentForm.Feature, Title = title, Year = year,
-                ImdbId = imdb, IsAnimated = animated ? true : null
+                ImdbId = imdb, IsAnimated = animated ? true : null,
+                AlternateTitles = ReadAliases(entity, title)
             },
             PosterUrl = poster.Length == 0 ? "" : "https://commons.wikimedia.org/wiki/Special:Redirect/file/" + Uri.EscapeDataString(poster)
         };
+    }
+
+    private static string[] ReadAliases(JsonElement entity, string title)
+    {
+        if (!entity.TryGetProperty("aliases", out var aliases) || aliases.ValueKind != JsonValueKind.Object)
+            return [];
+        var titles = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { title.Trim() };
+        foreach (string language in new[] { "en", "mul" })
+        {
+            if (!aliases.TryGetProperty(language, out var entries) || entries.ValueKind != JsonValueKind.Array)
+                continue;
+            foreach (var entry in entries.EnumerateArray())
+            {
+                if (Text(entry, "language") != language) continue;
+                string value = Text(entry, "value").Trim();
+                if (value.Length > 0 && seen.Add(value)) titles.Add(value);
+            }
+        }
+        return titles.ToArray();
     }
 
     private static IEnumerable<JsonElement> Values(JsonElement entity, string property)

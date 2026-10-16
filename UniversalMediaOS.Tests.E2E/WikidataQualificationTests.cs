@@ -1,6 +1,7 @@
 using System.IO;
 using System.Net;
 using System.Net.Http;
+using System.Text.Json.Nodes;
 using UniversalMediaOS.Core.OtherMedia;
 using Xunit;
 
@@ -21,6 +22,146 @@ public sealed class WikidataQualificationTests
         Assert.Equal(2, handler.Uris.Count);
         Assert.Contains("haswbstatement:P31=Q11424", Uri.UnescapeDataString(handler.Uris[0].Query));
         Assert.Contains("P31=Q202866", Uri.UnescapeDataString(handler.Uris[0].Query));
+    }
+
+    [Theory]
+    [InlineData("missing-labels")]
+    [InlineData("invalid-release-precision")]
+    [InlineData("non-object-entity")]
+    public async Task MalformedRecordedFilmRetainsValidNeighborsAndContinuation(string fault)
+    {
+        var fixture = Fixture("dune");
+        var entities = JsonNode.Parse(fixture.Entities)!;
+        var malformed = entities["entities"]!["Q60834962"]!;
+        if (fault == "missing-labels")
+            Assert.True(malformed.AsObject().Remove("labels"));
+        else if (fault == "non-object-entity")
+            entities["entities"]!["Q60834962"] = "invalid";
+        else
+            malformed["claims"]!["P577"]![0]!["mainsnak"]!["datavalue"]!["value"]!["precision"] = "invalid";
+
+        var handler = new Handler(_ => (fixture.Search, entities.ToJsonString()));
+        using var http = new HttpClient(handler);
+        var page = await new WikidataMetadataClient(new(http)).GetPageAsync(
+            new(AudiovisualMediaKind.Movie, AudiovisualCatalogMode.Search, "Dune"));
+
+        var retained = Assert.Single(page.Items, item => item.Identity.PrimaryId?.Value == "Q114819");
+        Assert.Equal("Dune", retained.Title);
+        Assert.Equal("Dune", retained.Identity.Title);
+        Assert.Equal(1984, retained.Identity.Year);
+        Assert.Equal(new("wikidata", "item", "Q114819"), retained.Identity.PrimaryId);
+        Assert.Equal("tt0087182", retained.Identity.ImdbId);
+        Assert.Equal(AudiovisualMediaKind.Movie, retained.Identity.Kind);
+        Assert.Equal(AudiovisualContentForm.Feature, retained.Identity.ContentForm);
+        Assert.DoesNotContain(page.Items, item => item.Identity.PrimaryId?.Value == "Q60834962");
+        Assert.True(page.IsPartial);
+        Assert.NotNull(page.NextToken);
+        Assert.Equal(2, handler.Uris.Count);
+    }
+
+    [Fact]
+    public async Task MalformedEntitiesEnvelopeFailsTheWholePageWithoutContinuation()
+    {
+        var handler = new Handler(_ => (Fixture("dune").Search, "{\"entities\":[]}"));
+        using var http = new HttpClient(handler);
+        var page = await new WikidataMetadataClient(new(http)).GetPageAsync(
+            new(AudiovisualMediaKind.Movie, AudiovisualCatalogMode.Search, "Dune"));
+
+        Assert.Empty(page.Items);
+        Assert.Null(page.NextToken);
+        Assert.True(page.IsPartial);
+        Assert.Equal(ProviderOutcomeStatus.InvalidResponse, page.Outcomes[^1].Status);
+        Assert.Equal("invalid_wikidata_payload", page.Outcomes[^1].DiagnosticCode);
+        Assert.Equal(2, handler.Uris.Count);
+    }
+
+    [Fact]
+    public async Task ObservedFilmAliasesAreRetainedForExactTitleYearEvidenceWithoutSharedIds()
+    {
+        var fixture = Fixture("dune");
+        var entities = JsonNode.Parse(fixture.Entities)!;
+        entities["entities"]!["Q60834962"]!["aliases"] = JsonNode.Parse("""
+        {
+          "en":[
+            {"language":"en","value":" Dune: Part One "},
+            {"language":"en","value":"dune: part one"},
+            {"language":"en","value":"Dune"},
+            {"language":"en","value":"Dune (2021 film)"},
+            {"language":"en","value":17},
+            null
+          ],
+          "mul":[
+            {"language":"mul","value":"Dune: Part One"},
+            {"language":"mul","value":"Dune: Part I"}
+          ],
+          "fr":[{"language":"fr","value":"Outside selected catalog languages"}]
+        }
+        """);
+        var handler = new Handler(_ => (fixture.Search, entities.ToJsonString()));
+        using var http = new HttpClient(handler);
+        var page = await new WikidataMetadataClient(new(http)).GetPageAsync(
+            new(AudiovisualMediaKind.Movie, AudiovisualCatalogMode.Search, "Dune"));
+        var film = Assert.Single(page.Items, item => item.Identity.PrimaryId?.Value == "Q60834962");
+
+        Assert.Equal(new[] { "Dune: Part One", "Dune (2021 film)", "Dune: Part I" }, film.Identity.AlternateTitles);
+        Assert.Equal("Dune", film.Title);
+        Assert.Equal(2021, film.Identity.Year);
+        Assert.Equal("tt1160419", film.Identity.ImdbId);
+        Assert.Empty(film.Identity.OriginalTitle);
+        Assert.Empty(film.OriginalLanguage);
+        var neighbor = Assert.Single(page.Items, item => item.Identity.PrimaryId?.Value == "Q114819");
+        Assert.Empty(neighbor.Identity.AlternateTitles);
+        Assert.Equal(1984, neighbor.Identity.Year);
+        Assert.Equal("tt0087182", neighbor.Identity.ImdbId);
+        Assert.NotNull(page.NextToken);
+        Assert.Equal(2, handler.Uris.Count);
+        Assert.Contains("aliases", Uri.UnescapeDataString(handler.Uris[1].Query));
+        Assert.Contains("languages=en|mul", Uri.UnescapeDataString(handler.Uris[1].Query));
+
+        var request = new SourceSearchRequest { Identity = film.Identity, Unit = AudiovisualUnit.Feature };
+        var observed = new AudiovisualIdentity
+        {
+            Kind = AudiovisualMediaKind.Movie, ContentForm = AudiovisualContentForm.Feature,
+            Title = "Dune: Part One", Year = 2021
+        };
+        var evidence = new AudiovisualSourceEvidence
+        {
+            Origin = SourceEvidenceOrigin.ProviderItem, Identity = observed, Unit = AudiovisualUnit.Feature
+        };
+        Assert.Equal(SourceVerificationStatus.Verified, ExactAudiovisualMatcher.VerifyEvidence(request, evidence).Status);
+        Assert.Equal(new(SourceVerificationStatus.Rejected, "year_conflict"),
+            ExactAudiovisualMatcher.VerifyEvidence(request, evidence with { Identity = observed with { Year = 1984 } }));
+        Assert.Equal(new(SourceVerificationStatus.Rejected, "title_conflict"),
+            ExactAudiovisualMatcher.VerifyEvidence(request, evidence with { Identity = observed with { Title = "Solaris" } }));
+    }
+
+    [Theory]
+    [InlineData("null", null)]
+    [InlineData("[]", null)]
+    [InlineData("{\"en\":\"invalid\",\"mul\":[{\"language\":\"mul\",\"value\":\"Dune: Part I\"}]}", "Dune: Part I")]
+    public async Task OptionalMalformedFilmAliasesPreserveTheMainIdentityAndNeighbors(string aliases, string? retainedAlias)
+    {
+        var fixture = Fixture("dune");
+        var entities = JsonNode.Parse(fixture.Entities)!;
+        entities["entities"]!["Q60834962"]!["aliases"] = JsonNode.Parse(aliases);
+        var handler = new Handler(_ => (fixture.Search, entities.ToJsonString()));
+        using var http = new HttpClient(handler);
+        var page = await new WikidataMetadataClient(new(http)).GetPageAsync(
+            new(AudiovisualMediaKind.Movie, AudiovisualCatalogMode.Search, "Dune"));
+
+        var film = Assert.Single(page.Items, item => item.Identity.PrimaryId?.Value == "Q60834962");
+        Assert.Equal("Dune", film.Title);
+        Assert.Equal(2021, film.Identity.Year);
+        Assert.Equal("tt1160419", film.Identity.ImdbId);
+        if (retainedAlias == null) Assert.Empty(film.Identity.AlternateTitles);
+        else Assert.Equal(retainedAlias, Assert.Single(film.Identity.AlternateTitles));
+        Assert.Empty(film.Identity.OriginalTitle);
+        Assert.Empty(film.OriginalLanguage);
+        Assert.Contains(page.Items, item => item.Identity.PrimaryId?.Value == "Q114819" &&
+            item.Identity.Year == 1984 && item.Identity.ImdbId == "tt0087182");
+        Assert.False(page.IsPartial);
+        Assert.NotNull(page.NextToken);
+        Assert.Equal(2, handler.Uris.Count);
     }
 
     [Fact]
