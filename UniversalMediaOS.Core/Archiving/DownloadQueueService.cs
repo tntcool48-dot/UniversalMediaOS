@@ -20,6 +20,7 @@ public enum DownloadJobStatus
 
 public partial class DownloadQueueJob : ObservableObject
 {
+    internal const string UnknownReleaseMessage = "The original release selection is unknown. Existing files were retained. Restore the original verified transfer information, or start a new job in a separate download folder.";
     [ObservableProperty] private Guid _id = Guid.NewGuid();
     [ObservableProperty] private string _title = string.Empty;
     [ObservableProperty] private string _audioPreference = "Sub";
@@ -32,6 +33,9 @@ public partial class DownloadQueueJob : ObservableObject
     [ObservableProperty] private DateTimeOffset _createdAt = DateTimeOffset.UtcNow;
     [ObservableProperty] private DateTimeOffset _updatedAt = DateTimeOffset.UtcNow;
     [ObservableProperty] private DateTimeOffset? _completedAt;
+    public int ReleaseSelectionProtocol { get; set; }
+    public DownloadReleaseSelection? ReleaseSelection { get; set; }
+    [JsonIgnore] internal Action<DownloadReleaseSelection>? CommitReleaseSelection { get; set; }
 
     [JsonIgnore]
     public bool CanPause => Status is DownloadJobStatus.Pending or DownloadJobStatus.Running;
@@ -85,6 +89,9 @@ public partial class DownloadQueueJob : ObservableObject
 
 public sealed record DownloadExecutionResult(bool Success, string? CompletedFilePath = null);
 
+public sealed record DownloadReleaseSelection(string InfoHash, string MagnetLink, string Title,
+    string CatalogTitle, string AudioPreference, string DownloadDirectory);
+
 public interface IDownloadJobExecutor
 {
     Task<DownloadExecutionResult> ExecuteAsync(
@@ -114,7 +121,12 @@ public sealed class SeasonDownloadJobExecutor : IDownloadJobExecutor
         Action<double> progress,
         CancellationToken token)
     {
-        using var downloader = new SeasonDownloader(_config);
+        if (job.ReleaseSelectionProtocol != 1 || job.CommitReleaseSelection == null)
+            throw new TorrentDownloadOwnershipException(DownloadQueueJob.UnknownReleaseMessage);
+        if (job.ReleaseSelection != null)
+            SeasonDownloader.ValidateReleaseSelection(job.ReleaseSelection, job.Title, job.AudioPreference);
+        using var downloader = new SeasonDownloader(_config, null,
+            downloadDirectoryOverride: job.ReleaseSelection?.DownloadDirectory);
         lock (_sync) _activeDownloader = downloader;
         try
         {
@@ -123,7 +135,9 @@ public sealed class SeasonDownloadJobExecutor : IDownloadJobExecutor
                 log,
                 progress,
                 token,
-                job.AudioPreference);
+                job.AudioPreference,
+                job.ReleaseSelection,
+                job.CommitReleaseSelection);
             return new DownloadExecutionResult(success, downloader.LastCompletedVideoPath);
         }
         finally
@@ -229,7 +243,8 @@ public sealed class DownloadQueueService : IDisposable
                     Title = title.Trim(),
                     AudioPreference = string.IsNullOrWhiteSpace(audioPreference) ? "Sub" : audioPreference.Trim(),
                     MalId = malId,
-                    TotalEpisodes = Math.Max(0, totalEpisodes)
+                    TotalEpisodes = Math.Max(0, totalEpisodes),
+                    ReleaseSelectionProtocol = 1
                 };
 
             if (!_jobs.Contains(job))
@@ -430,6 +445,7 @@ public sealed class DownloadQueueService : IDisposable
                     double lastPersistedProgress = -1;
                     try
                     {
+                        job.CommitReleaseSelection = selection => CommitReleaseSelection(job, selection);
                         DownloadExecutionResult result = await _executor.ExecuteAsync(
                             job,
                             message => UpdateMessage(job, message),
@@ -467,7 +483,9 @@ public sealed class DownloadQueueService : IDisposable
                             else
                             {
                                 job.CompletedAt = DateTimeOffset.UtcNow;
-                                SetStatus(job, DownloadJobStatus.Failed, "Download failed; retry will reuse any partial data");
+                                SetStatus(job, DownloadJobStatus.Failed, job.ReleaseSelection != null
+                                    ? "Download failed; the original release selection and existing files were retained for retry"
+                                    : "Download failed; existing files were retained");
                             }
                         }
                     }
@@ -492,6 +510,7 @@ public sealed class DownloadQueueService : IDisposable
                     {
                         lock (_sync)
                         {
+                            job.CommitReleaseSelection = null;
                             _activeJobCts?.Dispose();
                             _activeJobCts = null;
                             _activeJobId = null;
@@ -545,6 +564,7 @@ public sealed class DownloadQueueService : IDisposable
             var loaded = JsonSerializer.Deserialize<List<DownloadQueueJob>>(json, JsonOptions) ?? new();
             foreach (DownloadQueueJob job in loaded)
             {
+                bool recovered = job.Status is DownloadJobStatus.Running or DownloadJobStatus.Pausing;
                 if (job.Status is DownloadJobStatus.Running or DownloadJobStatus.Pausing)
                 {
                     SetStatus(job, DownloadJobStatus.Paused, "The app closed during this job; resume when ready");
@@ -553,6 +573,8 @@ public sealed class DownloadQueueService : IDisposable
                 {
                     CompleteCancellation(job);
                 }
+                if (job.ReleaseSelectionProtocol != 1 && job.Status != DownloadJobStatus.Completed)
+                    job.StatusMessage = (recovered ? "The app closed during this job. " : "") + DownloadQueueJob.UnknownReleaseMessage;
                 _jobs.Add(job);
             }
             PersistQueue();
@@ -564,7 +586,29 @@ public sealed class DownloadQueueService : IDisposable
         }
     }
 
-    private void PersistQueue()
+    private void CommitReleaseSelection(DownloadQueueJob job, DownloadReleaseSelection selection)
+    {
+        DownloadReleaseSelection? previous;
+        lock (_sync)
+        {
+            if (job.ReleaseSelectionProtocol != 1)
+                throw new TorrentDownloadOwnershipException(DownloadQueueJob.UnknownReleaseMessage);
+            previous = job.ReleaseSelection;
+            if (previous != null && previous != selection)
+                throw new TorrentDownloadOwnershipException("The selected release cannot replace this job's original transfer. Existing files were retained.");
+            job.ReleaseSelection = selection;
+        }
+        try { PersistQueueCore(required: true); }
+        catch
+        {
+            lock (_sync) job.ReleaseSelection = previous;
+            throw;
+        }
+    }
+
+    private void PersistQueue() => PersistQueueCore(required: false);
+
+    private void PersistQueueCore(bool required)
     {
         _persistenceLock.Wait();
         try
@@ -574,12 +618,24 @@ public sealed class DownloadQueueService : IDisposable
             string? directory = Path.GetDirectoryName(_storagePath);
             if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
             string tempPath = _storagePath + ".tmp";
-            File.WriteAllText(tempPath, json);
+            if (required)
+            {
+                using var file = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough);
+                using (var writer = new StreamWriter(file, leaveOpen: true))
+                {
+                    writer.Write(json);
+                    writer.Flush();
+                }
+                file.Flush(flushToDisk: true);
+            }
+            else File.WriteAllText(tempPath, json);
             File.Move(tempPath, _storagePath, overwrite: true);
         }
         catch (Exception ex)
         {
             AppLogger.Log($"Could not persist download queue: {ex.Message}", "ERROR");
+            if (required)
+                throw new TorrentDownloadOwnershipException("The original release selection could not be saved. No torrent transfer was started; existing files were retained. Repair queue storage before retrying.", ex);
         }
         finally
         {

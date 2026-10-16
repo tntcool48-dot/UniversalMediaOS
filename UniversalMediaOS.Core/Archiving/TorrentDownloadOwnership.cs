@@ -78,13 +78,30 @@ internal sealed class TorrentDownloadOwnership : IDisposable
     {
         for (var ancestor = Directory.GetParent(_root); ancestor != null; ancestor = ancestor.Parent)
             CheckOtherFolder(ancestor.FullName);
-        foreach (string path in Directory.EnumerateFiles(_root, ".umos-torrent-*", new EnumerationOptions
+        var options = new EnumerationOptions
         {
-            RecurseSubdirectories = true, IgnoreInaccessible = false, AttributesToSkip = FileAttributes.ReparsePoint
-        }))
+            IgnoreInaccessible = false, AttributesToSkip = 0
+        };
+        string prefix = Path.TrimEndingDirectorySeparator(_root) + Path.DirectorySeparatorChar;
+        var pending = new System.Collections.Generic.Stack<string>();
+        pending.Push(_root);
+        while (pending.TryPop(out string? directory))
         {
-            string directory = Path.GetDirectoryName(path)!;
-            if (!SamePath(directory, _root)) CheckOtherFolder(directory);
+            if (!string.Equals(directory, _root, StringComparison.OrdinalIgnoreCase)) CheckOtherFolder(directory);
+            foreach (string child in Directory.EnumerateDirectories(directory, "*", options))
+            {
+                if ((File.GetAttributes(child) & FileAttributes.ReparsePoint) == 0)
+                {
+                    pending.Push(child);
+                    continue;
+                }
+
+                string target = NormalizePath(child);
+                if (!string.Equals(target, _root, StringComparison.OrdinalIgnoreCase) &&
+                    !target.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    throw new TorrentDownloadOwnershipException("A payload folder link points outside this download folder. Existing files were retained; restore a contained folder before retrying.");
+                // The target's physical directory is already in this tree; following the alias could create a cycle.
+            }
         }
     }
 

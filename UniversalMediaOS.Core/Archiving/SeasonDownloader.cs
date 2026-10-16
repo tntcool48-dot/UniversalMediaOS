@@ -43,12 +43,12 @@ namespace UniversalMediaOS.Core.Archiving
         }
 
         internal SeasonDownloader(DomainHotSwapper config, Func<string, long>? availableSpace,
-            DualTrackerRssParser? rssParser = null)
+            DualTrackerRssParser? rssParser = null, string? downloadDirectoryOverride = null)
         {
             _config = config;
             _availableSpace = availableSpace ?? (directory => new DriveInfo(Path.GetPathRoot(directory)!).AvailableFreeSpace);
             
-            string dDir = _config.GetSetting("DownloadDirectory");
+            string dDir = downloadDirectoryOverride ?? _config.GetSetting("DownloadDirectory");
             _downloadDir = string.IsNullOrEmpty(dDir)
                 ? Path.Combine(
                     UniversalMediaOS.Core.Helpers.AppDataPaths.LocalBaseDirectory,
@@ -74,7 +74,9 @@ namespace UniversalMediaOS.Core.Archiving
             Action<string> log,
             Action<double>? progressUpdate = null,
             System.Threading.CancellationToken token = default,
-            string? audioPreference = null)
+            string? audioPreference = null,
+            DownloadReleaseSelection? releaseSelection = null,
+            Action<DownloadReleaseSelection>? commitReleaseSelection = null)
         {
             var originalLog = log;
             log = msg => {
@@ -89,48 +91,43 @@ namespace UniversalMediaOS.Core.Archiving
             {
                 token.ThrowIfCancellationRequested();
 
-                // 1. Search Nyaa / AnimeTosho for season batch torrents
-                var torrents = await SearchForBatchTorrentsAsync(animeTitle, log, audioPreference, token);
-                if (torrents.Count == 0)
+                DownloadReleaseSelection selection;
+                if (releaseSelection != null)
                 {
-                    log($"[P2P Season Downloader] ERROR: No torrents found matching \"{animeTitle}\" on Nyaa or AnimeTosho feeds.");
-                    return false;
+                    ValidateReleaseSelection(releaseSelection, animeTitle, NormalizeAudioPreference(audioPreference));
+                    if (!string.Equals(releaseSelection.DownloadDirectory, _downloadDir, StringComparison.OrdinalIgnoreCase))
+                        throw new TorrentDownloadOwnershipException("The original release's download folder changed. Existing files were retained; restore its physical folder before retrying.");
+                    selection = releaseSelection;
+                    log($"[P2P Season Downloader] Reusing original release: \"{selection.Title}\".");
                 }
-
-                token.ThrowIfCancellationRequested();
-
-                // 2. Select the best batch torrent based on seeders and batch markers (e.g. "Batch", "01-", "01~", "Season")
-                var bestTorrent = SelectBestBatchTorrent(torrents, animeTitle, log, audioPreference);
-                if (bestTorrent == null)
+                else
                 {
-                    log("[P2P Season Downloader] ERROR: Could not identify a valid healthy batch torrent matching parameters.");
-                    return false;
-                }
-
-                log($"[P2P Season Downloader] SELECTED BATCH: \"{bestTorrent.Title}\" ({bestTorrent.Seeders} seeders) from {bestTorrent.Source}");
-
-                string magnetLink = bestTorrent.MagnetLink;
-                string infoHash = bestTorrent.InfoHash;
-
-                if (string.IsNullOrEmpty(infoHash))
-                {
-                    // Extract info hash from magnet link if missing (handles Hex 40 and Base32 32)
-                    var match = Regex.Match(magnetLink, @"btih:([a-fA-F0-9]{40}|[a-zA-Z2-7]{32})");
-                    if (match.Success)
+                    var torrents = await SearchForBatchTorrentsAsync(animeTitle, log, audioPreference, token);
+                    if (torrents.Count == 0)
                     {
-                        infoHash = match.Groups[1].Value.ToUpperInvariant();
-                        if (infoHash.Length == 32)
-                        {
-                            infoHash = Base32ToHex(infoHash);
-                        }
+                        log($"[P2P Season Downloader] ERROR: No torrents found matching \"{animeTitle}\" on Nyaa or AnimeTosho feeds.");
+                        return false;
                     }
+                    token.ThrowIfCancellationRequested();
+                    var bestTorrent = SelectBestBatchTorrent(torrents, animeTitle, log, audioPreference);
+                    if (bestTorrent == null)
+                    {
+                        log("[P2P Season Downloader] ERROR: Could not identify a valid healthy batch torrent matching parameters.");
+                        return false;
+                    }
+                    log($"[P2P Season Downloader] SELECTED BATCH: \"{bestTorrent.Title}\" ({bestTorrent.Seeders} seeders) from {bestTorrent.Source}");
+                    string selectedHash = GetReleaseHash(bestTorrent.MagnetLink);
+                    string feedHash = bestTorrent.InfoHash?.Trim() ?? "";
+                    if (feedHash.Length == 32) feedHash = Base32ToHex(feedHash.ToUpperInvariant());
+                    if (feedHash.Length != 0 && !selectedHash.Equals(feedHash, StringComparison.OrdinalIgnoreCase))
+                        throw new TorrentDownloadOwnershipException("The selected release's hash conflicts with its magnet link. No torrent transfer was started; existing files were retained.");
+                    selection = new DownloadReleaseSelection(selectedHash, bestTorrent.MagnetLink, bestTorrent.Title,
+                        animeTitle, NormalizeAudioPreference(audioPreference), _downloadDir);
                 }
-
-                if (string.IsNullOrWhiteSpace(magnetLink))
-                {
-                    log("[P2P Season Downloader] ERROR: Selected feed item did not include a magnet link or info hash.");
-                    return false;
-                }
+                token.ThrowIfCancellationRequested();
+                commitReleaseSelection?.Invoke(selection);
+                string magnetLink = selection.MagnetLink;
+                string infoHash = selection.InfoHash;
 
                 List<string> downloadedFiles = new List<string>();
                 bool downloadComplete = false;
@@ -338,6 +335,31 @@ namespace UniversalMediaOS.Core.Archiving
                     _qbitAddPending = false;
                     _activeMonoTorrentManager = null;
                 }
+            }
+        }
+
+        internal static void ValidateReleaseSelection(DownloadReleaseSelection selection, string title, string audio)
+        {
+            if (!string.Equals(selection.CatalogTitle, title, StringComparison.Ordinal) ||
+                !string.Equals(selection.AudioPreference, audio, StringComparison.OrdinalIgnoreCase) ||
+                string.IsNullOrWhiteSpace(selection.Title) || !TitleLooksLikeMatch(selection.Title, title) ||
+                !string.Equals(GetReleaseHash(selection.MagnetLink), selection.InfoHash, StringComparison.OrdinalIgnoreCase))
+                throw new TorrentDownloadOwnershipException("The original release information is incomplete or conflicts with this job. Existing files were retained; restore its verified transfer information before retrying.");
+            if (string.IsNullOrWhiteSpace(selection.DownloadDirectory) || !Path.IsPathFullyQualified(selection.DownloadDirectory) ||
+                !string.Equals(TorrentDownloadOwnership.NormalizePath(selection.DownloadDirectory), selection.DownloadDirectory, StringComparison.OrdinalIgnoreCase))
+                throw new TorrentDownloadOwnershipException("The original release's physical download folder could not be verified. Existing files were retained; restore its folder before retrying.");
+        }
+
+        private static string GetReleaseHash(string magnetLink)
+        {
+            try
+            {
+                return MagnetLink.Parse(magnetLink).InfoHashes.V1?.ToHex().ToUpperInvariant()
+                    ?? throw new FormatException("No supported release hash.");
+            }
+            catch (Exception error) when (error is ArgumentException or FormatException)
+            {
+                throw new TorrentDownloadOwnershipException("The release magnet does not establish a valid transfer hash. No torrent transfer was started; existing files were retained.", error);
             }
         }
 

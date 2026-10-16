@@ -96,7 +96,7 @@ public sealed class QBitOwnershipRecoveryTests
         fixture.OnAdd = null;
         fixture.AuthenticationAvailable = false;
         // A different release hash still targets the same download folder.
-        fixture.Hash = "abcdef0123456789abcdef0123456789abcdef0123";
+        fixture.Hash = "abcdef0123456789abcdef0123456789abcdef01";
         var restarted = await fixture.RunAsync();
 
         Assert.Equal(1, fixture.AddCalls);

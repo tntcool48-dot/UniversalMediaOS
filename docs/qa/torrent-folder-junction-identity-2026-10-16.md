@@ -17,3 +17,5 @@ Source **d11c856f091afa5117fe57b64ed3b955604dcf45** is pushed normally to main a
 
 
 The preceding **4ef6a0c** checkpoint later completed passed (**1,313 /zero failures /22 skips**, 13 minutes 10.264 seconds), with original diagnostics retained once. Its source excludes this d11c856 ownership repair; the newer source checkpoint remains separate and in progress.
+
+The separate **d11c856** run subsequently completed passed: **1,318 /zero failures /22 unchanged skips /1,340 total**, in **12 minutes 43.598 seconds**. Original diagnostics were retained once in `ci-d11c856`. Newer descendant-folder and queue-release repairs are recorded in [their own QA](download-release-pinning-and-payload-links-2026-10-16.md); this older result does not qualify them.
