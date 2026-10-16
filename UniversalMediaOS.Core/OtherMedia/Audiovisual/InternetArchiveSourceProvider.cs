@@ -82,10 +82,34 @@ public sealed class InternetArchiveSourceProvider : IAudiovisualSourceProvider
         CancellationToken token = default)
     {
         ArgumentNullException.ThrowIfNull(identity);
-        if (!_options.EnableInternetArchive || string.IsNullOrWhiteSpace(identity.Title))
+        token.ThrowIfCancellationRequested();
+        if (!_options.EnableInternetArchive)
         {
             return Array.Empty<AudiovisualSource>();
         }
+
+        string? preservedItem;
+        try
+        {
+            if (AudiovisualIdentityKeys.HasConflictingIds(identity, identity))
+                return Array.Empty<AudiovisualSource>();
+            preservedItem = AudiovisualIdentityKeys.GetIds(identity)
+                .FirstOrDefault(id => id.Provider == "internetarchive" && id.Namespace == "item")?.Value;
+        }
+        catch (ArgumentException)
+        {
+            return Array.Empty<AudiovisualSource>();
+        }
+
+        if (preservedItem != null)
+        {
+            var directDocument = new ArchiveSearchDocument(preservedItem,
+                JsonSerializer.SerializeToElement(new { }), new AudiovisualIdentity(), AudiovisualUnit.Feature);
+            var directSource = await ResolveDocumentAsync(directDocument, identity, unit,
+                preferredLanguage, token, directItem: true).ConfigureAwait(false);
+            return directSource == null ? Array.Empty<AudiovisualSource>() : [directSource];
+        }
+        if (string.IsNullOrWhiteSpace(identity.Title)) return Array.Empty<AudiovisualSource>();
 
         Uri searchUri = BuildSearchUri(identity);
         string? searchPayload = await _requests.GetStringAsync(_provider, searchUri, token)
@@ -210,7 +234,8 @@ public sealed class InternetArchiveSourceProvider : IAudiovisualSourceProvider
         AudiovisualIdentity requestedIdentity,
         AudiovisualUnit? requestedUnit,
         string? preferredLanguage,
-        CancellationToken token)
+        CancellationToken token,
+        bool directItem = false)
     {
         Uri metadataUri = new(
             _options.InternetArchiveBaseUri,
@@ -226,10 +251,15 @@ public sealed class InternetArchiveSourceProvider : IAudiovisualSourceProvider
         {
             using JsonDocument document = JsonDocument.Parse(payload);
             JsonElement root = document.RootElement;
-            JsonElement metadata = root.TryGetProperty("metadata", out JsonElement metadataValue) &&
-                                   metadataValue.ValueKind == JsonValueKind.Object
-                ? metadataValue
-                : searchDocument.SearchDocument;
+            if (root.ValueKind != JsonValueKind.Object) return null;
+            bool hasMetadata = root.TryGetProperty("metadata", out JsonElement metadataValue) &&
+                               metadataValue.ValueKind == JsonValueKind.Object;
+            if (directItem && !hasMetadata) return null;
+            JsonElement metadata = hasMetadata ? metadataValue : searchDocument.SearchDocument;
+            if (directItem && (!metadata.TryGetProperty("identifier", out var observedId) ||
+                observedId.ValueKind != JsonValueKind.String ||
+                !string.Equals(observedId.GetString(), searchDocument.Identifier, StringComparison.Ordinal)))
+                return null;
 
             AudiovisualIdentity candidateIdentity = MergeIdentity(
                 BuildIdentity(metadata, requestedIdentity.Kind),
@@ -238,7 +268,16 @@ public sealed class InternetArchiveSourceProvider : IAudiovisualSourceProvider
                 BuildUnit(metadata),
                 searchDocument.Unit);
             candidateIdentity = ApplyUnitContentForm(candidateIdentity, candidateUnit);
-            if (!ExactAudiovisualMatcher.IsExactMatch(
+            if (directItem)
+            {
+                candidateIdentity = candidateIdentity with
+                {
+                    PrimaryId = new("internetarchive", "item", searchDocument.Identifier)
+                };
+                if (!ExactAudiovisualMatcher.IsUnitMatch(requestedIdentity, requestedUnit, candidateUnit))
+                    return null;
+            }
+            else if (!ExactAudiovisualMatcher.IsExactMatch(
                     requestedIdentity,
                     requestedUnit,
                     candidateIdentity,
@@ -254,6 +293,12 @@ public sealed class InternetArchiveSourceProvider : IAudiovisualSourceProvider
             {
                 return null;
             }
+
+            var evidence = BuildIndependentEvidence(metadata, searchDocument.SearchDocument,
+                candidateIdentity, candidateUnit, animation, independentlyBoundItem: directItem);
+            if (directItem && ExactAudiovisualMatcher.VerifyEvidence(new SourceSearchRequest
+                { Identity = requestedIdentity, Unit = requestedUnit }, evidence).Status != SourceVerificationStatus.Verified)
+                return null;
 
             string licenseUrl = FirstNonEmpty(
                 GetScalarString(metadata, "licenseurl"),
@@ -294,8 +339,7 @@ public sealed class InternetArchiveSourceProvider : IAudiovisualSourceProvider
 
             return new AudiovisualSource
             {
-                Evidence = BuildIndependentEvidence(metadata, searchDocument.SearchDocument,
-                    candidateIdentity, candidateUnit, animation),
+                Evidence = evidence,
                 Provenance = AudiovisualSourceProvenance.BuiltInInternetArchive,
                 ProviderId = _provider.Id,
                 ProviderName = _provider.Name,
@@ -318,15 +362,18 @@ public sealed class InternetArchiveSourceProvider : IAudiovisualSourceProvider
     }
 
     private static AudiovisualSourceEvidence? BuildIndependentEvidence(JsonElement metadata,
-        JsonElement searchDocument, AudiovisualIdentity identity, AudiovisualUnit unit, bool animation)
+        JsonElement searchDocument, AudiovisualIdentity identity, AudiovisualUnit unit, bool animation,
+        bool independentlyBoundItem = false)
     {
         // Archive item fields are independent of the requested catalog selection.
         // Its broad "movies" mediatype alone does not establish a feature film.
         bool feature = HasStandaloneFilmSignal(metadata, searchDocument);
         bool episode = unit.SeasonNumber.HasValue && unit.EpisodeNumber.HasValue;
+        bool observedItemId = independentlyBoundItem &&
+            identity.PrimaryId is { Provider: "internetarchive", Namespace: "item" };
         if ((identity.ContentForm == AudiovisualContentForm.Feature && !feature) ||
             (identity.ContentForm == AudiovisualContentForm.Series && !episode) ||
-            string.IsNullOrWhiteSpace(identity.Title) || !identity.Year.HasValue)
+            string.IsNullOrWhiteSpace(identity.Title) || !identity.Year.HasValue && !observedItemId)
             return null;
 
         return new AudiovisualSourceEvidence

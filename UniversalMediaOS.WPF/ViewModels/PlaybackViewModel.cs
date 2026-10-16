@@ -56,8 +56,7 @@ namespace UniversalMediaOS.WPF.ViewModels
         private readonly PlaybackProgressService _playbackProgress;
         private PlaybackProgressContext? _progressContext;
         private readonly SemaphoreSlim _resumeDatabaseLock = new(1, 1);
-        private readonly System.Windows.Threading.Dispatcher? _creationDispatcher =
-            System.Windows.Threading.Dispatcher.FromThread(Thread.CurrentThread);
+        private readonly System.Windows.Threading.Dispatcher? _creationDispatcher = CapturePlaybackDispatcher();
         private readonly object _resumePersistenceGate = new();
         private readonly Dictionary<long, Task> _pendingResumeSaves = new();
         private ResumeSaveSlot? _queuedResumeSave;
@@ -518,6 +517,16 @@ namespace UniversalMediaOS.WPF.ViewModels
             PlayPauseText = Helpers.LocalizationRuntime.Translate("Play");
             CaptionButtonText = Helpers.LocalizationRuntime.Translate("CC");
             Helpers.LocalizationRuntime.LanguageChanged += LocalizationRuntime_LanguageChanged;
+        }
+
+        private static System.Windows.Threading.Dispatcher? CapturePlaybackDispatcher()
+        {
+            if (App.Current?.Dispatcher is { } applicationDispatcher) return applicationDispatcher;
+            // Image decoding can create a dispatcher on an MTA worker without
+            // running its queue. Only STA hosts provide a local WPF UI target.
+            return Thread.CurrentThread.GetApartmentState() == ApartmentState.STA
+                ? System.Windows.Threading.Dispatcher.FromThread(Thread.CurrentThread)
+                : null;
         }
 
         internal void RunOnDispatcher(Action action, System.Windows.Threading.Dispatcher? targetDispatcher = null)
@@ -1473,8 +1482,7 @@ namespace UniversalMediaOS.WPF.ViewModels
                 _resumeAdmissionCompleted = completed;
                 Task priorApplied = ResumeLoadCompleted;
                 ResumeLoadCompleted = completed.Task;
-                var dispatcher = App.Current?.Dispatcher ??
-                    System.Windows.Threading.Dispatcher.FromThread(Thread.CurrentThread);
+                var dispatcher = CapturePlaybackDispatcher();
                 Task preceding = Task.WhenAll(_pendingResumeSaves.Values.Concat(_pendingResumeLoads));
                 _resumeAdmissionWorker = AdmitLatestResumeRequestAsync(preceding, priorApplied, dispatcher, completed);
                 return true;
@@ -2816,8 +2824,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             string media = _resumeMediaId;
             string unit = _resumeEpisodeId;
             int generation = Volatile.Read(ref _playbackGeneration);
-            var dispatcher = App.Current?.Dispatcher ??
-                System.Windows.Threading.Dispatcher.FromThread(Thread.CurrentThread);
+            var dispatcher = CapturePlaybackDispatcher();
             lock (_resumePersistenceGate)
             {
                 // Freeze older-unit observations before reserving the ordered read.
