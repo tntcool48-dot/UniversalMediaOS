@@ -86,6 +86,7 @@ public sealed class AudiovisualLibraryService
     };
 
     private readonly string _storagePath;
+    internal string StoragePath => Path.GetFullPath(_storagePath);
     private readonly Action<string, string> _commit;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private Dictionary<string, AudiovisualLibraryEntry>? _entries;

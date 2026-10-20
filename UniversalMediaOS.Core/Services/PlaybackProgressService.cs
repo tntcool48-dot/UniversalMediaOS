@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using UniversalMediaOS.Core.Data;
 using UniversalMediaOS.Core.Helpers;
@@ -12,6 +13,7 @@ public sealed class PlaybackProgressService
 {
     private readonly AudiovisualLibraryService _library;
     private readonly Func<DatabaseContext> _createDatabase;
+    private readonly DurableResumeJournal _durableJournal = new();
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly ConcurrentDictionary<(string Work, string Unit), long> _owners = new();
     private readonly ConcurrentDictionary<string, long> _activeWorkOwners = new();
@@ -88,6 +90,125 @@ public sealed class PlaybackProgressService
         _createDatabase = createDatabase;
     }
 
+    /// <summary>Claims an admitted identity without file IO, SQLite or its ordered worker.
+    /// The newest claim for a unit owns its later observations.</summary>
+    public PlaybackProgressClaim BeginDurableSession(PlaybackProgressContext context, DatabaseContext? boundDatabase = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(context.WorkKey);
+        ArgumentException.ThrowIfNullOrWhiteSpace(context.UnitKey);
+        using var ownedDatabase = boundDatabase == null ? _createDatabase() : null;
+        string destination = CaptureResumeDestination(boundDatabase ?? ownedDatabase!);
+        PlaybackProgressSummary? summary = null;
+        if (context.Audiovisual is { } audiovisual)
+        {
+            // As on the direct path, an unusable summary identity never blocks unit progress.
+            try
+            {
+                summary = new(_library.StoragePath, AudiovisualLibraryKey.Create(audiovisual.Identity, context.WorkKey),
+                    audiovisual.Title, audiovisual.PosterUrl, audiovisual.Unit.SeasonNumber, audiovisual.Unit.EpisodeNumber);
+            }
+            catch (ArgumentException ex)
+            {
+                AppLogger.Log($"[Resume] Movie/TV library summary is unavailable for '{context.WorkKey}': {ex.Message}", "WARNING");
+            }
+        }
+        return _durableJournal.Begin(destination, context, summary);
+    }
+
+    public Task<PlaybackProgressReceipt?> StageDurableObservationAsync(PlaybackProgressClaim claim,
+        PlaybackProgressObservation observation) => _durableJournal.StageAsync(claim, observation);
+
+    /// <summary>Waits only for accepted file observations, never the SQLite writer gate.</summary>
+    public Task FlushDurableObservationsAsync() => _durableJournal.FlushAsync();
+
+    public Task CommitDurableObservationAsync(PlaybackProgressReceipt receipt)
+        => CommitDurableObservationAsync(Task.FromResult<PlaybackProgressReceipt?>(receipt));
+
+    /// <summary>Reserves SQLite order before waiting for the receipt or an already-started initial read.</summary>
+    public Task CommitDurableObservationAsync(Task<PlaybackProgressReceipt?> receipt, Task? preceding = null)
+        => CommitDurableObservationAsync(() => receipt, preceding);
+
+    public async Task CommitDurableObservationAsync(Func<Task<PlaybackProgressReceipt?>> receipt, Task? preceding = null)
+    {
+        await _gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (preceding != null) await preceding.ConfigureAwait(false);
+            var accepted = await receipt().ConfigureAwait(false);
+            if (accepted != null) await CommitDurableUnderGateAsync(accepted).ConfigureAwait(false);
+        }
+        finally { _gate.Release(); }
+    }
+
+    /// <summary>Call within the shared persistence order, before reading this destination's resume rows.
+    /// A replay failure leaves its records pending and never prevents reading the saved rows.</summary>
+    public async Task ReplayDurableObservationsAsync(DatabaseContext boundDatabase)
+    {
+        try
+        {
+            string destination = CaptureResumeDestination(boundDatabase);
+            if (!File.Exists(DurableResumeJournal.JournalPath(destination))) return;
+            foreach (var receipt in await _durableJournal.ReadPendingAsync(destination).ConfigureAwait(false))
+            {
+                try { await CommitDurableUnderGateAsync(receipt).ConfigureAwait(false); }
+                catch (Exception ex)
+                {
+                    AppLogger.Log($"[Resume] Pending position for media '{receipt.WorkKey}', episode '{receipt.UnitKey}' stays journaled: {ex.Message}", "WARNING");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Log($"[Resume] Pending positions could not be replayed: {ex.Message}", "WARNING");
+        }
+    }
+
+    private async Task CommitDurableUnderGateAsync(PlaybackProgressReceipt requested)
+    {
+        // A stale acknowledgement cannot remove a newer observation. Always use the actual durable record.
+        var receipt = await _durableJournal.FindPendingAsync(requested).ConfigureAwait(false);
+        if (receipt == null) return;
+        bool applied = await Task.Run(async () =>
+        {
+            using var database = new DatabaseContext(receipt.DatabasePath);
+            return await database.ApplyJournaledResumeAsync(receipt.WorkKey, receipt.UnitKey,
+                receipt.Position, receipt.JournalId, receipt.Revision).ConfigureAwait(false);
+        }).ConfigureAwait(false);
+        if (applied)
+        {
+            AppLogger.Log($"[Resume] Saved durable position {receipt.Position:0.0}s for media '{receipt.WorkKey}', episode '{receipt.UnitKey}'.");
+            try
+            {
+                // Another profile's summary is never written into this library.
+                if (receipt.Summary is { } captured && _durableJournal.MayUpdateSummary(receipt) &&
+                    DurableResumeJournal.PathsEqual(captured.StoragePath, _library.StoragePath))
+                    await _library.RecordProgressAsync(captured.Key, captured.Title, captured.PosterUrl,
+                        captured.SeasonNumber, captured.EpisodeNumber, receipt.Position, receipt.Duration,
+                        observedUtc: receipt.ObservedUtc).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Log($"[Resume] Movie/TV library summary could not be saved: {ex.Message}", "WARNING");
+            }
+        }
+        await _durableJournal.AcknowledgeAsync(receipt).ConfigureAwait(false);
+    }
+
+    private static string CaptureResumeDestination(DatabaseContext database)
+    {
+        if (!IsFileBacked(database))
+            throw new InvalidOperationException("Durable playback progress requires a file-backed database.");
+        return Path.GetFullPath(database.Database.GetDbConnection().DataSource);
+    }
+
+    /// <summary>Explicit volatile stores have no crash-recovery destination.</summary>
+    public static bool IsFileBacked(DatabaseContext database)
+    {
+        return database.Database.GetDbConnection() is SqliteConnection sqlite &&
+            !string.IsNullOrWhiteSpace(sqlite.DataSource) && sqlite.DataSource != ":memory:" &&
+            new SqliteConnectionStringBuilder(sqlite.ConnectionString).Mode != SqliteOpenMode.Memory;
+    }
+
     public (PlaybackProgressSession Session, double Position) Open(AudiovisualPlaybackContext context)
     {
         if (context.UnitKey == null) throw new ArgumentException("Progress requires an established unit.", nameof(context));
@@ -126,6 +247,9 @@ public sealed class PlaybackProgressService
 
     private (PlaybackProgressSession Session, double Position) ReadOpen(DatabaseContext database, PlaybackProgressContext context)
     {
+        // The replay worker uses only immutable file records, never native/player state.
+        if (IsFileBacked(database))
+            ReplayDurableObservationsAsync(database).GetAwaiter().GetResult();
         database.Database.EnsureCreated();
         var rows = database.ResumeStates.Where(row => row.MediaId == context.WorkKey && row.EpisodeId == context.UnitKey).Take(2).ToArray();
         double position = rows.Length == 1 ? rows[0].PositionSeconds : 0;

@@ -9,7 +9,7 @@ using UniversalMediaOS.Core.Helpers;
 
 namespace UniversalMediaOS.Core.Data
 {
-    public class DatabaseContext : DbContext
+    public partial class DatabaseContext : DbContext
     {
         private static readonly object LegacyMigrationLock = new();
 
@@ -20,6 +20,13 @@ namespace UniversalMediaOS.Core.Data
 
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
         {
+            if (_resumeDestinationPath is { } frozenPath)
+            {
+                // The same connection string as the default path keeps one pool per file.
+                optionsBuilder.UseSqlite(ConnectionStringFor(frozenPath));
+                optionsBuilder.AddInterceptors(new SqlitePragmaInterceptor());
+                return;
+            }
             string dbPath = "";
             try
             {
@@ -65,9 +72,11 @@ namespace UniversalMediaOS.Core.Data
                 Directory.CreateDirectory(dir);
             }
 
-            optionsBuilder.UseSqlite($"Data Source={dbPath};Cache=Shared;");
+            optionsBuilder.UseSqlite(ConnectionStringFor(dbPath));
             optionsBuilder.AddInterceptors(new SqlitePragmaInterceptor());
         }
+
+        private static string ConnectionStringFor(string dbPath) => $"Data Source={dbPath};Cache=Shared;";
 
         internal static bool TryMigrateLegacyDatabase(string legacyPath, string destinationPath)
         {
@@ -151,16 +160,23 @@ namespace UniversalMediaOS.Core.Data
             public override void ConnectionOpened(System.Data.Common.DbConnection connection, Microsoft.EntityFrameworkCore.Diagnostics.ConnectionEndEventData eventData)
             {
                 using var command = connection.CreateCommand();
-                command.CommandText = "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;";
+                command.CommandText = Pragmas(connection);
                 command.ExecuteNonQuery();
             }
 
             public override async Task ConnectionOpenedAsync(System.Data.Common.DbConnection connection, Microsoft.EntityFrameworkCore.Diagnostics.ConnectionEndEventData eventData, CancellationToken cancellationToken)
             {
                 using var command = connection.CreateCommand();
-                command.CommandText = "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;";
+                command.CommandText = Pragmas(connection);
                 await command.ExecuteNonQueryAsync(cancellationToken);
             }
+
+            // EnsureCreated probes existence read-only. Switching an older rollback-journal
+            // file to WAL writes its header, so only read-write connections request it.
+            private static string Pragmas(System.Data.Common.DbConnection connection) =>
+                new SqliteConnectionStringBuilder(connection.ConnectionString).Mode == SqliteOpenMode.ReadOnly
+                    ? "PRAGMA busy_timeout=5000;"
+                    : "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;";
         }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)

@@ -290,7 +290,8 @@ namespace UniversalMediaOS.WPF
         {
             // Capture keys/positions on the UI thread before teardown, then wait
             // only for worker IO. This event cannot await a dispatcher continuation.
-            Task drain = Task.WhenAll(captureCurrentPlayers(), progress?.FlushAsync() ?? Task.CompletedTask);
+            Task drain = Task.WhenAll(captureCurrentPlayers(), progress?.FlushAsync() ?? Task.CompletedTask,
+                progress?.FlushDurableObservationsAsync() ?? Task.CompletedTask);
             try { drain.WaitAsync(deadline).GetAwaiter().GetResult(); return true; }
             catch (TimeoutException) { return false; }
         }

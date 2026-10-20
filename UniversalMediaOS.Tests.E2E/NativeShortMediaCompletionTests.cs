@@ -742,6 +742,8 @@ public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
                 Assert.NotEqual("Finished", player.PlaybackStatusText);
             }
             player.Dispose();
+            // Closing does not wait for the earlier unit's accepted pause save; the app drains it.
+            await progress.FlushAsync().WaitAsync(TimeSpan.FromSeconds(5));
             using var verify = new DatabaseContext();
             Assert.Equal(57, verify.GetResumeState(work, "season:1:episode:2"));
             if (network) Assert.True(verify.GetResumeState(work, unit) > 0);

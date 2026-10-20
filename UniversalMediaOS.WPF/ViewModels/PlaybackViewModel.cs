@@ -55,13 +55,15 @@ namespace UniversalMediaOS.WPF.ViewModels
         private readonly HlsLoopbackProxy? _hlsProxy;
         private readonly PlaybackProgressService _playbackProgress;
         private PlaybackProgressContext? _progressContext;
+        private PlaybackProgressClaim? _durableProgressClaim;
         private readonly SemaphoreSlim _resumeDatabaseLock = new(1, 1);
         private readonly System.Windows.Threading.Dispatcher? _creationDispatcher = CapturePlaybackDispatcher();
         private readonly object _resumePersistenceGate = new();
         private readonly Dictionary<long, Task> _pendingResumeSaves = new();
         private ResumeSaveSlot? _queuedResumeSave;
         private sealed record ResumeSaveSnapshot(string MediaId, string EpisodeId, double Position,
-            double Duration, bool Ended, long Sequence, DateTimeOffset ObservedUtc);
+            double Duration, bool Ended, long Sequence, DateTimeOffset ObservedUtc,
+            Task<PlaybackProgressReceipt?> DurableReceipt);
         private sealed class ResumeSaveSlot(ResumeSaveSnapshot snapshot)
         {
             public ResumeSaveSnapshot Snapshot { get; set; } = snapshot;
@@ -2713,6 +2715,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             }
             _progressSessionReady = Task.FromResult<PlaybackProgressSession?>(null);
             _progressContext = null;
+            _durableProgressClaim = null;
             _resumePersistenceClosed = false;
             _restoringCurrentPosition = false;
             _playbackEnded = false;
@@ -2751,7 +2754,24 @@ namespace UniversalMediaOS.WPF.ViewModels
                 return;
             }
 
+            _durableProgressClaim = ClaimDurableProgress();
             LoadResumePosition();
+        }
+
+        private PlaybackProgressClaim? ClaimDurableProgress()
+        {
+            try
+            {
+                if (!PlaybackProgressService.IsFileBacked(_databaseContext)) return null;
+                return _playbackProgress.BeginDurableSession(
+                    _progressContext ?? new PlaybackProgressContext(_resumeMediaId, _resumeEpisodeId), _databaseContext);
+            }
+            catch (Exception ex)
+            {
+                // Without a durable claim the player keeps the direct SQLite save path.
+                AppLogger.Log($"[Resume] Durable progress is unavailable for this player: {ex.Message}", "WARNING");
+                return null;
+            }
         }
 
         private static int ResolveEpisodeNumber(string episodeNumber, string title)
@@ -2855,8 +2875,12 @@ namespace UniversalMediaOS.WPF.ViewModels
                     await _resumeDatabaseLock.WaitAsync(cancellationToken).ConfigureAwait(false);
                     try
                     {
-                        double position = await Task.Run(() => EnsureResumeDatabaseCreated()
-                            ? _databaseContext.GetResumeState(media, unit) : 0, cancellationToken).ConfigureAwait(false);
+                        double position = await Task.Run(async () =>
+                        {
+                            if (!EnsureResumeDatabaseCreated()) return 0;
+                            await _playbackProgress.ReplayDurableObservationsAsync(_databaseContext).ConfigureAwait(false);
+                            return _databaseContext.GetResumeState(media, unit);
+                        }, cancellationToken).ConfigureAwait(false);
                         return ((PlaybackProgressSession?)null, position);
                     }
                     finally { _resumeDatabaseLock.Release(); }
@@ -3023,8 +3047,16 @@ namespace UniversalMediaOS.WPF.ViewModels
                 long sequence = Interlocked.Increment(ref _resumeWriteSequence);
                 _latestResumeWrites.AddOrUpdate((mediaId, episodeId), sequence, (_, previous) => Math.Max(previous, sequence));
 
+                var observedUtc = DateTimeOffset.UtcNow;
+                double duration = Math.Max(0, PlaybackDuration / 1000.0);
+                // Acknowledgement uses a separate file worker: a blocked SQLite read/save
+                // must not leave the only copy of an accepted observation in this process.
+                Task<PlaybackProgressReceipt?> durable = _durableProgressClaim == null
+                    ? Task.FromResult<PlaybackProgressReceipt?>(null)
+                    : _playbackProgress.StageDurableObservationAsync(_durableProgressClaim,
+                        new(valueToSave, duration, ended, observedUtc));
                 var snapshot = new ResumeSaveSnapshot(mediaId, episodeId, valueToSave,
-                    Math.Max(0, PlaybackDuration / 1000.0), ended, sequence, DateTimeOffset.UtcNow);
+                    duration, ended, sequence, observedUtc, durable);
                 if (_queuedResumeSave is { Captured: false } queued &&
                     queued.Snapshot.MediaId == mediaId && queued.Snapshot.EpisodeId == episodeId)
                 {
@@ -3037,9 +3069,12 @@ namespace UniversalMediaOS.WPF.ViewModels
                 {
                     var slot = new ResumeSaveSlot(snapshot);
                     _queuedResumeSave = slot;
-                    save = _progressContext != null
-                        ? SaveCatalogProgressAfterLoadAsync(_progressSessionReady, slot)
-                        : SaveLegacyProgressAfterLoadAsync(_resumeLoadRead, slot);
+                    save = _durableProgressClaim != null
+                        ? SaveJournaledProgressAfterLoadAsync(
+                            _progressContext != null ? _progressSessionReady : _resumeLoadRead, slot)
+                        : _progressContext != null
+                            ? SaveCatalogProgressAfterLoadAsync(_progressSessionReady, slot)
+                            : SaveLegacyProgressAfterLoadAsync(_resumeLoadRead, slot);
                     slot.Completion = save;
                     foreach (long finished in _pendingResumeSaves.Where(entry => entry.Value.IsCompleted).Select(entry => entry.Key).ToArray())
                         _pendingResumeSaves.Remove(finished);
@@ -3052,6 +3087,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             {
                 try { save.WaitAsync(TimeSpan.FromSeconds(2)).GetAwaiter().GetResult(); }
                 catch (TimeoutException) { AppLogger.Log("[Resume] Final save is still finishing in the background.", "WARNING"); }
+                catch (Exception ex) { AppLogger.Log($"[Resume] Final save failed; durable recovery remains required: {ex.Message}", "ERROR"); }
             }
         }
 
@@ -3066,6 +3102,13 @@ namespace UniversalMediaOS.WPF.ViewModels
                     ? snapshot : null;
             }
         }
+
+        private Task SaveJournaledProgressAfterLoadAsync(Task preceding, ResumeSaveSlot slot)
+            => _playbackProgress.CommitDurableObservationAsync(() =>
+            {
+                var snapshot = CaptureQueuedResumeSave(slot);
+                return snapshot?.DurableReceipt ?? Task.FromResult<PlaybackProgressReceipt?>(null);
+            }, preceding);
 
         private async Task SaveCatalogProgressAfterLoadAsync(Task<PlaybackProgressSession?> session, ResumeSaveSlot slot)
         {
@@ -3086,8 +3129,14 @@ namespace UniversalMediaOS.WPF.ViewModels
 
         private bool RequestProgressOwnership()
         {
-            if (_progressContext == null) return true;
+            if (_progressContext == null)
+            {
+                if (HasResumeKey())
+                    _durableProgressClaim = ClaimDurableProgress();
+                return true;
+            }
             if (DeferResumeSourceChange(TogglePlayPause, sourceChange: false)) return false;
+            _durableProgressClaim = ClaimDurableProgress();
             lock (_resumePersistenceGate)
             {
                 // A later explicit owner must not move an accepted write across it.

@@ -134,7 +134,8 @@ namespace UniversalMediaOS.WPF
                 Task currentPlayers = viewModel.FlushPlaybackProgressAsync();
                 var sharedProgress = (Application.Current as App)?.Services.GetService(
                     typeof(UniversalMediaOS.Core.Services.PlaybackProgressService)) as UniversalMediaOS.Core.Services.PlaybackProgressService;
-                await Task.WhenAll(currentPlayers, sharedProgress?.FlushAsync() ?? Task.CompletedTask)
+                await Task.WhenAll(currentPlayers, sharedProgress?.FlushAsync() ?? Task.CompletedTask,
+                    sharedProgress?.FlushDurableObservationsAsync() ?? Task.CompletedTask)
                     .WaitAsync(TimeSpan.FromSeconds(15));
                 UniversalMediaOS.Core.Helpers.AppLogger.Log("[Resume] Accepted playback progress drained before application close.");
             }
