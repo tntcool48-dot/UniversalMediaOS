@@ -1006,21 +1006,27 @@ public sealed class ResumeDispatcherContentionTests(ITestOutputHelper output)
     private static string JournalPath(IsolatedProfile profile) => DurableResumeJournal.JournalPath(
         Path.GetFullPath(new SqliteConnectionStringBuilder(profile.ConnectionString!).DataSource));
 
-    private static double? PendingPosition(string journal, string work, string unit)
+    /// <summary>The journaled position of one unit, or null. A live app replaces the file atomically, so a
+    /// read racing that replacement also returns null; poll when another process is writing.</summary>
+    internal static double? PendingPosition(string journal, string work, string unit)
     {
-        if (!File.Exists(journal)) return null;
-        using var stream = new FileStream(journal, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-        using var document = System.Text.Json.JsonDocument.Parse(stream);
-        foreach (var pending in document.RootElement.GetProperty("Pending").EnumerateArray())
+        try
         {
-            if (pending.GetProperty("WorkKey").GetString() == work && pending.GetProperty("UnitKey").GetString() == unit)
-                return pending.GetProperty("Position").GetDouble();
+            if (!File.Exists(journal)) return null;
+            using var stream = new FileStream(journal, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var document = System.Text.Json.JsonDocument.Parse(stream);
+            foreach (var pending in document.RootElement.GetProperty("Pending").EnumerateArray())
+            {
+                if (pending.GetProperty("WorkKey").GetString() == work && pending.GetProperty("UnitKey").GetString() == unit)
+                    return pending.GetProperty("Position").GetDouble();
+            }
         }
+        catch (Exception exception) when (exception is IOException or System.Text.Json.JsonException) { }
         return null;
     }
 
     /// <summary>A private-cache WAL reader sees the last committed row beside a held writer.</summary>
-    private static double ReadCommitted(string connectionString, string work, string unit)
+    internal static double ReadCommitted(string connectionString, string work, string unit)
     {
         using var connection = new SqliteConnection(new SqliteConnectionStringBuilder(connectionString)
             { Cache = SqliteCacheMode.Private, Pooling = false }.ToString());
