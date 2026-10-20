@@ -63,3 +63,12 @@ jobs:
           UniversalMediaOS.Core/scraper.py
           UniversalMediaOS.Core/book_scraper.py
           UniversalMediaOS.Core/audiovisual_scraper.py
+      # The scrapers import these when loaded. Same pins as PythonBootstrapper;
+      # PythonPreparationTests fails if the two lists differ.
+      - name: Install pinned Python scraper packages
+        run: >-
+          python -m pip install
+          DrissionPage==4.1.1.4 curl_cffi==0.15.0 httpx==0.28.1
+          beautifulsoup4==4.15.0 lxml==6.1.1
+      - name: Run Python scraper unit tests
+        run: python -m unittest discover -s tools/tests -p "test_*.py"
