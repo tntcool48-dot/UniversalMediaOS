@@ -887,6 +887,122 @@ public sealed class ResumeDispatcherContentionTests(ITestOutputHelper output)
         });
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AFailedJournaledCommitDoesNotHideTheNextUnitsSavedPosition(bool catalog)
+    {
+        using var profile = new IsolatedProfile();
+        RecoveryLayoutTests.RunSta(() =>
+        {
+            using var player = CreatePlayer(profile, catalog);
+            var (work, unit) = SaveInitial(player, profile);
+            const string nextWork = "av:fixture:show:failed-commit";
+            string targetWork = catalog ? nextWork : "42";
+            string targetUnit = catalog ? "season:1:episode:2" : "2";
+            using (var seed = new DatabaseContext()) seed.SaveResumeState(targetWork, targetUnit, 371);
+            using (new FailingUnitTrigger(profile.ConnectionString!, work, unit))
+            {
+                // The accepted position reaches the journal; SQLite rejects its commit.
+                player.PlaybackTime = 120_000;
+                player.SetTabActive(false);
+                player.SetTabActive(true);
+                player.LoadEmbed("https://fixture.invalid/failed-commit/2", "Failed commit fixture", "2", malId: 42,
+                    audiovisualContext: catalog ? FailureEpisode(nextWork, 2) : null);
+                WaitForResumeLoad(player);
+                Assert.True(player.TryConsumePendingWebResumePosition(out double restored),
+                    "The next unit's read must not inherit the failed commit and restore zero.");
+                Assert.Equal(371, restored);
+                Assert.Equal(120, PendingPosition(JournalPath(profile), work, unit));
+                Assert.Equal(90, ReadCommitted(profile.ConnectionString!, work, unit));
+            }
+            // Once SQLite accepts the write, the journaled position replays before the unit's next read.
+            player.LoadEmbed("https://fixture.invalid/embed", "Contention fixture", audiovisualContext: catalog ? Context() : null);
+            WaitForResumeLoad(player);
+            Assert.True(player.TryConsumePendingWebResumePosition(out double replayed));
+            Assert.Equal(120, replayed);
+            AssertPersisted(work, unit, 120);
+            Assert.Equal(371, ReadCommitted(profile.ConnectionString!, targetWork, targetUnit));
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ADeferredSourceIsAdmittedAfterAnAcceptedCommitFails(bool catalog)
+    {
+        using var profile = new IsolatedProfile();
+        RecoveryLayoutTests.RunSta(() =>
+        {
+            using var player = CreatePlayer(profile, catalog);
+            var (work, unit) = SaveInitial(player, profile);
+            const string nextWork = "av:fixture:show:failed-admission";
+            string targetWork = catalog ? nextWork : "42";
+            string Unit(int episode) => catalog ? $"season:1:episode:{episode}" : episode.ToString();
+            using (var seed = new DatabaseContext())
+            {
+                seed.SaveResumeState(targetWork, Unit(200), 371);
+                seed.SaveResumeState(work, "adjacent-unit", 57);
+            }
+            using var trigger = new FailingUnitTrigger(profile.ConnectionString!, work, unit);
+            player.PlaybackTime = 120_000;
+            using (var writer = new WriterLock(profile.ConnectionString!, work, "adjacent-unit", 5000))
+            {
+                for (int episode = 1; episode <= 200; episode++)
+                {
+                    player.LoadEmbed("https://fixture.invalid/failed-admission/" + episode, "Failed admission fixture",
+                        episode.ToString(), malId: 42, audiovisualContext: catalog ? FailureEpisode(nextWork, episode) : null);
+                    if (episode < 200 && !player.IsPersistenceWaiting)
+                    {
+                        player.PlaybackTime = (120 + episode) * 1000;
+                        player.SetTabActive(false);
+                        player.SetTabActive(true);
+                    }
+                }
+                Assert.True(player.IsPersistenceWaiting);
+            }
+            // The first unit's commit fails after the writer releases. The latest source must still be admitted.
+            WaitForResumeLoad(player);
+            Assert.False(player.IsPersistenceWaiting);
+            Assert.True(player.TryConsumePendingWebResumePosition(out double restored));
+            Assert.Equal(371, restored);
+            Assert.Equal(120, PendingPosition(JournalPath(profile), work, unit));
+            Assert.Equal(90, ReadCommitted(profile.ConnectionString!, work, unit));
+            Assert.Equal(57, ReadCommitted(profile.ConnectionString!, work, "adjacent-unit"));
+        });
+    }
+
+    private static AudiovisualPlaybackContext FailureEpisode(string work, int episode) => new(work,
+        new() { Kind = AudiovisualMediaKind.Television, ContentForm = AudiovisualContentForm.Series },
+        new() { SeasonNumber = 1, EpisodeNumber = episode }, "Failed commit fixture", "", new());
+
+    /// <summary>Real SQLite rejects every update of one unit, as a failing commit would.</summary>
+    private sealed class FailingUnitTrigger : IDisposable
+    {
+        private readonly string _connectionString;
+
+        public FailingUnitTrigger(string connectionString, string work, string unit)
+        {
+            _connectionString = new SqliteConnectionStringBuilder(connectionString)
+                { Cache = SqliteCacheMode.Private, Pooling = false }.ToString();
+            static string Literal(string value) => "'" + value.Replace("'", "''") + "'";
+            Execute("CREATE TRIGGER fixture_failing_unit BEFORE UPDATE ON ResumeStates " +
+                $"WHEN OLD.MediaId = {Literal(work)} AND OLD.EpisodeId = {Literal(unit)} " +
+                "BEGIN SELECT RAISE(ABORT, 'fixture commit failure'); END;");
+        }
+
+        public void Dispose() => Execute("DROP TRIGGER IF EXISTS fixture_failing_unit;");
+
+        private void Execute(string sql)
+        {
+            using var connection = new SqliteConnection(_connectionString);
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = sql;
+            command.ExecuteNonQuery();
+        }
+    }
+
     private static string JournalPath(IsolatedProfile profile) => DurableResumeJournal.JournalPath(
         Path.GetFullPath(new SqliteConnectionStringBuilder(profile.ConnectionString!).DataSource));
 

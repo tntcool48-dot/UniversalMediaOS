@@ -3103,12 +3103,26 @@ namespace UniversalMediaOS.WPF.ViewModels
             }
         }
 
-        private Task SaveJournaledProgressAfterLoadAsync(Task preceding, ResumeSaveSlot slot)
-            => _playbackProgress.CommitDurableObservationAsync(() =>
+        private async Task SaveJournaledProgressAfterLoadAsync(Task preceding, ResumeSaveSlot slot)
+        {
+            try
             {
-                var snapshot = CaptureQueuedResumeSave(slot);
-                return snapshot?.DurableReceipt ?? Task.FromResult<PlaybackProgressReceipt?>(null);
-            }, preceding);
+                await _playbackProgress.CommitDurableObservationAsync(() =>
+                {
+                    var snapshot = CaptureQueuedResumeSave(slot);
+                    return snapshot?.DurableReceipt ?? Task.FromResult<PlaybackProgressReceipt?>(null);
+                }, preceding).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                // Later reads and deferred sources wait on this save; like the direct paths it must
+                // not fail them. A journaled position replays before the next read of its database.
+                bool journaled = slot.Snapshot.DurableReceipt.IsCompletedSuccessfully;
+                AppLogger.Log(journaled
+                    ? $"[Resume] Journaled position is not in the database yet; it replays before the next read: {ex.Message}"
+                    : $"[Resume] Accepted position could not be journaled or saved: {ex.Message}", journaled ? "WARNING" : "ERROR");
+            }
+        }
 
         private async Task SaveCatalogProgressAfterLoadAsync(Task<PlaybackProgressSession?> session, ResumeSaveSlot slot)
         {
