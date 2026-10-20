@@ -98,6 +98,12 @@ internal sealed class DurableResumeJournal
             return true;
         }));
 
+    /// <summary>No accepted observation is still being written, and no write failure is unreported.</summary>
+    internal bool IsSettled
+    {
+        get { lock (_queueGate) return _unobserved.All(task => task.IsCompletedSuccessfully); }
+    }
+
     internal async Task FlushAsync()
     {
         Task[] pending;

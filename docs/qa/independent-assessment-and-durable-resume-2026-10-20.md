@@ -60,6 +60,8 @@ Checked and consistent with the product rules: Stream never opens a website auto
 5. **Stop the DI scope from disposing the player's database early** (finding 3), with a DI-level regression test.
 6. **Continue the open checklist gates in their recorded order:** real Windows shutdown and pressured source admission (without repeating the October 17 timed sequence), broader real providers and audio, download storage failures, and the release manifest/packaged smoke tests. Books stay deferred; Arabic cartoons stay last.
 
+**Follow-up status (same day, local commits, not yet pushed):** this batch is **5389c9a**. Findings 1–2 are in **b8cc4c3**, merged in **d6b4284**. Findings 3–4 are in the [close-path batch](close-path-journal-logs-and-player-database-lifetime-2026-10-20.md). Session end deliberately still waits for SQLite up to its deadline; that note explains why.
+
 ## Open questions
 
 - Should the 50-second real-app durability case stay in the hosted suite, or run only as a local qualification?

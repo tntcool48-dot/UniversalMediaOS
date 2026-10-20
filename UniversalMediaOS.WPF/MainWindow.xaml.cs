@@ -129,19 +129,23 @@ namespace UniversalMediaOS.WPF
             if (_progressClosePending) return;
             _progressClosePending = true;
             IsEnabled = false;
+            UniversalMediaOS.Core.Services.PlaybackProgressService? sharedProgress = null;
+            Task durableFlush = Task.CompletedTask;
             try
             {
                 Task currentPlayers = viewModel.FlushPlaybackProgressAsync();
-                var sharedProgress = (Application.Current as App)?.Services.GetService(
+                sharedProgress = (Application.Current as App)?.Services.GetService(
                     typeof(UniversalMediaOS.Core.Services.PlaybackProgressService)) as UniversalMediaOS.Core.Services.PlaybackProgressService;
-                await Task.WhenAll(currentPlayers, sharedProgress?.FlushAsync() ?? Task.CompletedTask,
-                    sharedProgress?.FlushDurableObservationsAsync() ?? Task.CompletedTask)
+                durableFlush = sharedProgress?.FlushDurableObservationsAsync() ?? Task.CompletedTask;
+                await Task.WhenAll(currentPlayers, sharedProgress?.FlushAsync() ?? Task.CompletedTask, durableFlush)
                     .WaitAsync(TimeSpan.FromSeconds(15));
                 UniversalMediaOS.Core.Helpers.AppLogger.Log("[Resume] Accepted playback progress drained before application close.");
             }
             catch (TimeoutException)
             {
-                UniversalMediaOS.Core.Helpers.AppLogger.Log("[Resume] Application close deadline elapsed with playback progress still pending.", "WARNING");
+                UniversalMediaOS.Core.Helpers.AppLogger.Log(sharedProgress?.AreUncommittedPositionsJournaled(durableFlush) == true
+                    ? "[Resume] Application close deadline elapsed; accepted playback progress is journaled and its database commit is still pending."
+                    : "[Resume] Application close deadline elapsed with playback progress still pending and not journaled.", "WARNING");
             }
             catch (Exception ex)
             {

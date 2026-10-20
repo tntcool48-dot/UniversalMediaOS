@@ -78,10 +78,15 @@ public sealed class PackagedResumeDurabilityTests(ITestOutputHelper output)
                 TimeSpan.FromSeconds(5)), ReadShared(journal));
 
             closing.Start();
-            fixture.App.Close(killIfCloseFails: false);
+            // Close the WPF window itself, as its title-bar button does. Process.CloseMainWindow can pick a
+            // visible unowned popup (a tooltip under the cursor) and then never reaches the window.
+            Window().Patterns.Window.Pattern.Close();
             Assert.True(SpinWait.SpinUntil(() => fixture.App.HasExited, TimeSpan.FromSeconds(40)), ReadShared(logPath));
             closing.Stop();
-            Assert.Contains("[Resume] Application close deadline elapsed with playback progress still pending.", ReadShared(logPath));
+            string closeLog = ReadShared(logPath);
+            // The close log reports the durability actually reached, not a bare "still pending".
+            Assert.Contains("[Resume] Application close deadline elapsed; accepted playback progress is journaled and its database commit is still pending.", closeLog);
+            Assert.DoesNotContain("not journaled", closeLog);
             Assert.Equal(committed, ReadCommitted(connectionString, row));
         }
         output.WriteLine($"Committed {committed:0.000}s; accepted behind the writer {accepted:0.000}s; close took {closing.Elapsed.TotalSeconds:0.000}s.");

@@ -3079,7 +3079,7 @@ namespace UniversalMediaOS.WPF.ViewModels
                     foreach (long finished in _pendingResumeSaves.Where(entry => entry.Value.IsCompleted).Select(entry => entry.Key).ToArray())
                         _pendingResumeSaves.Remove(finished);
                     if (!save.IsCompleted) _pendingResumeSaves[sequence] = save;
-                    _playbackProgress.TrackPendingPersistence(save);
+                    _playbackProgress.TrackPendingPersistence(save, unjournaledPosition: _durableProgressClaim == null);
                 }
             }
 

@@ -19,6 +19,7 @@ public sealed class PlaybackProgressService
     private readonly ConcurrentDictionary<string, long> _activeWorkOwners = new();
     private readonly ConcurrentDictionary<(string Work, string Unit), long> _latestWrites = new();
     private readonly ConcurrentDictionary<long, Task> _pendingPersistence = new();
+    private int _pendingUnjournaledPositions;
     private long _persistenceSequence;
     private long _sequence;
 
@@ -50,11 +51,14 @@ public sealed class PlaybackProgressService
     public Task RunSerializedPersistenceAsync(Func<Task> operation)
         => RunSerializedPersistenceAsync(async () => { await operation().ConfigureAwait(false); return 0; });
 
-    public void TrackPendingPersistence(Task operation)
+    /// <param name="unjournaledPosition">The operation is a direct save: its accepted position exists
+    /// only in memory until SQLite commits it.</param>
+    public void TrackPendingPersistence(Task operation, bool unjournaledPosition = false)
     {
         if (operation.IsCompletedSuccessfully) return;
         long id = Interlocked.Increment(ref _persistenceSequence);
         var observed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (unjournaledPosition) Interlocked.Increment(ref _pendingUnjournaledPositions);
         _pendingPersistence[id] = observed.Task;
         _ = ObserveAsync();
         async Task ObserveAsync()
@@ -63,11 +67,19 @@ public sealed class PlaybackProgressService
             catch (Exception ex) { AppLogger.Log($"[Resume] Accepted persistence operation failed: {ex.Message}", "WARNING"); }
             finally
             {
+                if (unjournaledPosition) Interlocked.Decrement(ref _pendingUnjournaledPositions);
                 _pendingPersistence.TryRemove(id, out _);
                 observed.TrySetResult();
             }
         }
     }
+
+    /// <summary>For a drain whose deadline elapsed: whether every accepted position still waiting for
+    /// SQLite is already in the journal, which replays it before the next read. Pass the durable
+    /// flush started with that drain; a failure it reported means a position may be missing.</summary>
+    public bool AreUncommittedPositionsJournaled(Task durableFlush) =>
+        durableFlush.IsCompletedSuccessfully && _durableJournal.IsSettled &&
+        Volatile.Read(ref _pendingUnjournaledPositions) == 0;
 
     public async Task FlushAsync()
     {

@@ -272,10 +272,12 @@ namespace UniversalMediaOS.WPF
                 var progress = Services.GetService<PlaybackProgressService>();
                 bool drained = DrainPlaybackProgressForSessionEnding(
                     () => viewModel?.FlushPlaybackProgressAsync(sessionEnding: true) ?? Task.CompletedTask,
-                    progress, TimeSpan.FromSeconds(3));
+                    progress, TimeSpan.FromSeconds(3), out bool journaled);
                 UniversalMediaOS.Core.Helpers.AppLogger.Log(drained
                     ? "[Resume] Accepted playback progress drained before Windows session end."
-                    : "[Resume] Windows session-end deadline elapsed with playback progress still pending.",
+                    : journaled
+                        ? "[Resume] Windows session-end deadline elapsed; accepted playback progress is journaled and its database commit is still pending."
+                        : "[Resume] Windows session-end deadline elapsed with playback progress still pending and not journaled.",
                     drained ? "INFO" : "WARNING");
             }
             catch (Exception ex)
@@ -287,13 +289,25 @@ namespace UniversalMediaOS.WPF
 
         internal static bool DrainPlaybackProgressForSessionEnding(
             Func<Task> captureCurrentPlayers, PlaybackProgressService? progress, TimeSpan deadline)
+            => DrainPlaybackProgressForSessionEnding(captureCurrentPlayers, progress, deadline, out _);
+
+        /// <param name="journaled">When the deadline elapses: whether every accepted position still
+        /// waiting for SQLite is in the resume journal, which replays it before the next read.</param>
+        internal static bool DrainPlaybackProgressForSessionEnding(Func<Task> captureCurrentPlayers,
+            PlaybackProgressService? progress, TimeSpan deadline, out bool journaled)
         {
             // Capture keys/positions on the UI thread before teardown, then wait
             // only for worker IO. This event cannot await a dispatcher continuation.
-            Task drain = Task.WhenAll(captureCurrentPlayers(), progress?.FlushAsync() ?? Task.CompletedTask,
-                progress?.FlushDurableObservationsAsync() ?? Task.CompletedTask);
-            try { drain.WaitAsync(deadline).GetAwaiter().GetResult(); return true; }
-            catch (TimeoutException) { return false; }
+            Task players = captureCurrentPlayers();
+            Task durable = progress?.FlushDurableObservationsAsync() ?? Task.CompletedTask;
+            Task drain = Task.WhenAll(players, progress?.FlushAsync() ?? Task.CompletedTask, durable);
+            try { drain.WaitAsync(deadline).GetAwaiter().GetResult(); journaled = true; return true; }
+            catch (TimeoutException)
+            {
+                // The SQLite wait stays bounded by the deadline; journaled positions replay later.
+                journaled = progress?.AreUncommittedPositionsJournaled(durable) == true;
+                return false;
+            }
         }
 
         protected override void OnExit(ExitEventArgs e)
@@ -468,7 +482,16 @@ namespace UniversalMediaOS.WPF
             services.AddTransient<SearchViewModel>();
             services.AddTransient<MangaViewModel>();
             services.AddSingleton<DownloadsViewModel>();
-            services.AddTransient<PlaybackViewModel>();
+            // The player disposes its database only after its accepted saves finish. A context
+            // resolved from the tab's scope would be disposed by that scope when the tab closes.
+            services.AddTransient(provider => new PlaybackViewModel(
+                new DatabaseContext(),
+                provider.GetRequiredService<WatchTogetherClientService>(),
+                provider.GetRequiredService<PlaybackSyncController>(),
+                provider.GetRequiredService<MalOAuthService>(),
+                provider.GetRequiredService<UniversalMediaOS.Core.Streaming.HlsLoopbackProxy>(),
+                provider.GetRequiredService<PlaybackProgressService>(),
+                provider.GetRequiredService<DomainHotSwapper>()));
             services.AddTransient<AnimeDetailsViewModel>();
             services.AddTransient<VaDetectViewModel>();
             services.AddSingleton<WatchTogetherViewModel>();

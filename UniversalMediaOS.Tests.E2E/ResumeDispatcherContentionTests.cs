@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using UniversalMediaOS.Core.Data;
 using UniversalMediaOS.Core.Helpers;
 using UniversalMediaOS.Core.OtherMedia;
@@ -756,6 +757,171 @@ public sealed class ResumeDispatcherContentionTests(ITestOutputHelper output)
         Assert.InRange(elapsed.Elapsed.TotalMilliseconds, 0, 500);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SessionEndingDeadlineReportsJournaledProgressBehindALockedWriter(bool catalog)
+    {
+        using var profile = new IsolatedProfile();
+        RecoveryLayoutTests.RunSta(() =>
+        {
+            var progress = new PlaybackProgressService(new(Path.Combine(profile.Root, "library.json")));
+            var database = new TrackingDatabaseContext();
+            profile.Track(progress, database);
+            using var player = new PlaybackViewModel(database, null, null, playbackProgress: progress);
+            player.LoadEmbed("https://fixture.invalid/session-end", "Session-end fixture", "1", malId: 42,
+                audiovisualContext: catalog ? Context() : null);
+            var (work, unit) = SaveInitial(player, profile);
+            player.PlaybackTime = 120_000;
+            string journal = JournalPath(profile);
+            using (var writer = new WriterLock(profile.ConnectionString!, work, unit, 5000))
+            {
+                Assert.False(UniversalMediaOS.WPF.App.DrainPlaybackProgressForSessionEnding(
+                    player.FlushResumeForSessionEndingAsync, progress, TimeSpan.FromMilliseconds(100), out bool journaled));
+                Assert.True(journaled);
+                // The report matches the files: the journal holds the accepted position; SQLite does not yet.
+                Assert.Equal(120, PendingPosition(journal, work, unit));
+                Assert.Equal(90, ReadCommitted(profile.ConnectionString!, work, unit));
+            }
+            progress.FlushAsync().WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+            AssertPersisted(work, unit, 120);
+            Assert.Null(PendingPosition(journal, work, unit));
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SessionEndingDeadlineDoesNotReportAnUnwrittenJournalAsJournaled(bool catalog)
+    {
+        using var profile = new IsolatedProfile();
+        RecoveryLayoutTests.RunSta(() =>
+        {
+            var progress = new PlaybackProgressService(new(Path.Combine(profile.Root, "library.json")));
+            var database = new TrackingDatabaseContext();
+            profile.Track(progress, database);
+            using var player = new PlaybackViewModel(database, null, null, playbackProgress: progress);
+            player.LoadEmbed("https://fixture.invalid/session-end", "Session-end fixture", "1", malId: 42,
+                audiovisualContext: catalog ? Context() : null);
+            var (work, unit) = SaveInitial(player, profile);
+            progress.FlushAsync().WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+            player.PlaybackTime = 120_000;
+            string journal = JournalPath(profile);
+            // Another holder of the journal's lock delays the file write while SQLite stays free.
+            using (new FileStream(journal + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
+            {
+                Assert.False(UniversalMediaOS.WPF.App.DrainPlaybackProgressForSessionEnding(
+                    player.FlushResumeForSessionEndingAsync, progress, TimeSpan.FromMilliseconds(100), out bool journaled));
+                Assert.False(journaled);
+                Assert.Null(PendingPosition(journal, work, unit));
+            }
+            progress.FlushAsync().WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+            AssertPersisted(work, unit, 120);
+        });
+    }
+
+    [Fact]
+    public void SessionEndingDeadlineDoesNotReportADirectSaveAsJournaled()
+    {
+        using var profile = new IsolatedProfile();
+        string name = "resume-direct-" + Guid.NewGuid().ToString("N");
+        using var volatileStore = new SqliteConnection($"Data Source={name};Mode=Memory;Cache=Shared");
+        volatileStore.Open(); // Keeps the shared in-memory database alive between the player's operations.
+        RecoveryLayoutTests.RunSta(() =>
+        {
+            var progress = new PlaybackProgressService(new(Path.Combine(profile.Root, "library.json")));
+            using var player = new PlaybackViewModel(new VolatileDatabaseContext(name), null, null, playbackProgress: progress);
+            player.LoadEmbed("https://fixture.invalid/direct", "Direct-save fixture", "1", malId: 42);
+            WaitForResumeLoad(player);
+            // A volatile database has no journal, so this save is direct; hold the shared SQLite order.
+            var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            Task holder = progress.RunSerializedPersistenceAsync(() => held.Task);
+            player.PlaybackTime = 120_000;
+            Assert.False(UniversalMediaOS.WPF.App.DrainPlaybackProgressForSessionEnding(
+                player.FlushResumeForSessionEndingAsync, progress, TimeSpan.FromMilliseconds(100), out bool journaled));
+            Assert.False(journaled);
+            held.SetResult();
+            holder.WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+            progress.FlushAsync().WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+        });
+        using var command = volatileStore.CreateCommand();
+        command.CommandText = "SELECT PositionSeconds FROM ResumeStates WHERE MediaId = '42' AND EpisodeId = '1'";
+        Assert.Equal(120, Convert.ToDouble(command.ExecuteScalar()));
+    }
+
+    [Fact]
+    public void ClosingAPlayerTabScopeKeepsItsDatabaseUntilAcceptedSavesFinish()
+    {
+        using var profile = new IsolatedProfile();
+        RecoveryLayoutTests.RunSta(() =>
+        {
+            using var services = UniversalMediaOS.WPF.App.ConfigureServices();
+            var progress = services.GetRequiredService<PlaybackProgressService>();
+            // MainViewModel gives each player tab its own scope and disposes that scope when the tab closes.
+            var tab = services.CreateScope();
+            var player = tab.ServiceProvider.GetRequiredService<PlaybackViewModel>();
+            var database = (DatabaseContext)typeof(PlaybackViewModel).GetField("_databaseContext",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(player)!;
+            try
+            {
+                player.LoadEmbed("https://fixture.invalid/tab-scope", "Tab scope fixture", "1", malId: 42);
+                var (work, unit) = SaveInitial(player, profile);
+                player.PlaybackTime = 120_000;
+                using (var writer = new WriterLock(profile.ConnectionString!, work, unit, 5000))
+                {
+                    tab.Dispose(); // The player's own two-second final-save wait expires behind the writer.
+                    Assert.True(player.IsDisposed);
+                    Assert.False(IsDisposed(database), "Closing the tab must not dispose the player's database while an accepted save waits.");
+                }
+                progress.FlushAsync().WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+                AssertPersisted(work, unit, 120);
+                Assert.True(SpinWait.SpinUntil(() => IsDisposed(database), TimeSpan.FromSeconds(5)),
+                    "The player must dispose its database after its accepted saves finish.");
+            }
+            finally
+            {
+                // A failed assertion must not leave a commit holding the profile's database open.
+                tab.Dispose();
+                progress.FlushAsync().WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+            }
+        });
+    }
+
+    private static string JournalPath(IsolatedProfile profile) => DurableResumeJournal.JournalPath(
+        Path.GetFullPath(new SqliteConnectionStringBuilder(profile.ConnectionString!).DataSource));
+
+    private static double? PendingPosition(string journal, string work, string unit)
+    {
+        if (!File.Exists(journal)) return null;
+        using var stream = new FileStream(journal, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var document = System.Text.Json.JsonDocument.Parse(stream);
+        foreach (var pending in document.RootElement.GetProperty("Pending").EnumerateArray())
+        {
+            if (pending.GetProperty("WorkKey").GetString() == work && pending.GetProperty("UnitKey").GetString() == unit)
+                return pending.GetProperty("Position").GetDouble();
+        }
+        return null;
+    }
+
+    /// <summary>A private-cache WAL reader sees the last committed row beside a held writer.</summary>
+    private static double ReadCommitted(string connectionString, string work, string unit)
+    {
+        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder(connectionString)
+            { Cache = SqliteCacheMode.Private, Pooling = false }.ToString());
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT PositionSeconds FROM ResumeStates WHERE MediaId = $work AND EpisodeId = $unit";
+        command.Parameters.AddWithValue("$work", work);
+        command.Parameters.AddWithValue("$unit", unit);
+        return Convert.ToDouble(command.ExecuteScalar());
+    }
+
+    private static bool IsDisposed(DatabaseContext database)
+    {
+        try { _ = database.Database; return false; }
+        catch (ObjectDisposedException) { return true; }
+    }
+
     [Fact]
     public async Task ACloseWaitDeadlineDoesNotCancelAcceptedPersistence()
     {
@@ -945,6 +1111,12 @@ public sealed class ResumeDispatcherContentionTests(ITestOutputHelper output)
             Assert.Null(ownedDirectory.LinkTarget);
             if (ownedDirectory.Exists) ownedDirectory.Delete(recursive: true);
         }
+    }
+
+    private sealed class VolatileDatabaseContext(string name) : DatabaseContext
+    {
+        protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) =>
+            optionsBuilder.UseSqlite($"Data Source={name};Mode=Memory;Cache=Shared");
     }
 
     private sealed class TrackingDatabaseContext : DatabaseContext
