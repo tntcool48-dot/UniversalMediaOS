@@ -31,8 +31,10 @@ public sealed class PythonBootstrapper : IDisposable
     private bool _cancelRequested;
     private PythonPreparationSnapshot _snapshot = new(PythonPreparationState.NotStarted, "not_started", []);
     private static readonly string[] Scripts = ["scraper.py", "book_scraper.py", "audiovisual_scraper.py"];
-    private static readonly (string Package, string Import)[] Packages =
-    [ ("drissionpage", "DrissionPage"), ("curl_cffi", "curl_cffi"), ("httpx", "httpx"), ("beautifulsoup4", "bs4"), ("lxml", "lxml") ];
+    // Exact tested versions: release validation runs the scraper unit tests against these same pins.
+    private static readonly (string Requirement, string Import)[] Packages =
+    [ ("DrissionPage==4.1.1.4", "DrissionPage"), ("curl_cffi==0.15.0", "curl_cffi"), ("httpx==0.28.1", "httpx"),
+      ("beautifulsoup4==4.15.0", "bs4"), ("lxml==6.1.1", "lxml") ];
 
     public PythonBootstrapper() : this(new PreparationProcessRunner(), AppContext.BaseDirectory,
         Path.Combine(AppDataPaths.LocalBaseDirectory, "UniversalMediaOS", "Services"),
@@ -112,7 +114,7 @@ public sealed class PythonBootstrapper : IDisposable
             SetState(PythonPreparationState.Preparing, "checking_imports", missing);
             if (missing.Length > 0)
             {
-                string[] install = ["-m", "pip", "install", "--quiet", .. Packages.Where(p => missing.Contains(p.Import)).Select(p => p.Package)];
+                string[] install = ["-m", "pip", "install", "--quiet", .. Packages.Where(p => missing.Contains(p.Import)).Select(p => p.Requirement)];
                 var result = await _runner.RunAsync(_resolvedPython, install, token).ConfigureAwait(false);
                 if (result.ExitCode != 0) { SetState(PythonPreparationState.Failed, "pip_failed", missing); return; }
                 missing = await ProbeImportsAsync(_resolvedPython, token).ConfigureAwait(false);

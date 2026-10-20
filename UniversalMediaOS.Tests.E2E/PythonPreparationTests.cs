@@ -52,8 +52,26 @@ public sealed class PythonPreparationTests
         Assert.Equal(code, fixture.Python.Snapshot.DiagnosticCode);
         Assert.False(fixture.Python.IsAvailable);
         Assert.Null(fixture.Python.ResolvePythonExecutable());
-        Assert.Equal(new[] { "-m", "pip", "install", "--quiet", "httpx" }, runner.InstallArguments);
+        Assert.Equal(new[] { "-m", "pip", "install", "--quiet", "httpx==0.28.1" }, runner.InstallArguments);
         Assert.Equal(exitCode == 0 ? 2 : 1, runner.Probes);
+    }
+
+    [Fact]
+    public async Task InstallPinsMatchTheVersionsReleaseValidationTests()
+    {
+        var runner = new FakeRunner((_, _) => Task.FromResult("[\"DrissionPage\",\"curl_cffi\",\"httpx\",\"bs4\",\"lxml\"]")) { PipExit = 1 };
+        using var fixture = new Fixture(runner);
+        await fixture.Python.EnsureScraperReadyAsync();
+        string[] pins = runner.InstallArguments!.Skip(4).ToArray();
+        Assert.Equal(5, pins.Length);
+        Assert.All(pins, pin => Assert.Matches(@"^[\w.-]+==\d+(\.\d+)+$", pin));
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root != null && !File.Exists(Path.Combine(root.FullName, "UniversalMediaOS.sln")))
+            root = root.Parent;
+        Assert.NotNull(root);
+        string[] workflow = File.ReadAllText(Path.Combine(root.FullName, ".github", "workflows", "release-validation.yml"))
+            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        Assert.All(pins, pin => Assert.Contains(pin, workflow));
     }
 
     [Theory]
