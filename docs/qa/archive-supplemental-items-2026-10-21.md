@@ -39,9 +39,11 @@ A first, broader version also rejected free-form "trailer"/"clip" subjects. It f
 - *Night of the Living Dead* (1968): unchanged at **7**, one verified.
 - The 1999 and 1986 remakes: still **0**; no other year's item crosses over.
 
-## Open decision (not changed)
+## Decision: keep these unverified
 
-Most real full-length films stay **unverified**, "Try stream", because their free-form subjects do not say "feature film". This includes all three 1959 films and six of the seven 1968 films. Most sit in Archive's curated `feature_films` collection. Counting that collection as work-form evidence would verify them, with title and year still exact. It would also verify altered presentations in that collection, such as the colorized 1960 upload, unless excluded. That is a verification-policy decision left to the user.
+**The user decided on October 21 to keep them unverified ("Try stream").** Curated collection membership is not accepted as verification evidence. The analysis that informed the decision follows.
+
+Most real full-length films stay **unverified**, "Try stream", because their free-form subjects do not say "feature film". This includes all three 1959 films and six of the seven 1968 films. Most sit in Archive's curated `feature_films` collection. Counting that collection as work-form evidence would have verified them, with title and year still exact. It would also have verified altered presentations in that collection, such as the colorized 1960 upload, unless excluded.
 
 ## Limits
 
