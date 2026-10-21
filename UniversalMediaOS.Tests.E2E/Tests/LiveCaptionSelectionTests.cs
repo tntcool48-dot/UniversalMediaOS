@@ -115,17 +115,24 @@ public sealed class LiveCaptionSelectionTests(ITestOutputHelper output)
         void WaitForReloadState(string label, int priorLogLength, Stopwatch selectionTimer,
             double minimumPosition, Func<double> maximumPosition)
         {
+            // A ceiling, not a target: hosted runners measured up to 4 s from selection for dropdown variants,
+            // because each whole-window search is slow there. The observed time is still written below.
+            bool? lastPause = null;
+            double lastPosition = double.NaN;
+            bool eventSeen = false;
             Assert.True(SpinWait.SpinUntil(() =>
             {
-                if (PauseState() != paused) return false;
-                double current = Position();
-                if (current < minimumPosition || current > maximumPosition()) return false;
+                lastPause = PauseState();
+                lastPosition = Position();
                 // The old button state can outlive source replacement. Require
                 // the new decoder's state event and the restored seek together.
                 string log = ReadLog(logPath);
                 string nativeEvent = paused ? "LibVLC paused event fired" : "LibVLC playing event fired";
-                return log.Length > priorLogLength && log[priorLogLength..].Contains(nativeEvent, StringComparison.Ordinal);
-            }, TimeSpan.FromSeconds(3)), $"{label} did not restore the requested playback state.\n{ReadLog(logPath)}");
+                eventSeen = log.Length > priorLogLength && log[priorLogLength..].Contains(nativeEvent, StringComparison.Ordinal);
+                return lastPause == paused && lastPosition >= minimumPosition && lastPosition <= maximumPosition() && eventSeen;
+            }, TimeSpan.FromSeconds(10)), $"{label} did not restore the requested playback state: pause state {lastPause?.ToString() ?? "unreadable"} " +
+                $"(wanted {paused}), position {lastPosition:0} ms (wanted {minimumPosition:0}-{maximumPosition():0}), decoder event {eventSeen}." +
+                $"\n{ReadLog(logPath)}");
             output.WriteLine($"{label}: requested {(paused ? "paused" : "playing")} state observed after {selectionTimer.Elapsed.TotalSeconds:0.000} s.");
         }
         void SelectCaption(string label)
@@ -142,7 +149,12 @@ public sealed class LiveCaptionSelectionTests(ITestOutputHelper output)
             {
                 string? directory = Environment.GetEnvironmentVariable("UNIVERSAL_MEDIA_OS_CAPTION_DIAGNOSTIC_DIR");
                 if (string.IsNullOrWhiteSpace(directory)) return;
-                var caption = Captions()!;
+                // The control leaves the tree briefly while a choice reloads the source.
+                if (Captions() is not { } caption)
+                {
+                    output.WriteLine($"{phase}: the caption control is not in the tree.");
+                    return;
+                }
                 string snapshot = JsonSerializer.Serialize(new
                 {
                     Phase = phase, Choice = label, Pid = fixture.App.ProcessId,
@@ -173,7 +185,18 @@ public sealed class LiveCaptionSelectionTests(ITestOutputHelper output)
             Snapshot("after-two-second-open-interval");
             Assert.Equal(ExpandCollapseState.Expanded,
                 Captions()!.Patterns.ExpandCollapse.Pattern.ExpandCollapseState.Value);
-            Captions()!.Items.Single(item => item.Text == label).Click(moveMouse: true);
+            // Choice labels follow a language switch through the next caption refresh; wait for the label.
+            ComboBoxItem? choice = null;
+            Assert.True(SpinWait.SpinUntil(() => (choice = Captions()?.Items.SingleOrDefault(item => item.Text == label)) != null,
+                TimeSpan.FromSeconds(3)), $"The open caption list never offered {label}; it offered: " +
+                string.Join(", ", Captions()?.Items.Select(item => item.Text) ?? []));
+            choice!.Click(moveMouse: true);
+            if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("UNIVERSAL_MEDIA_OS_CAPTION_DIAGNOSTIC_DIR")))
+            {
+                Snapshot("after-choice");
+                Thread.Sleep(500);
+                Snapshot("after-choice-500-ms");
+            }
         }
         async Task HoldForVisualObservation(string phase)
         {
@@ -264,7 +287,11 @@ public sealed class LiveCaptionSelectionTests(ITestOutputHelper output)
             Assert.True(SpinWait.SpinUntil(IsPaused, TimeSpan.FromSeconds(3)));
         }
         await HoldForVisualObservation("before-off");
-        double position = Position();
+        // Position() reads 0 while the slider is briefly absent from the tree; the media has already played,
+        // so wait for the slider's actual value instead of taking 0 as the baseline.
+        double position = 0;
+        Assert.True(SpinWait.SpinUntil(() => (position = Position()) > 0, TimeSpan.FromSeconds(5)),
+            "The playback slider must report the current position before a caption change.");
         var elapsed = Stopwatch.StartNew();
         int priorLogLength = ReadLog(logPath).Length;
         var selectionTimer = Stopwatch.StartNew();
