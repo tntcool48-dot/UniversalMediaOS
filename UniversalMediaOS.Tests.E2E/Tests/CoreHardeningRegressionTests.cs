@@ -262,6 +262,44 @@ public sealed class CoreHardeningRegressionTests
             StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void ProtectedSettings_CopiedFromAnotherAccountStayUnreadableInsteadOfBecomingCredentials()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        using var sandbox = new TemporaryDirectory("UniversalMediaOS-config-dpapi-tests");
+        string configPath = Path.Combine(sandbox.Path, "config.json");
+        // Extra entropy stands in for another Windows account or computer: this account cannot decrypt it.
+        static string Foreign(string value) => Convert.ToBase64String(ProtectedData.Protect(
+            Encoding.UTF8.GetBytes(value), [7, 7, 7], DataProtectionScope.CurrentUser));
+        string legacyForeign = Foreign("other-account-token");
+        string markedForeign = "dpapi:v1:" + Foreign("other-account-password");
+        File.WriteAllText(configPath, JsonSerializer.Serialize(new Dictionary<string, string>
+        {
+            ["MalOAuthToken"] = legacyForeign,
+            ["QBitPassword"] = markedForeign,
+            ["TmdbApiKey"] = "legacy-plaintext-key"
+        }));
+
+        var config = new DomainHotSwapper(configPath);
+        Assert.Equal(string.Empty, config.GetSetting("MalOAuthToken"));
+        Assert.Equal(string.Empty, config.GetSetting("QBitPassword"));
+        Assert.Equal("legacy-plaintext-key", config.GetSetting("TmdbApiKey"));
+        using (JsonDocument document = JsonDocument.Parse(File.ReadAllText(configPath)))
+        {
+            // The other account's values are kept as they were, so moving the profile back still reads them.
+            Assert.Equal(legacyForeign, document.RootElement.GetProperty("MalOAuthToken").GetString());
+            Assert.Equal(markedForeign, document.RootElement.GetProperty("QBitPassword").GetString());
+            Assert.StartsWith("dpapi:v1:", document.RootElement.GetProperty("TmdbApiKey").GetString(), StringComparison.Ordinal);
+        }
+
+        config.SetSetting("MalOAuthToken", "re-entered-token");
+        Assert.Equal("re-entered-token", new DomainHotSwapper(configPath).GetSetting("MalOAuthToken"));
+    }
+
     private sealed class IdleExecutor : IDownloadJobExecutor
     {
         public Task<DownloadExecutionResult> ExecuteAsync(

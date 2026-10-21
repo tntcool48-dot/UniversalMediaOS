@@ -37,8 +37,12 @@ namespace UniversalMediaOS.Core.Configuration
     public class DomainHotSwapper
     {
         private const string DpapiProtectedValuePrefix = "dpapi:v1:";
+        // Every DPAPI blob starts with version 1 and the provider GUID df9d8cd0-1501-11d1-8c7a-00c04fc297eb.
+        private static readonly byte[] DpapiBlobHeader =
+            [0x01, 0x00, 0x00, 0x00, 0xD0, 0x8C, 0x9D, 0xDF, 0x01, 0x15, 0xD1, 0x11, 0x8C, 0x7A, 0x00, 0xC0, 0x4F, 0xC2, 0x97, 0xEB];
 
         private readonly string _configPath;
+        private readonly ConcurrentDictionary<string, bool> _unreadableReported = new();
         private ConcurrentDictionary<string, string> _domainMap = new ConcurrentDictionary<string, string>();
         private readonly System.Threading.SemaphoreSlim _saveLock = new(1, 1);
 
@@ -236,7 +240,7 @@ namespace UniversalMediaOS.Core.Configuration
                             return decrypted;
                         }
 
-                        AppLogger.Log($"Decryption failed for key '{key}'.", "ERROR");
+                        ReportUnreadable(key);
                         return string.Empty;
                     }
 
@@ -245,6 +249,13 @@ namespace UniversalMediaOS.Core.Configuration
                     if (OperatingSystem.IsWindows() && TryUnprotectDpapiValue(val, out string legacyDecrypted))
                     {
                         return legacyDecrypted;
+                    }
+
+                    // Another account's ciphertext is never a credential.
+                    if (OperatingSystem.IsWindows() && IsDpapiBlob(val))
+                    {
+                        ReportUnreadable(key);
+                        return string.Empty;
                     }
 
                     return val;
@@ -412,9 +423,22 @@ namespace UniversalMediaOS.Core.Configuration
                     continue;
                 }
 
-                string plaintext = TryUnprotectDpapiValue(storedValue, out string legacyDecrypted)
-                    ? legacyDecrypted
-                    : storedValue;
+                string plaintext;
+                if (TryUnprotectDpapiValue(storedValue, out string legacyDecrypted))
+                {
+                    plaintext = legacyDecrypted;
+                }
+                else if (IsDpapiBlob(storedValue))
+                {
+                    // Saved by another Windows account or computer (a copied or moved configuration). Keep it as it
+                    // is, where it still reads, instead of protecting its ciphertext as if it were the credential.
+                    ReportUnreadable(key);
+                    continue;
+                }
+                else
+                {
+                    plaintext = storedValue;
+                }
 
                 try
                 {
@@ -428,6 +452,25 @@ namespace UniversalMediaOS.Core.Configuration
             }
 
             return changed;
+        }
+
+        private void ReportUnreadable(string key)
+        {
+            if (_unreadableReported.TryAdd(key, true))
+                AppLogger.Log($"Protected setting '{key}' was saved by another Windows account or computer and cannot be read here; enter it again.", "WARNING");
+        }
+
+        private static bool IsDpapiBlob(string base64Value)
+        {
+            try
+            {
+                byte[] data = Convert.FromBase64String(base64Value);
+                return data.Length > DpapiBlobHeader.Length && data.AsSpan(0, DpapiBlobHeader.Length).SequenceEqual(DpapiBlobHeader);
+            }
+            catch (FormatException)
+            {
+                return false;
+            }
         }
 
         private static bool TryUnprotectDpapiValue(string base64Value, out string plaintext)
