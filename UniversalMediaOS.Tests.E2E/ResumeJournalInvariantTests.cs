@@ -235,6 +235,95 @@ public sealed class ResumeJournalInvariantTests : IDisposable
         AssertPositions(DatabaseA, (Film, 240), (episode, 57));
     }
 
+    [Fact]
+    public async Task PendingPositionYieldsToALaterSaveByABuildWithoutTheJournal()
+    {
+        var neighbor = new PlaybackProgressContext("av:tvmaze:show:169", "season:1:episode:1");
+        Seed(DatabaseA, (Film, 10), (neighbor, 57));
+        var progress = Service(DatabaseA);
+        Assert.Equal(10, progress.Open(Film).Position);
+        var claim = progress.BeginDurableSession(Film);
+        await progress.CommitDurableObservationAsync(Assert.IsType<PlaybackProgressReceipt>(
+            await progress.StageDurableObservationAsync(claim, Observe(31.7))));
+        // Journaled but never committed: the process ends behind a held writer.
+        Assert.IsType<PlaybackProgressReceipt>(await progress.StageDurableObservationAsync(claim, Observe(62)));
+        await progress.FlushDurableObservationsAsync();
+
+        // An older build without the journal then saves later progress directly.
+        using (var olderBuild = new DatabaseContext(DatabaseA)) olderBuild.SaveResumeState(Film.WorkKey, Film.UnitKey, 95);
+
+        Assert.Equal(95, Service(DatabaseA).Open(Film).Position);
+        AssertPositions(DatabaseA, (Film, 95), (neighbor, 57));
+        Assert.Equal(0, PendingRecords(DatabaseA));
+    }
+
+    [Fact]
+    public async Task PendingPositionReplaysOverTheRowItsSessionRead()
+    {
+        // Saved by a build without the journal before this session read it.
+        Seed(DatabaseA, (Film, 50));
+        var progress = Service(DatabaseA);
+        Assert.Equal(50, progress.Open(Film).Position);
+        Assert.IsType<PlaybackProgressReceipt>(
+            await progress.StageDurableObservationAsync(progress.BeginDurableSession(Film), Observe(80)));
+        await progress.FlushDurableObservationsAsync();
+
+        Assert.Equal(80, Service(DatabaseA).Open(Film).Position);
+        Assert.Equal(0, PendingRecords(DatabaseA));
+    }
+
+    [Fact]
+    public async Task PendingPositionReplaysOverItsOwnSessionsEarlierCommit()
+    {
+        Seed(DatabaseA, (Film, 10));
+        var progress = Service(DatabaseA);
+        Assert.Equal(10, progress.Open(Film).Position);
+        var claim = progress.BeginDurableSession(Film);
+        await progress.CommitDurableObservationAsync(Assert.IsType<PlaybackProgressReceipt>(
+            await progress.StageDurableObservationAsync(claim, Observe(40))));
+        // This record's base is still the 10 seconds read before the commit above.
+        Assert.IsType<PlaybackProgressReceipt>(await progress.StageDurableObservationAsync(claim, Observe(80)));
+        await progress.FlushDurableObservationsAsync();
+
+        Assert.Equal(80, Service(DatabaseA).Open(Film).Position);
+    }
+
+    [Fact]
+    public async Task RevisionTableFromTheFirstJournalBuildGainsTheAppliedPosition()
+    {
+        Seed(DatabaseA, (Film, 10));
+        using (var connection = new SqliteConnection($"Data Source={DatabaseA};Pooling=False"))
+        {
+            connection.Open();
+            using var create = connection.CreateCommand();
+            create.CommandText = """
+                CREATE TABLE ResumeJournalRevisions (MediaId TEXT NOT NULL, EpisodeId TEXT NOT NULL,
+                    JournalId TEXT NOT NULL, Revision INTEGER NOT NULL, PRIMARY KEY (MediaId, EpisodeId));
+                INSERT INTO ResumeJournalRevisions VALUES ('av:wikidata:item:Q925587', 'film', '0123456789abcdef0123456789abcdef', 3);
+                """;
+            create.ExecuteNonQuery();
+        }
+        var progress = Service(DatabaseA);
+        Assert.Equal(10, progress.Open(Film).Position);
+        await progress.CommitDurableObservationAsync(Assert.IsType<PlaybackProgressReceipt>(
+            await progress.StageDurableObservationAsync(progress.BeginDurableSession(Film), Observe(120))));
+
+        AssertPositions(DatabaseA, (Film, 120));
+        using var verify = new SqliteConnection($"Data Source={DatabaseA};Pooling=False");
+        verify.Open();
+        using var query = verify.CreateCommand();
+        query.CommandText = "SELECT AppliedPosition FROM ResumeJournalRevisions WHERE MediaId = 'av:wikidata:item:Q925587' AND EpisodeId = 'film'";
+        Assert.Equal(120.0, Convert.ToDouble(query.ExecuteScalar()));
+    }
+
+    private static int PendingRecords(string databasePath)
+    {
+        string journal = databasePath + ".resume-pending.json";
+        if (!File.Exists(journal)) return 0;
+        using var document = System.Text.Json.JsonDocument.Parse(File.ReadAllText(journal));
+        return document.RootElement.GetProperty("Pending").GetArrayLength();
+    }
+
     private PlaybackProgressService Service(string databasePath) =>
         new(new AudiovisualLibraryService(LibraryPath), () => new DatabaseContext(databasePath));
 

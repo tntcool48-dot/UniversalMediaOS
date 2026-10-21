@@ -2879,7 +2879,9 @@ namespace UniversalMediaOS.WPF.ViewModels
                         {
                             if (!EnsureResumeDatabaseCreated()) return 0;
                             await _playbackProgress.ReplayDurableObservationsAsync(_databaseContext).ConfigureAwait(false);
-                            return _databaseContext.GetResumeState(media, unit);
+                            double saved = _databaseContext.GetResumeState(media, unit);
+                            _playbackProgress.NoteResumeRowRead(_databaseContext, media, unit, saved);
+                            return saved;
                         }, cancellationToken).ConfigureAwait(false);
                         return ((PlaybackProgressSession?)null, position);
                     }

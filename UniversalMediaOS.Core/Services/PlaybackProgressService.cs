@@ -19,6 +19,7 @@ public sealed class PlaybackProgressService
     private readonly ConcurrentDictionary<string, long> _activeWorkOwners = new();
     private readonly ConcurrentDictionary<(string Work, string Unit), long> _latestWrites = new();
     private readonly ConcurrentDictionary<long, Task> _pendingPersistence = new();
+    private readonly ConcurrentDictionary<(string Destination, string Work, string Unit), double> _knownRows = new();
     private int _pendingUnjournaledPositions;
     private long _persistenceSequence;
     private long _sequence;
@@ -128,7 +129,20 @@ public sealed class PlaybackProgressService
     }
 
     public Task<PlaybackProgressReceipt?> StageDurableObservationAsync(PlaybackProgressClaim claim,
-        PlaybackProgressObservation observation) => _durableJournal.StageAsync(claim, observation);
+        PlaybackProgressObservation observation) => _durableJournal.StageAsync(claim, observation with
+        {
+            BasePosition = _knownRows.TryGetValue(
+                (DurableResumeJournal.Key(claim.DatabasePath), claim.Context.WorkKey, claim.Context.UnitKey), out double known)
+                ? known : null
+        });
+
+    /// <summary>Records the unit's row as this session read it, so a later save by a writer without this
+    /// journal is not overwritten by an older pending observation.</summary>
+    public void NoteResumeRowRead(DatabaseContext boundDatabase, string workKey, string unitKey, double position)
+    {
+        if (!IsFileBacked(boundDatabase)) return;
+        _knownRows[(DurableResumeJournal.Key(CaptureResumeDestination(boundDatabase)), workKey, unitKey)] = position;
+    }
 
     /// <summary>Waits only for accepted file observations, never the SQLite writer gate.</summary>
     public Task FlushDurableObservationsAsync() => _durableJournal.FlushAsync();
@@ -184,7 +198,7 @@ public sealed class PlaybackProgressService
         {
             using var database = new DatabaseContext(receipt.DatabasePath);
             return await database.ApplyJournaledResumeAsync(receipt.WorkKey, receipt.UnitKey,
-                receipt.Position, receipt.JournalId, receipt.Revision).ConfigureAwait(false);
+                receipt.Position, receipt.JournalId, receipt.Revision, receipt.BasePosition).ConfigureAwait(false);
         }).ConfigureAwait(false);
         if (applied)
         {
@@ -276,6 +290,7 @@ public sealed class PlaybackProgressService
                 AppLogger.Log($"[Resume] Imported verified alias '{context.LegacyWorkKey}/{context.LegacyUnitKey}' into '{context.WorkKey}/{context.UnitKey}'; legacy row retained.");
             }
         }
+        NoteResumeRowRead(database, context.WorkKey, context.UnitKey, position);
         var session = new PlaybackProgressSession(context, Interlocked.Increment(ref _sequence));
         _owners[(context.WorkKey, context.UnitKey)] = session.Owner;
         _activeWorkOwners[context.WorkKey] = session.Owner;
@@ -396,4 +411,4 @@ public sealed record PlaybackProgressSession(PlaybackProgressContext Context, lo
 public sealed record PlaybackProgressWrite(PlaybackProgressSession Session, double Position,
     double Duration, long Sequence, DateTimeOffset ObservedUtc);
 public sealed record PlaybackProgressObservation(double Position, double Duration,
-    bool Completed, DateTimeOffset ObservedUtc);
+    bool Completed, DateTimeOffset ObservedUtc, double? BasePosition = null);

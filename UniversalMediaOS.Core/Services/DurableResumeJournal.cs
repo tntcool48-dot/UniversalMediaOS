@@ -63,7 +63,7 @@ internal sealed class DurableResumeJournal
                     var receipt = new PlaybackProgressReceipt(claim.DatabasePath, document.JournalId, revision,
                         claim.Token, claim.Context.WorkKey, claim.Context.UnitKey,
                         captured.Completed ? 0 : captured.Position, captured.Duration,
-                        captured.Completed, captured.ObservedUtc, claim.Summary);
+                        captured.Completed, captured.ObservedUtc, claim.Summary, captured.BasePosition);
                     document.Pending.RemoveAll(value => value.WorkKey == receipt.WorkKey && value.UnitKey == receipt.UnitKey);
                     document.Pending.Add(receipt);
                     return receipt;
@@ -230,13 +230,14 @@ internal sealed class DurableResumeJournal
         !string.IsNullOrWhiteSpace(value.WorkKey) && !string.IsNullOrWhiteSpace(value.UnitKey) &&
         double.IsFinite(value.Position) && value.Position >= 0 && double.IsFinite(value.Duration) && value.Duration >= 0 &&
         (!value.Completed || value.Position == 0) &&
+        (value.BasePosition is not double basePosition || double.IsFinite(basePosition) && basePosition >= 0) &&
         (value.Summary == null || (!string.IsNullOrWhiteSpace(value.Summary.StoragePath) &&
             Path.IsPathFullyQualified(value.Summary.StoragePath) && value.Summary.Key != null && value.Summary.Key.WorkKey == value.WorkKey));
 
     internal static bool PathsEqual(string? left, string? right) => string.Equals(left, right,
         OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
 
-    private static string Key(string databasePath) =>
+    internal static string Key(string databasePath) =>
         OperatingSystem.IsWindows() ? databasePath.ToUpperInvariant() : databasePath;
 
     private sealed class JournalDocument
@@ -269,9 +270,11 @@ public sealed class PlaybackProgressClaim
     { DatabasePath = databasePath; Context = context; Token = token; Summary = summary; }
 }
 
+/// <param name="BasePosition">The unit's row as the observing session last read it, or null when unknown. Replay
+/// keeps a later save made outside the journal, for example by an older build.</param>
 public sealed record PlaybackProgressReceipt(string DatabasePath, string JournalId, long Revision, string OwnerToken,
     string WorkKey, string UnitKey, double Position, double Duration, bool Completed, DateTimeOffset ObservedUtc,
-    PlaybackProgressSummary? Summary = null);
+    PlaybackProgressSummary? Summary = null, double? BasePosition = null);
 
 public sealed record PlaybackProgressSummary(string StoragePath, AudiovisualLibraryKey Key, string Title,
     string PosterUrl, int? SeasonNumber, int? EpisodeNumber);
