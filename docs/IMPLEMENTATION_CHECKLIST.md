@@ -10,7 +10,7 @@
 
 **Previous corrected-harness checkpoint:** **33465ff** [passed](https://github.com/tntcool48-dot/UniversalMediaOS/actions/runs/38979486691): **1,362 passes /zero failures /22 unchanged skips /1,384 total**, in **12 minutes 10.937 seconds**, with build and Python syntax passed. All five Search navigation cases pass; the original33d5bd4 failure and its retained TRX remain historical failed evidence. All189 production inputs match the reused33d5bd4 package. Original diagnostics were downloaded once; package identity/manifest now record the result. No runtime rebuild, broad local duplicate or hosted rerun.
 
-**Next concrete action:** Push the batches after e632671 (Settings log/lock cases, the session-end deadline repair and the following download-path work), and review their single hosted checkpoint. Candidate **2c83ca7** is published and smoke-tested, including services on; republish with `tools/write-release-manifest.py` once a checkpoint passes on changed source. Two steps wait on the user:
+**Next concrete action:** Push the batches after e632671 (Settings log/lock cases and the session-end deadline repair), and review their single hosted checkpoint. Candidate **2c83ca7** is published and smoke-tested, including services on; republish with `tools/write-release-manifest.py` once a checkpoint passes on changed source. Two steps wait on the user:
 - Real Windows sign-out or restart: run `tools/qualify-windows-shutdown.ps1 -Mode Start` in the prepared `.artifacts/implementation/windows-shutdown-run`, sign out or restart, then `-Mode Check` ([preparation QA](C:/Users/user/animeapp/docs/qa/windows-shutdown-preparation-2026-10-21.md)).
 - A small administrator-mounted volume for the physical disk-full case.
 
