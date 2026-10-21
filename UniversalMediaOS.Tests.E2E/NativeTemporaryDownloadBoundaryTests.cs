@@ -599,6 +599,52 @@ public sealed class NativeTemporaryDownloadBoundaryTests
         }
     }
 
+    [Fact]
+    public async Task TemporaryEpisodeRefusesATorrentWithAFileOutsideItsFolderBeforeStarting()
+    {
+        await using var fixture = await LocalSeeder.StartAsync(128 * 1024, outsideEntry: true);
+        var service = fixture.Service(_ => long.MaxValue);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var transfer = service.DownloadAsync(1001, LocalSeeder.Title, [], 1, "Sub", fixture.Logs.Add, cancellation.Token);
+        var failure = await Record.ExceptionAsync(async () => (await transfer.WaitAsync(TimeSpan.FromSeconds(25))).Lease.Dispose());
+
+        // Peer metadata is checked before the engine starts, hash-checks or prioritises any file.
+        Assert.IsType<InvalidOperationException>(failure);
+        Assert.Contains("Torrent lists a file outside its download folder; trying another result.", fixture.Logs);
+        Assert.DoesNotContain(fixture.Logs, message => message.StartsWith("Downloading only episode", StringComparison.Ordinal));
+        Assert.False(Directory.Exists(fixture.Outside));
+        fixture.AssertRetainedAndClean();
+    }
+
+    [Fact]
+    public async Task PermanentSeasonRefusesATorrentWithAFileOutsideTheDownloadFolderBeforeStarting()
+    {
+        await using var fixture = await LocalSeeder.StartAsync(128 * 1024, outsideEntry: true);
+        string library = Path.Combine(fixture.Root, "library");
+        // A resumed season already holds some of its files. A started engine's hash check would then
+        // create the missing outside entry, so the outside folder shows whether the engine ever started.
+        string existing = Path.Combine(library, "source", LocalSeeder.Title + " - S01E01.en.srt");
+        Directory.CreateDirectory(Path.GetDirectoryName(existing)!);
+        File.WriteAllText(existing, "existing season subtitle");
+        string? previousRoot = Environment.GetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable);
+        Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, fixture.Root);
+        try
+        {
+            using var downloader = new SeasonDownloader(fixture.SeasonConfig(library), _ => long.MaxValue);
+            using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            var transfer = downloader.DownloadSeasonAsync(LocalSeeder.Title, fixture.Logs.Add, token: cancellation.Token);
+            await Record.ExceptionAsync(() => transfer.WaitAsync(TimeSpan.FromSeconds(25)));
+
+            // The check runs before the space estimate, which already looks at every file.
+            Assert.Contains("[MonoTorrent] Error: The torrent lists a file outside the download folder; it was not started.", fixture.Logs);
+            Assert.DoesNotContain(fixture.Logs, message => message.StartsWith("[MonoTorrent] Starting download", StringComparison.Ordinal));
+            Assert.False(Directory.Exists(fixture.Outside));
+            Assert.Equal("existing season subtitle", File.ReadAllText(existing));
+            Assert.Equal("permanent retained sentinel", File.ReadAllText(Path.Combine(fixture.Root, "permanent.mkv")));
+        }
+        finally { Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, previousRoot); }
+    }
+
     private static string NativeState(TorrentManager? manager) => manager == null ? "manager absent" :
         $"state={manager.State}, progress={manager.Progress}, received={manager.Monitor.DataBytesReceived}, trackerTiers={manager.TrackerManager.Tiers.Count}, seeds={manager.Peers.Seeds}, leechs={manager.Peers.Leechs}, available={manager.Peers.Available}";
 
@@ -614,6 +660,8 @@ public sealed class NativeTemporaryDownloadBoundaryTests
         public const string Title = "Queue Space Fixture";
         public string Root { get; } = Path.Combine(Path.GetTempPath(), "UniversalMediaOS.NativeTempBoundary", Guid.NewGuid().ToString("N"));
         public string Temporary => Path.Combine(Root, "temporary");
+        /// <summary>A sibling of every download folder, inside this fixture's root.</summary>
+        public string Outside => Path.Combine(Root, "outside");
         public long VideoBytes { get; private set; }
         public long UploadedBytes => _manager!.Monitor.DataBytesSent;
         public string SeedState => $"seed state={_manager?.State}, running={_engine?.IsRunning}, disposed={_engine?.Disposed}, sent={UploadedBytes}, peers={_manager?.Peers.Leechs}";
@@ -627,7 +675,7 @@ public sealed class NativeTemporaryDownloadBoundaryTests
         private string _magnet = "";
         private string _hash = "";
 
-        public static async Task<LocalSeeder> StartAsync(int rate, int seconds = 20)
+        public static async Task<LocalSeeder> StartAsync(int rate, int seconds = 20, bool outsideEntry = false)
         {
             var fixture = new LocalSeeder();
             try
@@ -660,7 +708,9 @@ public sealed class NativeTemporaryDownloadBoundaryTests
                 creator.Announces.Add([tracker]);
                 string torrentPath = Path.Combine(fixture.Root, "fixture.torrent");
                 await creator.CreateAsync(new TorrentFileSource(source), torrentPath);
-                var torrent = await Torrent.LoadAsync(torrentPath);
+                var torrent = outsideEntry
+                    ? WithOutsideEntry(source, tracker, Path.Combine(fixture.Outside, "escape.bin"))
+                    : await Torrent.LoadAsync(torrentPath);
                 fixture._hash = torrent.InfoHashes.V1!.ToHex();
                 fixture._magnet = $"magnet:?xt=urn:btih:{fixture._hash}&tr={Uri.EscapeDataString(tracker)}";
                 fixture._engine = new ClientEngine(new EngineSettingsBuilder
@@ -672,8 +722,16 @@ public sealed class NativeTemporaryDownloadBoundaryTests
                 }.ToSettings());
                 fixture._manager = await fixture._engine.AddAsync(torrent, fixture.Root,
                     new TorrentSettingsBuilder { MaximumUploadRate = rate }.ToSettings());
+                // The outside-entry torrent's pieces are placeholders: it serves metadata only, never payload.
+                // Its other files are on disk, so MonoTorrent 3.0.2's start-up hash check would create the
+                // missing entry, which shares a wanted piece. With no file wanted it creates nothing, and only
+                // the client under test could create that entry.
+                if (outsideEntry)
+                    foreach (var file in fixture._manager.Files)
+                        await fixture._manager.SetFilePriorityAsync(file, Priority.DoNotDownload);
                 await fixture._manager.StartAsync();
-                await Eventually(() => fixture._manager.State == TorrentState.Seeding);
+                await Eventually(() => fixture._manager.State == (outsideEntry ? TorrentState.Downloading : TorrentState.Seeding));
+                if (outsideEntry) Assert.False(Directory.Exists(fixture.Outside), "The seeder created the outside entry.");
                 return fixture;
             }
             catch { await fixture.DisposeAsync(); throw; }
@@ -734,6 +792,33 @@ public sealed class NativeTemporaryDownloadBoundaryTests
                 }
             }
             catch (Exception) when (_lifetime.IsCancellationRequested || !_listener.IsListening) { }
+        }
+
+        /// <summary>A v1 torrent of the fixture's files led by one entry that MonoTorrent 3.0.2 accepts although it
+        /// resolves outside the save folder (a device-style path). Here it names a folder inside this fixture's root.</summary>
+        private static Torrent WithOutsideEntry(string source, string tracker, string outside)
+        {
+            const int pieceLength = 16 * 1024;
+            var files = new BEncodedList
+            {
+                new BEncodedDictionary { ["length"] = new BEncodedNumber(100), ["path"] = new BEncodedList { (BEncodedString)(@"\\?\" + outside) } }
+            };
+            long total = 100;
+            foreach (string file in Directory.GetFiles(source).OrderBy(name => name, StringComparer.Ordinal))
+            {
+                long length = new FileInfo(file).Length;
+                files.Add(new BEncodedDictionary { ["length"] = new BEncodedNumber(length), ["path"] = new BEncodedList { (BEncodedString)Path.GetFileName(file) } });
+                total += length;
+            }
+            var info = new BEncodedDictionary
+            {
+                ["name"] = (BEncodedString)Path.GetFileName(source),
+                ["piece length"] = new BEncodedNumber(pieceLength),
+                ["pieces"] = new BEncodedString(new byte[(total + pieceLength - 1) / pieceLength * 20]),
+                ["private"] = new BEncodedNumber(1),
+                ["files"] = files
+            };
+            return Torrent.Load(new BEncodedDictionary { ["announce"] = (BEncodedString)tracker, ["info"] = info });
         }
 
         private static int FreePort()

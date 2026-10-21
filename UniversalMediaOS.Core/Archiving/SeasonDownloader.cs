@@ -731,7 +731,10 @@ namespace UniversalMediaOS.Core.Archiving
                         {
                             token.ThrowIfCancellationRequested();
                             if (manager.HasMetadata)
+                            {
+                                ThrowIfOutsideDownloadDirectory(manager);
                                 CheckNativeDownloadSpace(RequiredNativeAllocation(manager));
+                            }
                             else
                             {
                                 // The SDK metadata API removes its own cache entries.
@@ -764,7 +767,11 @@ namespace UniversalMediaOS.Core.Archiving
                                     // This unstarted manager supplies the SDK’s escaped
                                     // file paths; it never receives payload bytes.
                                     var allocationManager = await metadataEngine.AddAsync(resolved, _downloadDir);
-                                    try { CheckNativeDownloadSpace(RequiredNativeAllocation(allocationManager)); }
+                                    try
+                                    {
+                                        ThrowIfOutsideDownloadDirectory(allocationManager);
+                                        CheckNativeDownloadSpace(RequiredNativeAllocation(allocationManager));
+                                    }
                                     finally { await metadataEngine.RemoveAsync(allocationManager, RemoveMode.KeepAllData); }
                                 }
                                 finally
@@ -885,6 +892,13 @@ namespace UniversalMediaOS.Core.Archiving
         {
             if (_availableSpace(_downloadDir) - allocationBytes < ReservedFreeBytes)
                 throw new InsufficientDownloadSpaceException("Not enough free disk space for the season download and safety reserve. Partial data was kept for resume.");
+        }
+
+        /// <summary>Runs before any file of the torrent is checked, allocated or written.</summary>
+        private void ThrowIfOutsideDownloadDirectory(TorrentManager manager)
+        {
+            if (TorrentFileContainment.FindOutside(manager.Files, _downloadDir) != null)
+                throw new InvalidDataException("The torrent lists a file outside the download folder; it was not started.");
         }
 
         private static bool MatchesRequestedHashes(Torrent torrent, MagnetLink magnet) =>
