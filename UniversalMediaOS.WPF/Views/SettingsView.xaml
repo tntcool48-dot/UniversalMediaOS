@@ -6,6 +6,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              mc:Ignorable="d"
              d:DesignHeight="720" d:DesignWidth="1280"
+             AutomationProperties.AutomationId="SettingsView"
              Background="{DynamicResource BgApp}">
 
     <UserControl.Resources>
@@ -238,6 +239,7 @@
                                     <TextBlock Text="Applies the dark or light palette immediately" Style="{StaticResource CaptionText}"/>
                                 </StackPanel>
                                 <CheckBox IsChecked="{Binding IsDarkMode}"
+                                          AutomationProperties.Name="{helpers:Loc Key=Dark Mode}"
                                           HorizontalAlignment="Right"
                                           VerticalAlignment="Center"
                                           ToolTip="Switch between the dark and light app palettes."/>
@@ -304,7 +306,7 @@
                                 </StackPanel>
                                 <TextBlock Text="{Binding CornerRadiusPreview, StringFormat={}{0}px}" HorizontalAlignment="Right" Foreground="{DynamicResource AccentPrimary}" FontWeight="Bold"/>
                             </Grid>
-                            <Slider Minimum="0" Maximum="16" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding CornerRadiusPreview}" Margin="0,0,0,18" ToolTip="Set the shared app corner radius."/>
+                            <Slider Minimum="0" Maximum="16" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding CornerRadiusPreview}" Margin="0,0,0,18" AutomationProperties.Name="{helpers:Loc Key=Corner Radius}" ToolTip="Set the shared app corner radius."/>
 
                             <CheckBox Content="{helpers:Loc Key=Show service status bar}" IsChecked="{Binding ShowServiceBar}" Margin="0,0,0,10" ToolTip="Toggle the bottom service bar immediately."/>
                             <CheckBox Content="{helpers:Loc Key=Reduce motion}" IsChecked="{Binding ReduceMotion}" Margin="0,0,0,10" ToolTip="Disable nonessential app animation durations."/>
@@ -507,6 +509,7 @@
                                                                     TickFrequency="1"
                                                                     IsSnapToTickEnabled="True"
                                                                     Value="{Binding TimeoutSeconds, Mode=TwoWay}"
+                                                                    AutomationProperties.Name="{Binding Name, StringFormat={}{0} timeout}"
                                                                     VerticalAlignment="Center"
                                                                     ToolTip="Maximum seconds to wait when checking this provider."/>
                                                             <TextBlock Text="{Binding TimeoutSeconds, StringFormat={}{0}s}"
@@ -554,6 +557,7 @@
                                             TickFrequency="1"
                                             IsSnapToTickEnabled="True"
                                             Value="{Binding NewDubProviderTimeoutSeconds, Mode=TwoWay}"
+                                            AutomationProperties.Name="Dub provider timeout"
                                             VerticalAlignment="Center"
                                             ToolTip="Maximum seconds to wait when checking this provider."/>
                                     <TextBlock Text="{Binding NewDubProviderTimeoutSeconds, StringFormat={}{0}s}"
@@ -609,7 +613,7 @@
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <TextBox Text="{Binding DownloadDirectory, UpdateSourceTrigger=PropertyChanged}" ToolTip="Folder where completed downloads are stored."/>
+                            <TextBox Text="{Binding DownloadDirectory, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="{helpers:Loc Key=Download directory}" ToolTip="Folder where completed downloads are stored."/>
                             <Button Grid.Column="1" Content="{helpers:Loc Key=Browse...}" Command="{Binding BrowseDownloadDirectoryCommand}" Style="{StaticResource SecondaryButton}" Margin="8,0,0,0" ToolTip="Choose a download folder."/>
                         </Grid>
                         <CheckBox Content="{helpers:Loc Key=Enable debug logging}" IsChecked="{Binding EnableDebugLogging}" Foreground="{DynamicResource TextPrimary}" Margin="0,0,0,14"/>
@@ -662,13 +666,13 @@
                             <TextBlock Text="Season downloads try qBittorrent first so downloads can continue and resume outside the app. If WebUI is off or unreachable, Universal Media OS falls back to the bundled MonoTorrent client." Style="{StaticResource BodyText}" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap"/>
                         </Border>
                         <TextBlock Text="{helpers:Loc Host}" Style="{StaticResource CaptionText}" FontWeight="Bold" Margin="0,0,0,6"/>
-                        <TextBox Text="{Binding QbitHost, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,12" ToolTip="qBittorrent WebUI host name or IP address."/>
+                        <TextBox Text="{Binding QbitHost, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,12" AutomationProperties.Name="{helpers:Loc Host}" ToolTip="qBittorrent WebUI host name or IP address."/>
                         <TextBlock Text="{helpers:Loc Port}" Style="{StaticResource CaptionText}" FontWeight="Bold" Margin="0,0,0,6"/>
-                        <TextBox Text="{Binding QbitPort, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,12" ToolTip="qBittorrent WebUI port."/>
+                        <TextBox Text="{Binding QbitPort, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,12" AutomationProperties.Name="{helpers:Loc Port}" ToolTip="qBittorrent WebUI port."/>
                         <TextBlock Text="{helpers:Loc Username}" Style="{StaticResource CaptionText}" FontWeight="Bold" Margin="0,0,0,6"/>
-                        <TextBox Text="{Binding QbitUsername, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,12" ToolTip="qBittorrent WebUI username."/>
+                        <TextBox Text="{Binding QbitUsername, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,12" AutomationProperties.Name="{helpers:Loc Username}" ToolTip="qBittorrent WebUI username."/>
                         <TextBlock Text="{helpers:Loc Password}" Style="{StaticResource CaptionText}" FontWeight="Bold" Margin="0,0,0,6"/>
-                        <PasswordBox x:Name="QbitPasswordBox" PasswordChanged="QbitPasswordBox_PasswordChanged" Margin="0,0,0,8" ToolTip="qBittorrent WebUI password."/>
+                        <PasswordBox x:Name="QbitPasswordBox" PasswordChanged="QbitPasswordBox_PasswordChanged" Margin="0,0,0,8" AutomationProperties.Name="{helpers:Loc Password}" ToolTip="qBittorrent WebUI password."/>
                         <TextBlock Text="Stored locally through the app configuration." Style="{StaticResource CaptionText}"/>
                     </StackPanel>
                 </Border>
@@ -695,11 +699,11 @@
                         <TextBlock Text="MyAnimeList app setup" Style="{StaticResource SubtitleText}" FontWeight="Bold" Margin="0,0,0,4"/>
                         <TextBlock Text="Create a MAL API app, paste its Client ID here, and add the redirect URI below to that MAL app." Style="{StaticResource CaptionText}" TextWrapping="Wrap" Margin="0,0,0,14"/>
                         <TextBlock Text="Client ID" Style="{StaticResource CaptionText}" FontWeight="Bold" Margin="0,0,0,6"/>
-                        <TextBox Text="{Binding MalClientId, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,10" ToolTip="Paste the Client ID from MyAnimeList API settings."/>
+                        <TextBox Text="{Binding MalClientId, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,10" AutomationProperties.Name="Client ID" ToolTip="Paste the Client ID from MyAnimeList API settings."/>
                         <TextBlock Text="Client Secret (optional)" Style="{StaticResource CaptionText}" FontWeight="Bold" Margin="0,0,0,6"/>
-                        <TextBox Text="{Binding MalClientSecret, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,10" ToolTip="Paste the Client Secret if your MAL app has one."/>
+                        <TextBox Text="{Binding MalClientSecret, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,10" AutomationProperties.Name="Client Secret (optional)" ToolTip="Paste the Client Secret if your MAL app has one."/>
                         <TextBlock Text="Redirect URI" Style="{StaticResource CaptionText}" FontWeight="Bold" Margin="0,0,0,6"/>
-                        <TextBox Text="{Binding MalRedirectUri}" IsReadOnly="True" Margin="0,0,0,14" ToolTip="Register this exact redirect URI in your MyAnimeList API app."/>
+                        <TextBox Text="{Binding MalRedirectUri}" IsReadOnly="True" Margin="0,0,0,14" AutomationProperties.Name="Redirect URI" ToolTip="Register this exact redirect URI in your MyAnimeList API app."/>
                         <Border Background="{DynamicResource BgInput}" BorderBrush="{DynamicResource BorderSubtle}" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,0,0,14">
                             <TextBlock Text="{Binding MalConnectionStatus}" Style="{StaticResource BodyText}" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap"/>
                         </Border>
@@ -730,7 +734,7 @@
                                     ToolTip="Open MyAnimeList API configuration in your browser."/>
                         </WrapPanel>
                         <TextBlock Text="Advanced manual token fallback" Style="{StaticResource CaptionText}" FontWeight="Bold" Margin="0,0,0,6"/>
-                        <TextBox Text="{Binding MalOAuthToken, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,8" ToolTip="Paste a temporary MAL OAuth token only if browser login cannot be used."/>
+                        <TextBox Text="{Binding MalOAuthToken, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,8" AutomationProperties.Name="Advanced manual token fallback" ToolTip="Paste a temporary MAL OAuth token only if browser login cannot be used."/>
                         <TextBlock Text="Manual tokens expire. The Connect MAL button stores a refresh token so the app can keep working automatically." Style="{StaticResource CaptionText}" TextWrapping="Wrap"/>
                     </StackPanel>
                 </Border>

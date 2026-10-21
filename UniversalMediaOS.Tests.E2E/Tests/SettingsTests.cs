@@ -27,6 +27,35 @@ namespace UniversalMediaOS.Tests.E2E.Tests
         }
 
         [Fact]
+        public void Settings_EverySectionNamesItsInteractiveControls()
+        {
+            NavigateTo("Settings");
+            var settings = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByAutomationId("SettingsView"));
+            Assert.NotNull(settings);
+            var unnamed = new System.Collections.Generic.List<string>();
+            foreach (string section in new[] { "Appearance", "Services", "qBittorrent", "MAL", "Providers & Scrapers", "Notifications", "Privacy", "Language" })
+            {
+                var open = settings.FindFirstDescendant(cf => cf.ByName(section).And(cf.ByControlType(ControlType.Button)))?.AsButton();
+                Assert.True(open != null, $"Settings section button '{section}' is missing.");
+                open.Invoke();
+                Thread.Sleep(300);
+                // A screen reader announces a control by its UI Automation name; an unnamed field is announced only by its type.
+                foreach (var control in settings.FindAllDescendants(cf => cf.ByControlType(ControlType.Button)
+                             .Or(cf.ByControlType(ControlType.Edit)).Or(cf.ByControlType(ControlType.ComboBox))
+                             .Or(cf.ByControlType(ControlType.CheckBox)).Or(cf.ByControlType(ControlType.Slider))
+                             .Or(cf.ByControlType(ControlType.RadioButton)).Or(cf.ByControlType(ControlType.Hyperlink))))
+                {
+                    // Track parts inside sliders and scroll bars take no keyboard focus and are not announced.
+                    if (control.IsOffscreen || !control.Properties.IsKeyboardFocusable.ValueOrDefault ||
+                        !string.IsNullOrWhiteSpace(control.Name)) continue;
+                    unnamed.Add($"{section}: {control.ControlType} id='{control.AutomationId}' help='{control.HelpText}'");
+                }
+            }
+            Assert.True(unnamed.Count == 0, "Unnamed Settings controls:" + Environment.NewLine +
+                string.Join(Environment.NewLine, System.Linq.Enumerable.Distinct(unnamed)));
+        }
+
+        [Fact]
         public void Settings_AutoManageCheckbox_CanBeToggledAndRestored()
         {
             try
