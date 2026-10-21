@@ -248,6 +248,11 @@ public sealed class TemporaryEpisodeWatchService
             try
             {
                 token.ThrowIfCancellationRequested();
+                if (TorrentFileContainment.FindOutside(manager.Files, directory) != null)
+                {
+                    log("Torrent lists a file outside its download folder; trying another result.");
+                    return null;
+                }
                 string torrentName = manager.Torrent?.Name ?? string.Empty;
                 if (numberedSpecialTitles != null && !FileMatchesNumberedSpecial(torrentName, episode, numberedSpecialTitles))
                 {
