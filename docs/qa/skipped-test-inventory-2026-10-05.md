@@ -4,7 +4,7 @@ The last full baseline (`browser-pip-full-2026-10-04.trx`) contains **22 skipped
 
 This inventory distinguishes existing meaningful coverage from remaining gaps. It does not waive those gaps or complete the packaged release gate. Names below omit the common namespace `UniversalMediaOS.Tests.E2E.Tests`.
 
-**Update, October 21, 2026:** five Settings and all five Search placeholders are now real tests and no longer skipped, so **12** skipped methods remain: nine Downloads and three Settings. See the [Settings save/restart QA](settings-save-restart-and-protected-keys-2026-10-21.md), the [log boundary and lock collision QA](settings-log-boundary-and-lock-collision-2026-10-21.md), the [search outage QA](search-outage-and-empty-results-2026-10-21.md) and the [search paging, filters and ordering QA](search-paging-filters-order-and-names-2026-10-21.md).
+**Update, October 21, 2026:** six Settings and all five Search placeholders are now real tests and no longer skipped, so **11** skipped methods remain: nine Downloads and two Settings ([service health QA](settings-service-health-view-2026-10-21.md)). See the [Settings save/restart QA](settings-save-restart-and-protected-keys-2026-10-21.md), the [log boundary and lock collision QA](settings-log-boundary-and-lock-collision-2026-10-21.md), the [search outage QA](search-outage-and-empty-results-2026-10-21.md) and the [search paging, filters and ordering QA](search-paging-filters-order-and-names-2026-10-21.md).
 
 ## Downloads — nine
 
@@ -30,12 +30,12 @@ This inventory distinguishes existing meaningful coverage from remaining gaps. I
 | `T1_Search_05_Safe_Error_Display_On_Scraper_Offline` | **Replaced October 21 by a real test:** a 503 from the mock AniList shows "Anime catalog unavailable. Previous results retained; retry search.", keeps the cards and recovers on retry. Real network failures (timeouts, DNS) remain open. |
 | `T2_Search_04_Scraper_Returns_Empty_Or_Null` | **Replaced October 21 by a real test:** an empty page shows "No anime found"; a reply without data shows "Anime catalog unavailable", not "No anime found". The unit coverage in `CatalogPagingTests` and `CatalogViewModelPagingTests` is unchanged. |
 
-## Settings — eight (three still skipped)
+## Settings — eight (two still skipped)
 
 | Skipped method in `SettingsTests` | Existing evidence and remaining gap |
 | --- | --- |
 | `T1_Settings_02_Set_Domain_Hot_Swap_URL` | **Replaced October 21 by a real test:** the scraper seed URL is edited, saved through the visible button and confirmation, and shown again after a normal close and relaunch. Live switching of an already-open provider tab is not claimed. |
-| `T1_Settings_03_System_Resource_Check_Status_View` | `DependencyHealthTests` verify missing, broken and hung executable outcomes, and partial readiness. Deterministic resource/status UI and physical Health/Repair acceptance remain open. |
+| `T1_Settings_03_System_Resource_Check_Status_View` | **Replaced October 21 by a real test:** Services lists all five services, and the HLS proxy endpoint it names answers HTTP before and after Refresh. Machine-dependent probe outcomes stay with `DependencyHealthTests`; physical Repair acceptance remains open. |
 | `T1_Settings_05_Encrypt_and_Save_API_Keys` | **Replaced October 21 by a real test:** a Google Books key entered in Settings is stored as `dpapi:v1:` ciphertext, its plaintext appears nowhere in `config.json`, and it reads back. Unit coverage (`ConfigurationHardeningTests`, the `CoreHardeningRegressionTests` migration cases) is unchanged. Real-profile and packaged save/reload gates remain separate. |
 | `T2_Settings_01_Duplicate_Service_Bootstrapping` | `DependencyHealthTests.ConcurrentExtensionRepairs_DoNotOverlapAndRemainRetryableAfterTimeout` covers extension repair coordination. Duplicate full service bootstrap/startup/shutdown is a distinct remaining gate. |
 | `T2_Settings_02_Log_File_Rotation_Boundary` | **Replaced October 21 by a real test:** startup clears a log of 5 MiB + 1 byte and keeps one of exactly 5 MiB; Settings shows the size, and Clear debug log empties it. Growth within one session is still unbounded. |
@@ -45,4 +45,4 @@ This inventory distinguishes existing meaningful coverage from remaining gaps. I
 
 ## Tracker disposition
 
-The inventory itself is complete. The remaining 12 placeholders (of the original 22) stay skipped and are never counted as passes. Remaining behavior belongs to the checklist's download, catalog/player, shared reliability and packaged-release rows. Replace specific placeholders with meaningful tests when addressing those behaviors; preserve an explicit exclusion for redundant methods rather than renaming a shallow check as acceptance.
+The inventory itself is complete. The remaining 11 placeholders (of the original 22) stay skipped and are never counted as passes. Remaining behavior belongs to the checklist's download, catalog/player, shared reliability and packaged-release rows. Replace specific placeholders with meaningful tests when addressing those behaviors; preserve an explicit exclusion for redundant methods rather than renaming a shallow check as acceptance.

@@ -102,13 +102,32 @@ namespace UniversalMediaOS.Tests.E2E.Tests
             Assert.Equal(seed, Field(fixture, "Scraper Seed URL").AsTextBox().Text);
         }
 
-        [Fact(Skip = "Requires deterministic resource probes; the previous check only located Save Settings.")]
-        public void T1_Settings_03_System_Resource_Check_Status_View()
+        [Fact]
+        public async System.Threading.Tasks.Task T1_Settings_03_System_Resource_Check_Status_View()
         {
-            NavigateTo("Settings");
-            var saveBtn = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByName("Save Settings"))?.AsButton();
-            Assert.NotNull(saveBtn);
+            // Services lists every local service. The HLS proxy line is the deterministic one here: the endpoint it
+            // names must really answer. FFmpeg, qBittorrent and uBlock depend on the machine and are checked present.
+            using var fixture = new AppFixture();
+            OpenSection(fixture, "Services");
+            string health = HealthText(fixture);
+            foreach (string service in new[] { "Python scraper: ", "HLS proxy: ", "uBlock Origin: ", "FFmpeg: ", "qBittorrent: " })
+                Assert.Contains(service, health, StringComparison.Ordinal);
+            var listening = System.Text.RegularExpressions.Regex.Match(health, @"HLS proxy: Listening on (?:http://)?(?<endpoint>127\.0\.0\.1:\d+)");
+            Assert.True(listening.Success, health);
+            using var client = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+            using var response = await client.GetAsync($"http://{listening.Groups["endpoint"].Value}/health-probe");
+            Assert.True((int)response.StatusCode is >= 200 and < 600);
+
+            // Refresh re-reads the same running proxy.
+            SettingsRoot(fixture).FindFirstDescendant(cf => cf.ByName("Refresh").And(cf.ByControlType(ControlType.Button)))!
+                .AsButton().Invoke();
+            Assert.True(SpinWait.SpinUntil(() => HealthText(fixture).Contains(listening.Value, StringComparison.Ordinal),
+                TimeSpan.FromSeconds(5)), HealthText(fixture));
         }
+
+        private static string HealthText(AppFixture fixture) => System.Linq.Enumerable.FirstOrDefault(
+            SettingsRoot(fixture).FindAllDescendants(cf => cf.ByControlType(ControlType.Text)),
+            text => text.Name.StartsWith("Python scraper: ", StringComparison.Ordinal))?.Name ?? string.Empty;
 
         [Fact]
         public void Settings_ServicesView_ExposesEnabledClearDebugLogAction()
