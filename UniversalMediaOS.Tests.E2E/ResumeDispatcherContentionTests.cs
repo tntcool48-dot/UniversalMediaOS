@@ -820,6 +820,35 @@ public sealed class ResumeDispatcherContentionTests(ITestOutputHelper output)
         });
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AcceptedPositionIsSavedDirectlyWhenTheJournalCannotBeWritten(bool catalog)
+    {
+        using var profile = new IsolatedProfile();
+        RecoveryLayoutTests.RunSta(() =>
+        {
+            var progress = new PlaybackProgressService(new(Path.Combine(profile.Root, "library.json")));
+            var database = new TrackingDatabaseContext();
+            profile.Track(progress, database);
+            using var player = new PlaybackViewModel(database, null, null, playbackProgress: progress);
+            player.LoadEmbed("https://fixture.invalid/journal-unavailable", "Journal-unavailable fixture", "1", malId: 42,
+                audiovisualContext: catalog ? Context() : null);
+            var (work, unit) = SaveInitial(player, profile);
+            progress.FlushAsync().WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+            string journal = JournalPath(profile);
+            // Held past the journal's three-second lock wait, as by another process: this position cannot be journaled.
+            using (new FileStream(journal + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
+            {
+                player.PlaybackTime = 120_000;
+                player.SetTabActive(false);
+                progress.FlushAsync().WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
+                Assert.Equal(120, ReadCommitted(profile.ConnectionString!, work, unit));
+            }
+            Assert.Null(PendingPosition(journal, work, unit));
+        });
+    }
+
     [Fact]
     public void SessionEndingDeadlineDoesNotReportADirectSaveAsJournaled()
     {

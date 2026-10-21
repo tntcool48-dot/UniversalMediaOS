@@ -3071,12 +3071,14 @@ namespace UniversalMediaOS.WPF.ViewModels
                 {
                     var slot = new ResumeSaveSlot(snapshot);
                     _queuedResumeSave = slot;
+                    var sessionReady = _progressSessionReady;
+                    var loadRead = _resumeLoadRead;
+                    Func<Task> direct = _progressContext != null
+                        ? () => SaveCatalogProgressAfterLoadAsync(sessionReady, slot)
+                        : () => SaveLegacyProgressAfterLoadAsync(loadRead, slot);
                     save = _durableProgressClaim != null
-                        ? SaveJournaledProgressAfterLoadAsync(
-                            _progressContext != null ? _progressSessionReady : _resumeLoadRead, slot)
-                        : _progressContext != null
-                            ? SaveCatalogProgressAfterLoadAsync(_progressSessionReady, slot)
-                            : SaveLegacyProgressAfterLoadAsync(_resumeLoadRead, slot);
+                        ? SaveJournaledProgressAfterLoadAsync(_progressContext != null ? sessionReady : loadRead, slot, direct)
+                        : direct();
                     slot.Completion = save;
                     foreach (long finished in _pendingResumeSaves.Where(entry => entry.Value.IsCompleted).Select(entry => entry.Key).ToArray())
                         _pendingResumeSaves.Remove(finished);
@@ -3105,7 +3107,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             }
         }
 
-        private async Task SaveJournaledProgressAfterLoadAsync(Task preceding, ResumeSaveSlot slot)
+        private async Task SaveJournaledProgressAfterLoadAsync(Task preceding, ResumeSaveSlot slot, Func<Task> direct)
         {
             try
             {
@@ -3119,10 +3121,17 @@ namespace UniversalMediaOS.WPF.ViewModels
             {
                 // Later reads and deferred sources wait on this save; like the direct paths it must
                 // not fail them. A journaled position replays before the next read of its database.
-                bool journaled = slot.Snapshot.DurableReceipt.IsCompletedSuccessfully;
-                AppLogger.Log(journaled
-                    ? $"[Resume] Journaled position is not in the database yet; it replays before the next read: {ex.Message}"
-                    : $"[Resume] Accepted position could not be journaled or saved: {ex.Message}", journaled ? "WARNING" : "ERROR");
+                if (slot.Snapshot.DurableReceipt.IsCompletedSuccessfully)
+                {
+                    AppLogger.Log($"[Resume] Journaled position is not in the database yet; it replays before the next read: {ex.Message}", "WARNING");
+                    return;
+                }
+                // The journal could not take it (for example, its lock is held elsewhere). Save it as a player
+                // without a journal does; a newer accepted position for the unit supersedes this one.
+                AppLogger.Log($"[Resume] Accepted position could not be journaled; saving it directly: {ex.Message}", "WARNING");
+                Task fallback = direct();
+                _playbackProgress.TrackPendingPersistence(fallback, unjournaledPosition: true);
+                await fallback.ConfigureAwait(false);
             }
         }
 

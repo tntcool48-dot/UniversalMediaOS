@@ -7,7 +7,7 @@ Found while designing the pressured new-source FlaUI case. Branch **codex/app-re
 - the next unit's resume read in the same player failed and returned **0**, so its next save could overwrite that unit's real position;
 - a source change deferred behind the failed save never ran, and the player stayed in "Saving progress before continuing..." with disabled controls.
 
-**Repair.** `SaveJournaledProgressAfterLoadAsync` now catches and logs like the direct paths. A staged position stays in the journal and replays before the next read. If staging itself failed, an ERROR says the position could not be journaled or saved. That pre-existing limit is unchanged.
+**Repair.** `SaveJournaledProgressAfterLoadAsync` now catches and logs like the direct paths. A staged position stays in the journal and replays before the next read. If staging itself failed, the position now falls back to a direct save ([fallback QA](journal-write-fallback-2026-10-21.md)).
 
 **Regressions** use a real SQLite trigger that aborts updates of one unit:
 
