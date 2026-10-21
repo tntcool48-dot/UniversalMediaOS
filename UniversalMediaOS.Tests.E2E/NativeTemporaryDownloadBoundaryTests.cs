@@ -72,6 +72,70 @@ public sealed class NativeTemporaryDownloadBoundaryTests
         fixture.AssertRetainedAndClean();
     }
 
+    [Fact]
+    public async Task TemporaryEpisodeWriteAclDenialStopsProviderRotationAndCleansOnRestart()
+    {
+        await using var fixture = await LocalSeeder.StartAsync(128 * 1024);
+        ClientEngine? engine = null;
+        TorrentManager? manager = null;
+        FileInfo? partialFile = null;
+        var deny = new System.Security.AccessControl.FileSystemAccessRule(
+            System.Security.Principal.WindowsIdentity.GetCurrent().User!,
+            System.Security.AccessControl.FileSystemRights.WriteData | System.Security.AccessControl.FileSystemRights.AppendData,
+            System.Security.AccessControl.AccessControlType.Deny);
+        void RemoveDeny()
+        {
+            // Unlike a held sharing lock, a write-deny entry does not block the owned job's prompt removal.
+            partialFile?.Refresh();
+            if (partialFile is not { Exists: true }) return;
+            var current = partialFile.GetAccessControl();
+            current.RemoveAccessRule(deny);
+            partialFile.SetAccessControl(current);
+        }
+        var service = fixture.Service(_ => long.MaxValue, createEngine: settings => engine = new ClientEngine(settings));
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        Task<TemporaryEpisodeWatchResult>? transfer = null;
+        try
+        {
+            transfer = service.DownloadAsync(1001, LocalSeeder.Title, [], 1, "Sub", message =>
+            {
+                fixture.Logs.Add(message);
+                if (!message.StartsWith("Downloading only episode")) return;
+                manager = Assert.Single(engine!.Torrents);
+                string partial = manager.Files.Single(file => file.Path.EndsWith(".mkv", StringComparison.OrdinalIgnoreCase)).FullPath;
+                Assert.StartsWith(fixture.Temporary + Path.DirectorySeparatorChar, partial, StringComparison.OrdinalIgnoreCase);
+                Directory.CreateDirectory(Path.GetDirectoryName(partial)!);
+                File.WriteAllBytes(partial, []);
+                // A real NTFS deny entry for this user, before the engine writes its first piece.
+                partialFile = new FileInfo(partial);
+                var security = partialFile.GetAccessControl();
+                security.AddAccessRule(deny);
+                partialFile.SetAccessControl(security);
+            }, cancellation.Token);
+            await Eventually(() => transfer.IsCompleted || manager?.State == TorrentState.Error);
+            await Task.WhenAny(transfer, Task.Delay(4500));
+            if (!transfer.IsCompleted) cancellation.Cancel();
+            var failure = await Record.ExceptionAsync(async () =>
+            {
+                var unexpected = await transfer.WaitAsync(TimeSpan.FromSeconds(10));
+                unexpected.Lease.Dispose();
+            });
+            Assert.IsType<NativeTorrentStorageException>(failure);
+            Assert.Contains("Cannot write download files", failure!.Message, StringComparison.Ordinal);
+            Assert.Single(fixture.Logs, message => message.StartsWith("Checking torrent files:"));
+            Assert.True(engine!.Disposed);
+            Assert.Empty(engine.Torrents);
+        }
+        finally
+        {
+            RemoveDeny();
+            cancellation.Cancel();
+            if (transfer != null) try { await transfer.WaitAsync(TimeSpan.FromSeconds(10)); } catch (Exception) { }
+            _ = fixture.Service(_ => long.MaxValue); // Production restart cleanup after permission is restored.
+        }
+        fixture.AssertRetainedAndClean();
+    }
+
     [Theory]
     [InlineData("read")]
     [InlineData("write")]
@@ -119,6 +183,63 @@ public sealed class NativeTemporaryDownloadBoundaryTests
             Assert.Equal("permanent retained sentinel", File.ReadAllText(Path.Combine(fixture.Root, "permanent.mkv")));
             Assert.NotEmpty(Directory.GetFiles(Path.Combine(AppDataPaths.LocalBaseDirectory,
                 "UniversalMediaOS", "TorrentCache", "fastresume"), "*.fresume"));
+        }
+        finally { Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, previousRoot); }
+    }
+
+    [Fact]
+    public async Task PermanentSeasonWriteAclDenialEndsPromptlyAndRetainsRetryablePieces()
+    {
+        await using var fixture = await LocalSeeder.StartAsync(128 * 1024);
+        string? previousRoot = Environment.GetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable);
+        Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, fixture.Root);
+        try
+        {
+            var executor = new SeasonDownloadJobExecutor(fixture.SeasonConfig(Path.Combine(fixture.Root, "library")));
+            using var queue = new DownloadQueueService(Path.Combine(fixture.Root, "queue.json"), executor);
+            var job = queue.Enqueue(LocalSeeder.Title, "Sub");
+            await Eventually(() => ActiveManager(executor) is { State: TorrentState.Downloading } active &&
+                active.Monitor.DataBytesReceived > 0 && active.Progress > 0);
+            var first = ActiveManager(executor)!;
+            string partial = first.Files.Single(file => file.Path.EndsWith(".mkv", StringComparison.OrdinalIgnoreCase)).FullPath;
+            await queue.PauseAsync(job.Id);
+            await Eventually(() => job.Status == DownloadJobStatus.Paused && ActiveManager(executor) == null);
+            double previous = first.Progress;
+            byte[] partialHash = SHA256.HashData(File.ReadAllBytes(partial));
+            // A real NTFS deny entry for this user: the partial stays readable, deletable and re-permissible.
+            var partialFile = new FileInfo(partial);
+            var deny = new System.Security.AccessControl.FileSystemAccessRule(
+                System.Security.Principal.WindowsIdentity.GetCurrent().User!,
+                System.Security.AccessControl.FileSystemRights.WriteData | System.Security.AccessControl.FileSystemRights.AppendData,
+                System.Security.AccessControl.AccessControlType.Deny);
+            var security = partialFile.GetAccessControl();
+            security.AddAccessRule(deny);
+            partialFile.SetAccessControl(security);
+            try
+            {
+                Assert.Throws<UnauthorizedAccessException>(() => File.Open(partial, FileMode.Open, FileAccess.Write, FileShare.ReadWrite).Dispose());
+                Assert.True(queue.Resume(job.Id));
+                await Eventually(() => job.Status == DownloadJobStatus.Failed && ActiveManager(executor) == null,
+                    () => $"Write ACL denied: {job.Status}; {NativeState(ActiveManager(executor))}; error={ActiveManager(executor)?.Error?.Reason}; {job.StatusMessage}");
+                Assert.Contains("Cannot write download files", job.StatusMessage, StringComparison.Ordinal);
+                Assert.Contains("permissions", job.StatusMessage, StringComparison.OrdinalIgnoreCase);
+                Assert.True(job.CanRetry);
+                Console.WriteLine($"Write ACL denial: {job.Status}; {job.StatusMessage}");
+            }
+            finally
+            {
+                security = partialFile.GetAccessControl();
+                security.RemoveAccessRule(deny);
+                partialFile.SetAccessControl(security);
+            }
+            Assert.Equal(partialHash, SHA256.HashData(File.ReadAllBytes(partial)));
+            Assert.True(queue.Retry(job.Id));
+            await Eventually(() => ActiveManager(executor) is { State: TorrentState.Downloading } resumed &&
+                resumed.Monitor.DataBytesReceived > 0 && resumed.Progress > previous + 0.000001,
+                () => $"Restored retry: {job.Status}; {NativeState(ActiveManager(executor))}; {job.StatusMessage}");
+            await queue.PauseAsync(job.Id);
+            await Eventually(() => job.Status == DownloadJobStatus.Paused && ActiveManager(executor) == null);
+            Assert.Equal("permanent retained sentinel", File.ReadAllText(Path.Combine(fixture.Root, "permanent.mkv")));
         }
         finally { Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, previousRoot); }
     }
