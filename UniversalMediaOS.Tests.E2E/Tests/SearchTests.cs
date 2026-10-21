@@ -28,6 +28,30 @@ namespace UniversalMediaOS.Tests.E2E.Tests
         }
 
         [Fact]
+        public void Search_EveryInteractiveControlHasAName()
+        {
+            NavigateToSearch();
+            var search = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByAutomationId("SearchView"));
+            Assert.NotNull(search);
+            Assert.True(SpinWait.SpinUntil(() => search.FindFirstDescendant(cf => cf.ByName("View Details")) != null,
+                TimeSpan.FromSeconds(10)), "No result card was shown to audit.");
+            // A screen reader announces a control by its UI Automation name; an unnamed one only by its type.
+            var unnamed = new System.Collections.Generic.List<string>();
+            foreach (var control in search.FindAllDescendants(cf => cf.ByControlType(ControlType.Button)
+                         .Or(cf.ByControlType(ControlType.Edit)).Or(cf.ByControlType(ControlType.ComboBox))
+                         .Or(cf.ByControlType(ControlType.CheckBox)).Or(cf.ByControlType(ControlType.Slider))
+                         .Or(cf.ByControlType(ControlType.RadioButton)).Or(cf.ByControlType(ControlType.Hyperlink))))
+            {
+                // Scroll bar parts take no keyboard focus and are not announced.
+                if (control.IsOffscreen || !control.Properties.IsKeyboardFocusable.ValueOrDefault ||
+                    !string.IsNullOrWhiteSpace(control.Name)) continue;
+                unnamed.Add($"{control.ControlType} id='{control.AutomationId}' help='{control.HelpText}'");
+            }
+            Assert.True(unnamed.Count == 0, "Unnamed anime search controls:" + Environment.NewLine +
+                string.Join(Environment.NewLine, System.Linq.Enumerable.Distinct(unnamed)));
+        }
+
+        [Fact]
         public void T1_Search_01_Basic_Keyword_Search()
         {
             NavigateToSearch();
@@ -47,62 +71,136 @@ namespace UniversalMediaOS.Tests.E2E.Tests
             Assert.True(resultsList.Items.Length > 0);
         }
 
-        [Fact(Skip = "Requires selecting a media-type filter and asserting filtered identities; the previous test only submitted a query.")]
+        [Fact]
         public void T1_Search_02_Search_Filter_By_Media_Type()
         {
-            // App only has Anime search in SearchView, Manga in Library view. 
-            // In SearchView, we search for Anime and verify results load.
-            NavigateToSearch();
-            var searchBox = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByControlType(ControlType.Edit))?.AsTextBox();
-            Assert.NotNull(searchBox);
-            searchBox.Text = "Monster";
+            // Anime search has no media-type filter (films and TV are separate areas). Its Status filter is the
+            // type-like filter it offers: choosing one searches again with that status and shows only its titles.
+            var received = new System.Collections.Concurrent.ConcurrentQueue<string>();
+            using var fixture = new AppFixture(mangaPagePng: null, aniListFeed: request => FilteredAniList(request, received));
+            string[] both = { "Airing Show", "Finished Show" };
+            OpenAnime(fixture);
+            Search(fixture, "FilterProbe");
+            Assert.True(ShowsInOrder(fixture, both), string.Join(", ", Titles(fixture, both)));
 
-            var executeBtn = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByName("ExecuteSearch"))?.AsButton();
-            Assert.NotNull(executeBtn);
-            executeBtn.Invoke();
-            Thread.Sleep(1000);
+            Combo(fixture, "Status").Select("Finished");
+            Assert.True(ShowsInOrder(fixture, new[] { "Finished Show" }), string.Join(", ", Titles(fixture, both)));
+            Assert.Contains("FilterProbe status=FINISHED", received);
 
-            var resultsList = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByControlType(ControlType.List))?.AsListBox();
-            Assert.NotNull(resultsList);
-            Assert.True(resultsList.Items.Length > 0);
+            Combo(fixture, "Status").Select("Any");
+            Assert.True(ShowsInOrder(fixture, both), string.Join(", ", Titles(fixture, both)));
         }
 
-        [Fact(Skip = "Requires a paged mock response and a next-page action; the previous test inspected only the first result list.")]
+        [Fact]
         public void T1_Search_03_Search_Result_Pagination()
         {
-            NavigateToSearch();
-            // Perform a search that mocks hasNextPage.
-            var searchBox = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByControlType(ControlType.Edit))?.AsTextBox();
-            Assert.NotNull(searchBox);
-            searchBox.Text = "Naruto";
+            // Page 1 is a full 36-card page that reports a next page; page 2 ends the results with five more.
+            var pages = new System.Collections.Concurrent.ConcurrentQueue<int>();
+            using var fixture = new AppFixture(mangaPagePng: null, aniListFeed: request => PagedAniList(request, pages));
+            OpenAnime(fixture);
+            Search(fixture, "PagingProbe");
+            Assert.True(WaitForText(fixture, "AniList results for \"PagingProbe\""), "The paged search did not finish.");
+            Assert.True(SpinWait.SpinUntil(() => ResultCount(fixture) > 0, TimeSpan.FromSeconds(10)), "Page 1 showed no cards.");
 
-            var executeBtn = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByName("ExecuteSearch"))?.AsButton();
-            Assert.NotNull(executeBtn);
-            executeBtn.Invoke();
-            Thread.Sleep(1000);
+            // Scrolling to the end of the list asks for the next page, as a user does.
+            var list = MainWindowOf(fixture).FindFirstDescendant(cf => cf.ByAutomationId("ResultsList"))!;
+            bool lastShown = SpinWait.SpinUntil(() =>
+            {
+                list.Patterns.Scroll.Pattern.SetScrollPercent(-1, 100);
+                return list.FindFirstDescendant(cf => cf.ByName("Paging 41")) != null;
+            }, TimeSpan.FromSeconds(20));
+            Assert.True(lastShown, $"Page 2 never appeared; requested pages: {string.Join(", ", pages)}.{Environment.NewLine}{AppLog(fixture)}");
 
-            var resultsList = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByControlType(ControlType.List))?.AsListBox();
-            Assert.NotNull(resultsList);
-            Assert.True(resultsList.Items.Length > 0);
+            // The end of the results asks for nothing more, and no page is requested twice.
+            list.Patterns.Scroll.Pattern.SetScrollPercent(-1, 100);
+            Thread.Sleep(1500);
+            Assert.Equal(new[] { 1, 2 }, pages.ToArray());
+            Assert.NotNull(list.FindFirstDescendant(cf => cf.ByName("Paging 37")));
         }
 
-        [Fact(Skip = "Requires deterministic scored results; the previous test did not inspect fuzzy scores or ordering.")]
+        private static (int Status, string Body) PagedAniList(System.Net.HttpListenerRequest request,
+            System.Collections.Concurrent.ConcurrentQueue<int> pages)
+        {
+            using var reader = new System.IO.StreamReader(request.InputStream, request.ContentEncoding);
+            using var json = System.Text.Json.JsonDocument.Parse(reader.ReadToEnd());
+            var variables = json.RootElement.TryGetProperty("variables", out var value) ? value : default;
+            bool paging = variables.ValueKind == System.Text.Json.JsonValueKind.Object &&
+                variables.TryGetProperty("search", out var search) && search.GetString() == "PagingProbe";
+            int page = paging && variables.TryGetProperty("page", out var number) ? number.GetInt32() : 1;
+            if (paging) pages.Enqueue(page);
+            var items = !paging ? System.Linq.Enumerable.Range(1000, 1)
+                : page == 1 ? System.Linq.Enumerable.Range(1, 36) : System.Linq.Enumerable.Range(37, 5);
+            string media = string.Join(",", System.Linq.Enumerable.Select(items, i =>
+                $"{{\"id\":{i},\"idMal\":0,\"title\":{{\"romaji\":\"Paging {i}\",\"english\":\"Paging {i}\"}}," +
+                "\"coverImage\":{\"extraLarge\":\"\"},\"description\":\"\"}"));
+            string next = paging && page == 1 ? "true" : "false";
+            return (200, $"{{\"data\":{{\"Page\":{{\"pageInfo\":{{\"hasNextPage\":{next}}},\"media\":[{media}]}}}}}}");
+        }
+
+        [Fact]
         public void T1_Search_04_Fuzzy_Match_Score_Ordering()
         {
-            NavigateToSearch();
-            var searchBox = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByControlType(ControlType.Edit))?.AsTextBox();
-            Assert.NotNull(searchBox);
-            searchBox.Text = "Slime";
+            // The app does not score matches itself. A typed query asks AniList for its relevance order
+            // (SEARCH_MATCH), another sort asks for that order, and the cards keep the provider's order.
+            var received = new System.Collections.Concurrent.ConcurrentQueue<string>();
+            using var fixture = new AppFixture(mangaPagePng: null, aniListFeed: request => FilteredAniList(request, received));
+            string[] relevance = { "Order One", "Order Two", "Order Three" };
+            string[] topRated = { "Order Three", "Order One", "Order Two" };
+            OpenAnime(fixture);
+            Search(fixture, "OrderProbe");
+            Assert.True(ShowsInOrder(fixture, relevance), string.Join(", ", Titles(fixture, relevance)));
+            Assert.Contains("OrderProbe sort=SEARCH_MATCH", received);
 
-            var executeBtn = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByName("ExecuteSearch"))?.AsButton();
-            Assert.NotNull(executeBtn);
-            executeBtn.Invoke();
-            Thread.Sleep(1000);
-
-            var resultsList = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByControlType(ControlType.List))?.AsListBox();
-            Assert.NotNull(resultsList);
-            Assert.True(resultsList.Items.Length > 0);
+            Combo(fixture, "Sort").Select("Top Rated");
+            Assert.True(ShowsInOrder(fixture, topRated), string.Join(", ", Titles(fixture, relevance)));
+            Assert.Contains("OrderProbe sort=SCORE_DESC", received);
         }
+
+        private static (int Status, string Body) FilteredAniList(System.Net.HttpListenerRequest request,
+            System.Collections.Concurrent.ConcurrentQueue<string> received)
+        {
+            using var reader = new System.IO.StreamReader(request.InputStream, request.ContentEncoding);
+            using var json = System.Text.Json.JsonDocument.Parse(reader.ReadToEnd());
+            var variables = json.RootElement.TryGetProperty("variables", out var value) ? value : default;
+            string Variable(string name) =>
+                variables.ValueKind == System.Text.Json.JsonValueKind.Object && variables.TryGetProperty(name, out var item)
+                    ? item.ValueKind switch
+                    {
+                        System.Text.Json.JsonValueKind.String => item.GetString()!,
+                        System.Text.Json.JsonValueKind.Array => string.Join("|", System.Linq.Enumerable.Select(item.EnumerateArray(), part => part.ToString())),
+                        _ => string.Empty
+                    }
+                    : string.Empty;
+            string search = Variable("search"), status = Variable("status"), sort = Variable("sort");
+            string[] titles = search switch
+            {
+                "FilterProbe" => status == "FINISHED" ? new[] { "Finished Show" } : new[] { "Airing Show", "Finished Show" },
+                "OrderProbe" => sort == "SCORE_DESC" ? new[] { "Order Three", "Order One", "Order Two" }
+                    : new[] { "Order One", "Order Two", "Order Three" },
+                _ => new[] { "Default Show" }
+            };
+            if (search.Length > 0) received.Enqueue($"{search} status={(status.Length > 0 ? status : "none")}");
+            if (search.Length > 0) received.Enqueue($"{search} sort={sort}");
+            string media = string.Join(",", System.Linq.Enumerable.Select(titles, (title, index) =>
+                $"{{\"id\":{2000 + Array.IndexOf(new[] { "Airing Show", "Finished Show", "Order One", "Order Two", "Order Three", "Default Show" }, title)}," +
+                $"\"idMal\":0,\"title\":{{\"romaji\":\"{title}\",\"english\":\"{title}\"}},\"coverImage\":{{\"extraLarge\":\"\"}},\"description\":\"\"}}"));
+            return (200, $"{{\"data\":{{\"Page\":{{\"pageInfo\":{{\"hasNextPage\":false}},\"media\":[{media}]}}}}}}");
+        }
+
+        private static ComboBox Combo(AppFixture fixture, string name) =>
+            MainWindowOf(fixture).FindFirstDescendant(cf => cf.ByAutomationId("SearchView"))!
+                .FindFirstDescendant(cf => cf.ByName(name).And(cf.ByControlType(ControlType.ComboBox)))!.AsComboBox();
+
+        /// <summary>The known titles shown in the results list, in on-screen order.</summary>
+        private static string[] Titles(AppFixture fixture, string[] known) => System.Linq.Enumerable.ToArray(
+            System.Linq.Enumerable.Distinct(System.Linq.Enumerable.Where(System.Linq.Enumerable.Select(
+                MainWindowOf(fixture).FindFirstDescendant(cf => cf.ByAutomationId("ResultsList"))?
+                    .FindAllDescendants(cf => cf.ByControlType(ControlType.Text)) ?? Array.Empty<AutomationElement>(),
+                text => text.Name), name => Array.IndexOf(known, name) >= 0)));
+
+        private static bool ShowsInOrder(AppFixture fixture, string[] expected) => SpinWait.SpinUntil(() =>
+            System.Linq.Enumerable.SequenceEqual(Titles(fixture, new[] { "Airing Show", "Finished Show", "Order One", "Order Two", "Order Three" }), expected),
+            TimeSpan.FromSeconds(20));
 
         [Fact]
         public void T1_Search_05_Safe_Error_Display_On_Scraper_Offline()

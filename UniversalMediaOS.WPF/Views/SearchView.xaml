@@ -6,6 +6,7 @@
              xmlns:controls="clr-namespace:UniversalMediaOS.WPF.Controls"
              mc:Ignorable="d"
              d:DesignHeight="720" d:DesignWidth="1280"
+             AutomationProperties.AutomationId="SearchView"
              Background="{StaticResource BgApp}">
 
     <UserControl.Resources>
@@ -66,6 +67,7 @@
 
                 <Grid>
                     <TextBox Text="{Binding SearchQuery, UpdateSourceTrigger=PropertyChanged}"
+                             AutomationProperties.Name="Search anime series"
                              Style="{StaticResource AppTextBox}"
                              FontSize="16"
                              Height="38">
@@ -138,6 +140,7 @@
                     <TextBlock Text="Status" Style="{StaticResource CaptionText}" VerticalAlignment="Center" Margin="0,0,6,0"/>
                     <ComboBox ItemsSource="{Binding StatusFilters}"
                               SelectedItem="{Binding SelectedStatus, Mode=TwoWay}"
+                              AutomationProperties.Name="Status"
                               MinWidth="132"
                               Margin="0,0,12,0"
                               ToolTip="Filter by airing, finished, or upcoming status."/>
@@ -147,6 +150,7 @@
                     <TextBlock Text="Audio" Style="{StaticResource CaptionText}" VerticalAlignment="Center" Margin="0,0,6,0"/>
                     <ComboBox ItemsSource="{Binding AudioFilters}"
                               SelectedItem="{Binding SelectedAudio, Mode=TwoWay}"
+                              AutomationProperties.Name="Audio"
                               MinWidth="112"
                               Margin="0,0,12,0"
                               ToolTip="Filter to subbed titles or titles with verified dubbed episode badges."/>
@@ -156,6 +160,7 @@
                     <TextBlock Text="Sort" Style="{StaticResource CaptionText}" VerticalAlignment="Center" Margin="0,0,6,0"/>
                     <ComboBox ItemsSource="{Binding SortFilters}"
                               SelectedItem="{Binding SelectedSort, Mode=TwoWay}"
+                              AutomationProperties.Name="Sort"
                               MinWidth="140"
                               ToolTip="Change the AniList result ordering."/>
                 </StackPanel>

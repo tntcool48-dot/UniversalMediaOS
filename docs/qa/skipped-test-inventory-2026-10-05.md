@@ -4,7 +4,7 @@ The last full baseline (`browser-pip-full-2026-10-04.trx`) contains **22 skipped
 
 This inventory distinguishes existing meaningful coverage from remaining gaps. It does not waive those gaps or complete the packaged release gate. Names below omit the common namespace `UniversalMediaOS.Tests.E2E.Tests`.
 
-**Update, October 21, 2026:** five Settings and two Search placeholders are now real tests and no longer skipped, so **15** skipped methods remain: nine Downloads, three Search and three Settings. See the [Settings save/restart QA](settings-save-restart-and-protected-keys-2026-10-21.md), the [log boundary and lock collision QA](settings-log-boundary-and-lock-collision-2026-10-21.md) and the [search outage QA](search-outage-and-empty-results-2026-10-21.md).
+**Update, October 21, 2026:** five Settings and all five Search placeholders are now real tests and no longer skipped, so **12** skipped methods remain: nine Downloads and three Settings. See the [Settings save/restart QA](settings-save-restart-and-protected-keys-2026-10-21.md), the [log boundary and lock collision QA](settings-log-boundary-and-lock-collision-2026-10-21.md), the [search outage QA](search-outage-and-empty-results-2026-10-21.md) and the [search paging, filters and ordering QA](search-paging-filters-order-and-names-2026-10-21.md).
 
 ## Downloads — nine
 
@@ -20,13 +20,13 @@ This inventory distinguishes existing meaningful coverage from remaining gaps. I
 | `T2_Downloads_04_Malformed_Info_Hash_Magnet_Link` | Feed discovery excludes unusable magnets, but direct malformed-magnet submission is not established by the skipped method or those feed checks. Remaining gap. |
 | `T2_Downloads_05_Interrupted_Download_Recovery` | `DownloadQueueServiceTests.LoadQueue_RecoversInterruptedRunningJobAsPaused` and temporary-watch restart tests assert orphan cleanup and active/unrelated-file retention. Actual queue/torrent restart/resume remains open. |
 
-## Search — five (three still skipped)
+## Search — five (none still skipped)
 
 | Skipped method in `SearchTests` | Existing evidence and remaining gap |
 | --- | --- |
-| `T1_Search_02_Search_Filter_By_Media_Type` | Catalog tests distinguish movie/series and exact identity, while the app exposes separate media areas. This old single-query test never selected a filter. Broader visible filter/identity acceptance remains open. |
-| `T1_Search_03_Search_Result_Pagination` | `CatalogPagingTests` and `CatalogViewModelPagingTests` cover continuation validation, appending, late results and later-page failure. Actual second-monitor anime paging reached 108 items in the image-lifetime QA. Broader provider paging/relevance remains open. |
-| `T1_Search_04_Fuzzy_Match_Score_Ordering` | Exact matching and conflicting identity rejection have dedicated coverage. No deterministic scored-order assertion exists in this method; fuzzy ordering is not claimed complete. |
+| `T1_Search_02_Search_Filter_By_Media_Type` | **Replaced October 21 by a real test of the Status filter**, since anime search has no media-type filter (media types are separate areas): choosing "Finished" searches again with that status and shows only its titles; "Any" restores both. |
+| `T1_Search_03_Search_Result_Pagination` | **Replaced October 21 by a real test:** a full first page, then scrolling to the end requests page 2 once and appends its cards; nothing more is requested after the last page. Unit paging coverage is unchanged. |
+| `T1_Search_04_Fuzzy_Match_Score_Ordering` | **Replaced October 21 by a real test of ordering:** the app does not score matches itself; a typed query requests AniList's relevance order and keeps it, and "Top Rated" requests and keeps the score order. |
 | `T1_Search_05_Safe_Error_Display_On_Scraper_Offline` | **Replaced October 21 by a real test:** a 503 from the mock AniList shows "Anime catalog unavailable. Previous results retained; retry search.", keeps the cards and recovers on retry. Real network failures (timeouts, DNS) remain open. |
 | `T2_Search_04_Scraper_Returns_Empty_Or_Null` | **Replaced October 21 by a real test:** an empty page shows "No anime found"; a reply without data shows "Anime catalog unavailable", not "No anime found". The unit coverage in `CatalogPagingTests` and `CatalogViewModelPagingTests` is unchanged. |
 
@@ -45,4 +45,4 @@ This inventory distinguishes existing meaningful coverage from remaining gaps. I
 
 ## Tracker disposition
 
-The inventory itself is complete. The remaining 15 placeholders (of the original 22) stay skipped and are never counted as passes. Remaining behavior belongs to the checklist's download, catalog/player, shared reliability and packaged-release rows. Replace specific placeholders with meaningful tests when addressing those behaviors; preserve an explicit exclusion for redundant methods rather than renaming a shallow check as acceptance.
+The inventory itself is complete. The remaining 12 placeholders (of the original 22) stay skipped and are never counted as passes. Remaining behavior belongs to the checklist's download, catalog/player, shared reliability and packaged-release rows. Replace specific placeholders with meaningful tests when addressing those behaviors; preserve an explicit exclusion for redundant methods rather than renaming a shallow check as acceptance.
