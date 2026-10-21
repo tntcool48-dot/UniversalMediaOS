@@ -43,7 +43,7 @@ Regression `ClosingAPlayerTabScopeKeepsItsDatabaseUntilAcceptedSavesFinish` reso
 
 Two runs of the real-app durability test failed before reaching the new assertion: the app never logged a close and did not exit within 40 s. Diagnostics showed that `Process.MainWindowHandle`, which FlaUI's `Close` posts WM_CLOSE to, had resolved to **0xC000C2E**: style `0x96000000` (a visible popup), unowned, untitled. The WPF main window was **0xDAD0B84**. In the passing diagnostic run, the same lookup returned the main window. The popup's style matches a WPF tooltip shown under the physical cursor on the second monitor, so it depends on where the cursor rests. `Process.CloseMainWindow` picks the first visible unowned top-level window in Z-order.
 
-The durability test now closes the WPF window through its own UIA WindowPattern, which is the request the title-bar button makes. **Not changed:** `AppFixture.Restart()` and `Dispose()` still call `Application.Close()`, and with its default kill fallback a missed close becomes a silent kill instead of a normal close. Five other UI tests call `Restart()`. This is a follow-up for the shared fixture; hosted runners have no cursor resting on the app.
+The durability test now closes the WPF window through its own UIA WindowPattern, which is the request the title-bar button makes. **Not changed:** `AppFixture.Restart()` and `Dispose()` still call `Application.Close()`, and with its default kill fallback a missed close becomes a silent kill instead of a normal close. Five other UI tests call `Restart()`. This was a follow-up for the shared fixture, since done: [fixture close QA](appfixture-window-close-2026-10-21.md).
 
 ## Verification
 

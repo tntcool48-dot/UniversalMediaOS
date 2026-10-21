@@ -159,9 +159,8 @@ namespace UniversalMediaOS.Tests.E2E.Infrastructure
 
             if (MainWindow == null)
             {
-                // FlaUI 5 correctly annotates this fallback as nullable; the
-                // immediately following guard turns a miss into a clear timeout.
-                MainWindow = App.GetMainWindow(Automation, TimeSpan.FromSeconds(15))!;
+                // Process.MainWindowHandle (FlaUI's GetMainWindow) can name a tooltip popup; keep matching the title.
+                MainWindow = WaitForMainWindow(TimeSpan.FromSeconds(15))!;
             }
 
             if (MainWindow == null)
@@ -199,12 +198,34 @@ namespace UniversalMediaOS.Tests.E2E.Infrastructure
 
         internal void Restart()
         {
-            App.Close();
-            if (!SpinWait.SpinUntil(() => App.HasExited, TimeSpan.FromSeconds(15)))
-                throw new TimeoutException("The owned test application did not close before restart.");
+            if (!CloseMainWindow(TimeSpan.FromSeconds(20)))
+                throw new TimeoutException("The owned test application did not close normally before restart.");
             App = Application.Launch(_launchStartInfo ?? throw new InvalidOperationException("Missing owned application launch context."));
-            MainWindow = App.GetMainWindow(Automation, TimeSpan.FromSeconds(15))
+            MainWindow = WaitForMainWindow(TimeSpan.FromSeconds(30))
                 ?? throw new TimeoutException("The owned application main window did not return after restart.");
+        }
+
+        /// <summary>Asks the main window to close, as its title-bar button does, and waits for the process to exit.
+        /// FlaUI's Application.Close posts to Process.MainWindowHandle, which can be a visible tooltip popup; with its
+        /// default kill fallback, that silently replaces the normal close (and its progress drain) with a kill.</summary>
+        internal bool CloseMainWindow(TimeSpan timeout)
+        {
+            if (App.HasExited) return true;
+            WaitForMainWindow(TimeSpan.FromSeconds(5))?.Patterns.Window.PatternOrDefault?.Close();
+            return SpinWait.SpinUntil(() => App.HasExited, timeout);
+        }
+
+        private FlaUI.Core.AutomationElements.Window? WaitForMainWindow(TimeSpan timeout)
+        {
+            var deadline = DateTime.UtcNow + timeout;
+            do
+            {
+                var window = App.GetAllTopLevelWindows(Automation)
+                    .FirstOrDefault(candidate => candidate.Title == ExpectedMainWindowTitle);
+                if (window != null) return window;
+                Thread.Sleep(200);
+            } while (DateTime.UtcNow < deadline && !App.HasExited);
+            return null;
         }
 
         private static string? FindWpfExecutable(
@@ -281,9 +302,9 @@ namespace UniversalMediaOS.Tests.E2E.Infrastructure
         {
             try
             {
-                if (App != null && !App.HasExited)
+                if (App != null && !App.HasExited && !CloseMainWindow(TimeSpan.FromSeconds(20)))
                 {
-                    // Attempt to close gracefully, fallback to Kill if needed
+                    // A modal dialog or hung window: fall back to the process close, then Kill.
                     App.Close();
                 }
             }
