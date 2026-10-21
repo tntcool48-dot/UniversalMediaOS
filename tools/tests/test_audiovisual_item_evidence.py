@@ -12,6 +12,7 @@ MOVIE = {'title': 'Dune 2021', 'imdb_id': 'tt1160419',
          'file_name': 'Dune (2021)/Dune.2021.1080p.mp4', 'stream_urls': [MEDIA]}
 TV = {'title': 'Breaking Bad 2008', 'imdb_id': 'tt0903747',
       'season': '1', 'episode': '1', 'file_name': 'Seasons/Breaking.Bad.S01E01.Pilot.mkv', 'stream_urls': [MEDIA]}
+NODE_TIMEOUT = 60
 
 
 class ItemEvidenceTests(unittest.TestCase):
@@ -31,7 +32,8 @@ class ItemEvidenceTests(unittest.TestCase):
         program = 'global.window=' + json.dumps(setup) + ";window.vsFetchJSON=()=>{};" + \
             "global.localStorage={getItem:()=>JSON.stringify({vttUrl:'/en.vtt',lang:'en',label:'English'})};" + \
             'console.log(JSON.stringify(new Function(' + json.dumps(av.PLAYER_ITEM_SCAN) + ')()));'
-        output = subprocess.run([node, '-e', program], capture_output=True, text=True, timeout=10, check=True)
+        # The timeout only guards against a hang: a hosted runner's first node.exe start exceeded 10 s.
+        output = subprocess.run([node, '-e', program], capture_output=True, text=True, timeout=NODE_TIMEOUT, check=True)
         return json.loads(output.stdout), requested
 
     def test_current_provider_api_token_binds_the_original_item_without_refetch(self):
@@ -245,7 +247,7 @@ class PlayerItemCaptureTests(unittest.TestCase):
         self.assertIsNotNone(node, 'Node is required to execute the provider response observer regressions')
         script = "const assert = require('node:assert/strict'); global.window = {};\n" + av.PLAYER_ITEM_CAPTURE + \
             "\n(async () => {\n" + code + "\n})().catch(error => { console.error(error); process.exitCode = 1; });"
-        result = subprocess.run([node, '-'], input=script, text=True, capture_output=True, timeout=5)
+        result = subprocess.run([node, '-'], input=script, text=True, capture_output=True, timeout=NODE_TIMEOUT)
         self.assertEqual(0, result.returncode, result.stderr)
 
     def test_response_observer_preserves_promise_context_and_immutable_original_data(self):
