@@ -150,7 +150,9 @@ public sealed class ResumeDispatcherContentionTests(ITestOutputHelper output)
                     elapsed.Stop();
                     Assert.Contains(players, player => player.IsPersistenceWaiting);
                 }
-                foreach (var player in players) WaitForResumeLoad(player);
+                // Releasing the writer leaves a serialized backlog of saves, ownership changes and reads (43 on a
+                // hosted runner), each with write-through journal writes. On slow storage it outlasts 5 s.
+                foreach (var player in players) WaitForResumeLoad(player, deadline: TimeSpan.FromSeconds(60));
                 using var verify = new DatabaseContext();
                 foreach (var (key, position) in accepted)
                     Assert.Equal(position, verify.GetResumeState(key.Work, key.Unit));
@@ -169,7 +171,7 @@ public sealed class ResumeDispatcherContentionTests(ITestOutputHelper output)
                 Assert.InRange(elapsed.Elapsed.TotalMilliseconds, 0, 1000);
             }
             finally { foreach (var player in players) player.Dispose(); }
-        });
+        }, TimeSpan.FromSeconds(120)); // The whole case includes the storage-bound drain above.
     }
 
     [Fact]
@@ -535,12 +537,12 @@ public sealed class ResumeDispatcherContentionTests(ITestOutputHelper output)
             Title = "Load contention fixture" }, new() { SeasonNumber = season, EpisodeNumber = 1 },
         "Load contention fixture", "", new());
 
-    internal static void WaitForResumeLoad(PlaybackViewModel player, Func<string>? databaseDetails = null)
+    internal static void WaitForResumeLoad(PlaybackViewModel player, Func<string>? databaseDetails = null, TimeSpan? deadline = null)
     {
         if (Thread.CurrentThread.GetApartmentState() == ApartmentState.STA)
             PumpUntil(() => player.ResumeLoadCompleted.IsCompleted, () => ResumeLoadDetails(player) +
-                (databaseDetails == null ? string.Empty : "\n" + databaseDetails()));
-        player.ResumeLoadCompleted.WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+                (databaseDetails == null ? string.Empty : "\n" + databaseDetails()), deadline);
+        player.ResumeLoadCompleted.WaitAsync(deadline ?? TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
     }
 
     private static string ResumeLoadDetails(PlaybackViewModel player)
@@ -569,12 +571,12 @@ public sealed class ResumeDispatcherContentionTests(ITestOutputHelper output)
             $"worker threads={ThreadPool.ThreadCount}, queued work={ThreadPool.PendingWorkItemCount}.";
     }
 
-    private static void PumpUntil(Func<bool> condition, Func<string>? failureDetails = null)
+    private static void PumpUntil(Func<bool> condition, Func<string>? failureDetails = null, TimeSpan? limit = null)
     {
         var dispatcher = System.Windows.Threading.Dispatcher.CurrentDispatcher;
         var deadline = Stopwatch.StartNew();
         bool success;
-        while (!(success = condition()) && deadline.Elapsed < TimeSpan.FromSeconds(5))
+        while (!(success = condition()) && deadline.Elapsed < (limit ?? TimeSpan.FromSeconds(5)))
         {
             var frame = new System.Windows.Threading.DispatcherFrame();
             dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background,
@@ -1246,10 +1248,11 @@ public sealed class ResumeDispatcherContentionTests(ITestOutputHelper output)
         {
             try
             {
+                // Ceilings only: the remaining real persistence can take seconds on slow hosted storage.
                 foreach (var (progress, database) in _players)
                 {
-                    progress.FlushAsync().WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
-                    Assert.True(SpinWait.SpinUntil(() => database.Disposed, TimeSpan.FromSeconds(5)),
+                    progress.FlushAsync().WaitAsync(TimeSpan.FromSeconds(60)).GetAwaiter().GetResult();
+                    Assert.True(SpinWait.SpinUntil(() => database.Disposed, TimeSpan.FromSeconds(60)),
                         "Player-owned storage must finish disposal before its profile is removed.");
                 }
             }

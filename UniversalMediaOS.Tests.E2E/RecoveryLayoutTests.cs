@@ -65,7 +65,7 @@ public sealed class RecoveryLayoutTests
         });
     }
 
-    internal static void RunSta(Action action)
+    internal static void RunSta(Action action, TimeSpan? limit = null)
     {
         Exception? failure = null;
         var thread = new Thread(() =>
@@ -76,7 +76,7 @@ public sealed class RecoveryLayoutTests
         thread.IsBackground = true;
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
-        Assert.True(thread.Join(TimeSpan.FromSeconds(15)), "WPF layout did not finish.");
+        Assert.True(thread.Join(limit ?? TimeSpan.FromSeconds(15)), "WPF layout did not finish.");
         if (failure != null) ExceptionDispatchInfo.Capture(failure).Throw();
     }
 }
