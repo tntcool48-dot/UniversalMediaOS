@@ -160,12 +160,41 @@ namespace UniversalMediaOS.Tests.E2E.Tests
             Assert.Equal(key, new UniversalMediaOS.Core.Configuration.DomainHotSwapper(ConfigPath(fixture)).GetSetting("GoogleBooksApiKey"));
         }
 
-        [Fact(Skip = "Requires an injectable service bootstrapper; the previous check only located Save Settings.")]
+        [Fact]
         public void T2_Settings_01_Duplicate_Service_Bootstrapping()
         {
-            NavigateTo("Settings");
-            var saveBtn = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByName("Save Settings"))?.AsButton();
-            Assert.NotNull(saveBtn);
+            // A second launch on the same profile brings the running window forward and exits before it starts
+            // services, so the profile keeps one download queue, one settings writer and one set of services.
+            using var fixture = new AppFixture();
+            FlaUI.Core.Patterns.IWindowPattern WindowPattern() => MainWindowOf(fixture).Patterns.Window.Pattern;
+            WindowPattern().SetWindowVisualState(WindowVisualState.Minimized);
+            Assert.True(SpinWait.SpinUntil(() => WindowPattern().WindowVisualState.Value == WindowVisualState.Minimized,
+                TimeSpan.FromSeconds(5)), "The running window did not minimize.");
+
+            string exe = System.Diagnostics.Process.GetProcessById(fixture.App.ProcessId).MainModule!.FileName;
+            var start = new System.Diagnostics.ProcessStartInfo(exe)
+            {
+                UseShellExecute = false,
+                WorkingDirectory = System.IO.Path.GetDirectoryName(exe)!
+            };
+            start.Environment["UNIVERSAL_MEDIA_OS_DATA_ROOT"] = fixture.SandboxPath;
+            using var later = System.Diagnostics.Process.Start(start)!;
+            try
+            {
+                Assert.True(later.WaitForExit(15000), "The second launch kept running beside the first.");
+                Assert.Equal(0, later.ExitCode);
+            }
+            finally
+            {
+                if (!later.HasExited) later.Kill(entireProcessTree: true);
+            }
+
+            Assert.True(SpinWait.SpinUntil(() => WindowPattern().WindowVisualState.Value != WindowVisualState.Minimized,
+                TimeSpan.FromSeconds(5)), "The running window was not brought back.");
+            Assert.False(fixture.App.HasExited);
+            string log = ReadShared(System.IO.Path.Combine(fixture.SandboxPath, "Roaming", "UniversalMediaOS", "app.log"));
+            Assert.Contains("[Startup] Another launch on this profile brought the running window forward.", log, StringComparison.Ordinal);
+            Assert.Single(System.Text.RegularExpressions.Regex.Matches(log, @"Application session started\."));
         }
 
         [Fact]

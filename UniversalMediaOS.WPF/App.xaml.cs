@@ -30,6 +30,9 @@ namespace UniversalMediaOS.WPF
         private PythonBootstrapper? _pythonServer;
         private System.Diagnostics.Process? _qbitProcess;
         private System.Threading.CancellationTokenSource? _episodeAlertCts;
+        private ProfileInstanceGuard? _profileGuard;
+        private const int InstanceStarting = 0, InstanceRunning = 1, InstanceClosing = 2;
+        private volatile int _instanceState = InstanceStarting;
 
         public App()
         {
@@ -39,6 +42,22 @@ namespace UniversalMediaOS.WPF
         protected override void OnStartup(StartupEventArgs e)
         {
             base.OnStartup(e);
+
+            // One running app per profile, decided before any service, log or database touches it.
+            string profileDirectory = Path.Combine(UniversalMediaOS.Core.Helpers.AppDataPaths.RoamingBaseDirectory, "UniversalMediaOS");
+            _profileGuard = ProfileInstanceGuard.Acquire(profileDirectory, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(25),
+                out ProfileInstanceOutcome instance);
+            if (_profileGuard == null)
+            {
+                if (instance == ProfileInstanceOutcome.ExistingNotResponding)
+                {
+                    MessageBox.Show("Universal Media OS is already running for this profile but is not responding. Close it, then start the app again.",
+                        "Universal Media OS", MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
+                Shutdown(instance == ProfileInstanceOutcome.ActivatedExisting ? 0 : 1);
+                return;
+            }
+            _profileGuard.ListenForLaterLaunches(BringForwardForLaterLaunch);
 
             // Initialize LibVLC core globally once at app startup
             LibVLCSharp.Shared.Core.Initialize();
@@ -64,7 +83,10 @@ namespace UniversalMediaOS.WPF
             // window first left the status bar stuck on "HLS Proxy: Offline" even though
             // the proxy started a moment later.
             var mainWindow = Services.GetRequiredService<MainWindow>();
+            // From its first Closing (the progress drain) a later launch waits for this copy instead.
+            mainWindow.Closing += (_, _) => _instanceState = InstanceClosing;
             mainWindow.Show();
+            _instanceState = InstanceRunning;
             RefreshServiceHealthStatus();
 
             var downloadQueue = Services.GetRequiredService<DownloadQueueService>();
@@ -310,8 +332,36 @@ namespace UniversalMediaOS.WPF
             }
         }
 
+        /// <summary>Runs on a pool thread when another launch asks for this profile; true lets that launch exit.</summary>
+        private bool BringForwardForLaterLaunch()
+        {
+            switch (_instanceState)
+            {
+                case InstanceStarting: return true; // This copy is about to show its window.
+                case InstanceClosing: return false; // The later launch waits for the profile, then starts.
+            }
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (MainWindow is not Window window || !window.IsVisible) return;
+                if (window.WindowState == WindowState.Minimized) SystemCommands.RestoreWindow(window);
+                window.Activate();
+                window.Topmost = true; // Raises it even where Windows declines the activation.
+                window.Topmost = false;
+                window.Focus();
+                UniversalMediaOS.Core.Helpers.AppLogger.Log("[Startup] Another launch on this profile brought the running window forward.");
+            }));
+            return true;
+        }
+
         protected override void OnExit(ExitEventArgs e)
         {
+            if (_profileGuard == null)
+            {
+                // This launch never owned the profile: resolving services here would load and rewrite its queue.
+                base.OnExit(e);
+                return;
+            }
+
             try { _episodeAlertCts?.Cancel(); } catch { }
             try { _episodeAlertCts?.Dispose(); } catch { }
             _episodeAlertCts = null;
@@ -347,6 +397,9 @@ namespace UniversalMediaOS.WPF
 
             try { NativePlaybackEngine.ShutdownProcess(); } catch { }
             try { UniversalMediaOS.Core.Helpers.AppLogger.Shutdown(); } catch { }
+            // Last: a launch waiting for this profile starts only after everything above has let go of it.
+            try { _profileGuard.Dispose(); } catch { }
+            _profileGuard = null;
 
             base.OnExit(e);
         }
