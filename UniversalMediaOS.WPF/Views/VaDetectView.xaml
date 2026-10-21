@@ -89,6 +89,7 @@
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
                     <TextBox Text="{Binding SearchQuery, UpdateSourceTrigger=PropertyChanged}"
+                             AutomationProperties.Name="Anime title for VA matching"
                              Style="{StaticResource AppTextBox}"
                              Height="40"
                              FontSize="15"
@@ -130,6 +131,7 @@
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
                     <TextBox Text="{Binding ManualUrl, UpdateSourceTrigger=PropertyChanged}"
+                             AutomationProperties.Name="Manual cast URL"
                              Style="{StaticResource AppTextBox}"
                              Height="36"
                              ToolTip="Optional mode-specific manual cast page URL."/>
@@ -157,6 +159,7 @@
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
                     <TextBox Text="{Binding PublicFallbackUsername, UpdateSourceTrigger=PropertyChanged}"
+                             AutomationProperties.Name="MAL username for public fallback"
                              Style="{StaticResource AppTextBox}"
                              Height="36"
                              ToolTip="MAL username for public fallback sync."/>

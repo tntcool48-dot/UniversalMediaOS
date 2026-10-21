@@ -39,7 +39,7 @@
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="Port" Style="{StaticResource CaptionText}" FontWeight="Bold" VerticalAlignment="Center"/>
-                        <TextBox Grid.Column="1" Text="{Binding RelayPort, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource AppTextBox}" Height="36"/>
+                        <TextBox Grid.Column="1" Text="{Binding RelayPort, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Relay port" Style="{StaticResource AppTextBox}" Height="36"/>
                     </Grid>
                     <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
                         <Button Content="Start Relay" Command="{Binding StartRelayCommand}" Style="{StaticResource PrimaryButton}" MinWidth="112" Height="38" Margin="0,0,8,0"/>
@@ -58,7 +58,7 @@
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="Server" Style="{StaticResource CaptionText}" FontWeight="Bold" VerticalAlignment="Center"/>
-                        <TextBox Grid.Column="1" Text="{Binding ServerUrl, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource AppTextBox}" Height="36" ToolTip="Example: localhost, 26.x.x.x, or ws://host:8000"/>
+                        <TextBox Grid.Column="1" Text="{Binding ServerUrl, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Server" Style="{StaticResource AppTextBox}" Height="36" ToolTip="Example: localhost, 26.x.x.x, or ws://host:8000"/>
                     </Grid>
                     <Grid Margin="0,0,0,10">
                         <Grid.ColumnDefinitions>
@@ -66,7 +66,7 @@
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="Room ID" Style="{StaticResource CaptionText}" FontWeight="Bold" VerticalAlignment="Center"/>
-                        <TextBox Grid.Column="1" Text="{Binding RoomId, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource AppTextBox}" Height="36"/>
+                        <TextBox Grid.Column="1" Text="{Binding RoomId, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Room ID" Style="{StaticResource AppTextBox}" Height="36"/>
                     </Grid>
                     <Grid>
                         <Grid.ColumnDefinitions>
@@ -74,7 +74,7 @@
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="Offset seconds" Style="{StaticResource CaptionText}" FontWeight="Bold" VerticalAlignment="Center"/>
-                        <TextBox Grid.Column="1" Text="{Binding OffsetSeconds, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource AppTextBox}" Height="36" ToolTip="Use positive or negative seconds for sub/dub timing offsets."/>
+                        <TextBox Grid.Column="1" Text="{Binding OffsetSeconds, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Offset seconds" Style="{StaticResource AppTextBox}" Height="36" ToolTip="Use positive or negative seconds for sub/dub timing offsets."/>
                     </Grid>
                     <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
                         <Button Content="Connect" Command="{Binding ConnectCommand}" Style="{StaticResource PrimaryButton}" MinWidth="112" Height="38" Margin="0,0,8,0"/>
@@ -121,7 +121,7 @@
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <TextBox Text="{Binding HostUrlToShare, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource AppTextBox}" Height="38"/>
+                        <TextBox Text="{Binding HostUrlToShare, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="URL to share" Style="{StaticResource AppTextBox}" Height="38"/>
                         <Button Grid.Column="1" Content="Share URL" Command="{Binding ShareHostUrlCommand}" Style="{StaticResource PrimaryButton}" Height="38" MinWidth="112" Margin="8,0,0,0"/>
                     </Grid>
                 </StackPanel>

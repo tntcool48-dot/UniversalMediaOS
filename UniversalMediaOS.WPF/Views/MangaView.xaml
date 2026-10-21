@@ -105,6 +105,7 @@
 
                         <Grid Grid.Row="0" Grid.Column="0">
                             <TextBox Text="{Binding SearchQuery, UpdateSourceTrigger=PropertyChanged}"
+                                     AutomationProperties.Name="Search MangaDex titles"
                                      Style="{StaticResource AppTextBox}"
                                      FontSize="15"
                                      Height="44">
