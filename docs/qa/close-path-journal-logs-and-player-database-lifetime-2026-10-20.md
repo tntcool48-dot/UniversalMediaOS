@@ -56,6 +56,24 @@ The durability test now closes the WPF window through its own UIA WindowPattern,
 
 The new cases are: journaled behind a writer (catalog and legacy), where the journal file holds 120 and a private WAL reader still sees 90 when the drain reports journaled; a held journal lock reports not journaled (catalog and legacy); a direct save on a volatile database reports not journaled and still saves 120 after release; and the DI tab-scope case. Build: zero warnings or errors. No broad local suite ran; the hosted checkpoint remains the full check.
 
+## Hosted runner timing (October 21)
+
+The hosted checkpoint for **e632671** ([run 39620398565](https://github.com/tntcool48-dot/UniversalMediaOS/actions/runs/39620398565): **1,406 passed / 1 failed / 19 skipped of 1,426**, 15 min 3 s) failed only `SessionEndingDeadlineReportsJournaledProgressBehindALockedWriter(catalog: False)`, at `Assert.True(journaled)`.
+
+The case gave the drain **100 ms**, and the journal write had to land inside that window while the held writer blocked SQLite. On the runner's write-through storage a journal write took longer, so the drain correctly reported "not journaled" at its deadline. The pressured-admission case failed the previous checkpoint for the same storage-speed reason and passed on this one ([admission QA](pressured-source-admission-2026-10-21.md)).
+
+**Repair (test only).** The case now uses the session-end handler's own **3 s** deadline. The held writer (5 s) still outlasts it, so the drain still times out with SQLite blocked.
+
+A temporary scratchpad variant held the journal lock in 150 ms pulses during the drain, so each journal write took longer than 100 ms. The test file was restored afterwards with a matching hash.
+
+| Run | Result | TRX |
+| --- | --- | --- |
+| 100 ms deadline, pulsed slow journal | **Fail in both modes** at `Assert.True(journaled)`, as on the runner | `session-end-journaled-slow-before-20261021.trx` |
+| 3 s deadline, pulsed slow journal | **2 / 2**, 7 s | `session-end-journaled-slow-after-20261021.trx` |
+| 3 s deadline, all session-end cases, normal | **11 / 11**, 11 s | `session-end-deadline-fix-20261021.trx` |
+
+The other two 100 ms cases expect "not journaled" (a held journal lock; a direct save) and do not depend on storage speed.
+
 ## Limits
 
 No real Windows session end was exercised; that needs the user (checklist group "pressured source admission, real Windows shutdown"). The session-end message pair is covered through the drain's result; the `OnSessionEnding` text itself is a direct conditional. An accepted observation whose journal write fails is still lost, because the commit waits on the failed receipt instead of falling back to a direct save. This existed before this batch and is now at least logged as "not journaled".

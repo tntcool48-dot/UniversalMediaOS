@@ -776,8 +776,10 @@ public sealed class ResumeDispatcherContentionTests(ITestOutputHelper output)
             string journal = JournalPath(profile);
             using (var writer = new WriterLock(profile.ConnectionString!, work, unit, 5000))
             {
+                // The session-end handler's own deadline: the held writer outlasts it, while the journal write
+                // fits even on slow write-through storage (a hosted runner missed 100 ms).
                 Assert.False(UniversalMediaOS.WPF.App.DrainPlaybackProgressForSessionEnding(
-                    player.FlushResumeForSessionEndingAsync, progress, TimeSpan.FromMilliseconds(100), out bool journaled));
+                    player.FlushResumeForSessionEndingAsync, progress, TimeSpan.FromSeconds(3), out bool journaled));
                 Assert.True(journaled);
                 // The report matches the files: the journal holds the accepted position; SQLite does not yet.
                 Assert.Equal(120, PendingPosition(journal, work, unit));
