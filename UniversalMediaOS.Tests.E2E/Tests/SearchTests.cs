@@ -104,22 +104,28 @@ namespace UniversalMediaOS.Tests.E2E.Tests
             Assert.True(resultsList.Items.Length > 0);
         }
 
-        [Fact(Skip = "Requires stopping or faulting the mock scraper endpoint; the previous test did not create an outage.")]
+        [Fact]
         public void T1_Search_05_Safe_Error_Display_On_Scraper_Offline()
         {
-            NavigateToSearch();
-            var searchBox = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByControlType(ControlType.Edit))?.AsTextBox();
-            Assert.NotNull(searchBox);
-            searchBox.Text = "Offline";
+            // AniList answers normally except for one query, for which the endpoint reports an outage.
+            using var fixture = new AppFixture(mangaPagePng: null, aniListFeed: RoutedAniList);
+            OpenAnime(fixture);
+            Search(fixture, "Frieren");
+            Assert.True(WaitForText(fixture, "AniList results for \"Frieren\""), "The normal search did not finish.");
+            int shown = ResultCount(fixture);
+            Assert.True(shown > 0, "The normal search showed no cards.");
 
-            var executeBtn = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByName("ExecuteSearch"))?.AsButton();
-            Assert.NotNull(executeBtn);
-            executeBtn.Invoke();
-            Thread.Sleep(1000);
+            // The outage is reported as unavailable, not as "no anime", and the earlier cards stay.
+            Search(fixture, "OutageProbe");
+            Assert.True(WaitForText(fixture, "Anime catalog unavailable. Previous results retained; retry search."),
+                "The outage was not reported.");
+            Assert.Equal(shown, ResultCount(fixture));
+            Assert.False(Visible(fixture, "No anime found"));
 
-            // Verify no crash occurs
-            var resultsList = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByControlType(ControlType.List))?.AsListBox();
-            Assert.NotNull(resultsList);
+            // Retrying once the provider answers again recovers normally.
+            Search(fixture, "Frieren");
+            Assert.True(WaitForText(fixture, "AniList results for \"Frieren\""), "The retried search did not recover.");
+            Assert.True(ResultCount(fixture) > 0);
         }
 
         [Fact]
@@ -176,23 +182,76 @@ namespace UniversalMediaOS.Tests.E2E.Tests
             Assert.NotNull(resultsList);
         }
 
-        [Fact(Skip = "Requires an explicit null/empty mock response; the previous test relied on an uncontrolled query string.")]
+        [Fact]
         public void T2_Search_04_Scraper_Returns_Empty_Or_Null()
         {
-            NavigateToSearch();
-            var searchBox = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByControlType(ControlType.Edit))?.AsTextBox();
-            Assert.NotNull(searchBox);
-            searchBox.Text = "NonExistentShow12345";
+            using var fixture = new AppFixture(mangaPagePng: null, aniListFeed: RoutedAniList);
+            OpenAnime(fixture);
 
-            var executeBtn = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByName("ExecuteSearch"))?.AsButton();
-            Assert.NotNull(executeBtn);
-            executeBtn.Invoke();
-            Thread.Sleep(1000);
+            // An empty page is a real "no results" answer.
+            Search(fixture, "EmptyProbe");
+            Assert.True(WaitForText(fixture, "AniList results for \"EmptyProbe\""), "The empty search did not finish.");
+            Assert.True(SpinWait.SpinUntil(() => Visible(fixture, "No anime found"), TimeSpan.FromSeconds(5)), "No empty state was shown.");
+            Assert.Equal(0, ResultCount(fixture));
 
-            // Verify no crash
-            var resultsList = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByControlType(ControlType.List))?.AsListBox();
-            Assert.NotNull(resultsList);
+            // A response without data is a provider fault, not "no anime".
+            Search(fixture, "NullProbe");
+            Assert.True(WaitForText(fixture, "Anime catalog unavailable. Check your connection and retry search."),
+                "The null response was not reported as unavailable." + Environment.NewLine + AppLog(fixture));
+            Assert.False(Visible(fixture, "No anime found"));
+            Assert.Equal(0, ResultCount(fixture));
         }
+
+        private static (int Status, string Body) RoutedAniList(System.Net.HttpListenerRequest request)
+        {
+            using var reader = new System.IO.StreamReader(request.InputStream, request.ContentEncoding);
+            string body = reader.ReadToEnd();
+            if (body.Contains("OutageProbe", StringComparison.Ordinal)) return (503, string.Empty);
+            if (body.Contains("NullProbe", StringComparison.Ordinal)) return (200, "{\"data\":null}");
+            string media = body.Contains("EmptyProbe", StringComparison.Ordinal) ? string.Empty :
+                "{\"id\":1,\"idMal\":1,\"title\":{\"romaji\":\"Mock Romaji\",\"english\":\"Mock English\"}," +
+                "\"coverImage\":{\"extraLarge\":\"http://localhost:5000/cover.png\"},\"description\":\"Mock Description\"}";
+            return (200, "{\"data\":{\"Page\":{\"pageInfo\":{\"hasNextPage\":false},\"media\":[" + media + "]}}}");
+        }
+
+        private static Window MainWindowOf(AppFixture fixture) => System.Linq.Enumerable.Single(
+            fixture.App.GetAllTopLevelWindows(fixture.Automation), window => window.Title == AppFixture.ExpectedMainWindowTitle);
+
+        /// <summary>Opens the Anime tab once; opening it again starts a fresh tab with recommendations.</summary>
+        private static void OpenAnime(AppFixture fixture)
+        {
+            var window = MainWindowOf(fixture);
+            window.FindFirstDescendant(cf => cf.ByName("Anime").And(cf.ByControlType(ControlType.Button)))!.AsButton().Invoke();
+            Assert.True(SpinWait.SpinUntil(() => window.FindFirstDescendant(cf => cf.ByName("ExecuteSearch")) != null,
+                TimeSpan.FromSeconds(10)), "The anime search did not open.");
+        }
+
+        private static void Search(AppFixture fixture, string query)
+        {
+            var window = MainWindowOf(fixture);
+            window.FindFirstDescendant(cf => cf.ByControlType(ControlType.Edit))!.AsTextBox().Text = query;
+            window.FindFirstDescendant(cf => cf.ByName("ExecuteSearch"))!.AsButton().Invoke();
+        }
+
+        private static string AppLog(AppFixture fixture)
+        {
+            string path = System.IO.Path.Combine(fixture.SandboxPath, "Roaming", "UniversalMediaOS", "app.log");
+            if (!System.IO.File.Exists(path)) return string.Empty;
+            using var stream = new System.IO.FileStream(path, System.IO.FileMode.Open, System.IO.FileAccess.Read,
+                System.IO.FileShare.ReadWrite | System.IO.FileShare.Delete);
+            return new System.IO.StreamReader(stream).ReadToEnd();
+        }
+
+        private static bool WaitForText(AppFixture fixture, string text) => SpinWait.SpinUntil(
+            () => MainWindowOf(fixture).FindFirstDescendant(cf => cf.ByName(text)) != null, TimeSpan.FromSeconds(20));
+
+        private static bool Visible(AppFixture fixture, string text) =>
+            MainWindowOf(fixture).FindFirstDescendant(cf => cf.ByName(text)) is { IsOffscreen: false };
+
+        /// <summary>Cards in the results list; each is a "View Details" button (filter combo boxes also expose lists).</summary>
+        private static int ResultCount(AppFixture fixture) =>
+            MainWindowOf(fixture).FindFirstDescendant(cf => cf.ByAutomationId("ResultsList"))?
+                .FindAllDescendants(cf => cf.ByName("View Details").And(cf.ByControlType(ControlType.Button))).Length ?? 0;
 
         [Fact]
         public void T2_Search_05_Rapid_Concurrent_Double_Searches()
