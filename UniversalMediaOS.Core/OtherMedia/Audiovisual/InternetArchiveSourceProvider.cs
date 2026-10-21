@@ -286,6 +286,12 @@ public sealed class InternetArchiveSourceProvider : IAudiovisualSourceProvider
                 return null;
             }
 
+            // A trailer or featurette shares the film's title and year, but its curated collection says it is not the film.
+            if (InSupplementalCollection(metadata, searchDocument.SearchDocument))
+            {
+                return null;
+            }
+
             bool animation = requestedIdentity.Kind != AudiovisualMediaKind.Cartoon ||
                              HasAnimationSignal(metadata) ||
                              HasAnimationSignal(searchDocument.SearchDocument);
@@ -546,8 +552,21 @@ public sealed class InternetArchiveSourceProvider : IAudiovisualSourceProvider
     private static bool IsSupplementalVideo(string fileName, string itemTitle)
     {
         return System.Text.RegularExpressions.Regex.IsMatch(ComponentFileLabel(fileName, itemTitle),
-            @"\b(?:trailers?|teasers?|clips?|previews?|excerpts?|featurettes?|outtakes|deleted\s+scenes|behind\s+the\s+scenes|making\s+of)\b",
+            ShortSupplementalLabel + @"|\b(?:outtakes|deleted\s+scenes|behind\s+the\s+scenes|making\s+of)\b",
             System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+    }
+
+    private const string ShortSupplementalLabel = @"\b(?:trailers?|teasers?|clips?|previews?|excerpts?|featurettes?)\b";
+
+    /// <summary>Whether the item belongs to an Archive collection curated for short extras, such as
+    /// movie_trailers. Free-form subject tags only withhold verification; a curated collection disqualifies.</summary>
+    private static bool InSupplementalCollection(params JsonElement[] items)
+    {
+        return items
+            .SelectMany(item => GetStringValues(item, "collection"))
+            .Any(value => System.Text.RegularExpressions.Regex.IsMatch(
+                " " + ExactAudiovisualMatcher.NormalizeTitle(value) + " ", ShortSupplementalLabel,
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant));
     }
 
     private static string ComponentFileLabel(string fileName, string itemTitle)
@@ -595,9 +614,12 @@ public sealed class InternetArchiveSourceProvider : IAudiovisualSourceProvider
 
     private static bool IsSupportedVideoFile(string fileName, string format)
     {
+        // Archive keeps replaced or removed files as history/files/<name>.~N~ revisions, not as the item's media.
         if (string.IsNullOrWhiteSpace(fileName) ||
             fileName.Contains("__ia_thumb", StringComparison.OrdinalIgnoreCase) ||
-            fileName.Contains("sample", StringComparison.OrdinalIgnoreCase))
+            fileName.Contains("sample", StringComparison.OrdinalIgnoreCase) ||
+            fileName.StartsWith("history/", StringComparison.OrdinalIgnoreCase) ||
+            System.Text.RegularExpressions.Regex.IsMatch(fileName, @"\.~\d+~$"))
         {
             return false;
         }
