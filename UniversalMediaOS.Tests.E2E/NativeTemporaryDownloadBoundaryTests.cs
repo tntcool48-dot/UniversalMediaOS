@@ -655,7 +655,7 @@ public sealed class NativeTemporaryDownloadBoundaryTests
         catch (OperationCanceledException) when (state != null) { throw new TimeoutException(state()); }
     }
 
-    private sealed class LocalSeeder : IAsyncDisposable
+    internal sealed class LocalSeeder : IAsyncDisposable
     {
         public const string Title = "Queue Space Fixture";
         public string Root { get; } = Path.Combine(Path.GetTempPath(), "UniversalMediaOS.NativeTempBoundary", Guid.NewGuid().ToString("N"));
