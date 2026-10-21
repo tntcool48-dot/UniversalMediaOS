@@ -4,7 +4,7 @@ The last full baseline (`browser-pip-full-2026-10-04.trx`) contains **22 skipped
 
 This inventory distinguishes existing meaningful coverage from remaining gaps. It does not waive those gaps or complete the packaged release gate. Names below omit the common namespace `UniversalMediaOS.Tests.E2E.Tests`.
 
-**Update, October 21, 2026:** three Settings placeholders are now real UI tests and no longer skipped, so **19** skipped methods remain: nine Downloads, five Search and five Settings. See the [Settings save/restart QA](settings-save-restart-and-protected-keys-2026-10-21.md).
+**Update, October 21, 2026:** five Settings placeholders are now real tests and no longer skipped, so **17** skipped methods remain: nine Downloads, five Search and three Settings. See the [Settings save/restart QA](settings-save-restart-and-protected-keys-2026-10-21.md) and the [log boundary and lock collision QA](settings-log-boundary-and-lock-collision-2026-10-21.md).
 
 ## Downloads — nine
 
@@ -30,7 +30,7 @@ This inventory distinguishes existing meaningful coverage from remaining gaps. I
 | `T1_Search_05_Safe_Error_Display_On_Scraper_Offline` | Catalog view-model checks retain cards through later failure and reject stale responses. AniList outage and wider provider failure UI remain open. |
 | `T2_Search_04_Scraper_Returns_Empty_Or_Null` | `CatalogPagingTests.EmptySuccessAndMalformedPayloadAreDistinct` and `CatalogViewModelPagingTests.EmptyFilteredPageKeepsLoadMoreButFailureIsNotNoResults` exercise typed results. The old uncontrolled query did not prove a scraper null-response UI journey. |
 
-## Settings — eight (five still skipped)
+## Settings — eight (three still skipped)
 
 | Skipped method in `SettingsTests` | Existing evidence and remaining gap |
 | --- | --- |
@@ -38,11 +38,11 @@ This inventory distinguishes existing meaningful coverage from remaining gaps. I
 | `T1_Settings_03_System_Resource_Check_Status_View` | `DependencyHealthTests` verify missing, broken and hung executable outcomes, and partial readiness. Deterministic resource/status UI and physical Health/Repair acceptance remain open. |
 | `T1_Settings_05_Encrypt_and_Save_API_Keys` | **Replaced October 21 by a real test:** a Google Books key entered in Settings is stored as `dpapi:v1:` ciphertext, its plaintext appears nowhere in `config.json`, and it reads back. Unit coverage (`ConfigurationHardeningTests`, the `CoreHardeningRegressionTests` migration cases) is unchanged. Real-profile and packaged save/reload gates remain separate. |
 | `T2_Settings_01_Duplicate_Service_Bootstrapping` | `DependencyHealthTests.ConcurrentExtensionRepairs_DoNotOverlapAndRemainRetryableAfterTimeout` covers extension repair coordination. Duplicate full service bootstrap/startup/shutdown is a distinct remaining gate. |
-| `T2_Settings_02_Log_File_Rotation_Boundary` | No boundary test is established. Production clears oversized logs on startup; the skipped method only located Save Settings. Log growth/rotation acceptance remains open. |
-| `T2_Settings_03_Settings_Lock_Collision` | Configuration rollback and consistent writes are covered, but independent concurrent settings writers/file-lock contention are not established by this placeholder. Remaining gap. |
+| `T2_Settings_02_Log_File_Rotation_Boundary` | **Replaced October 21 by a real test:** startup clears a log of 5 MiB + 1 byte and keeps one of exactly 5 MiB; Settings shows the size, and Clear debug log empties it. Growth within one session is still unbounded. |
+| `T2_Settings_03_Settings_Lock_Collision` | **Replaced October 21 by a real test:** with `config.json` held without delete sharing, Save shows "Save Error" and leaves the file unchanged; the same Save succeeds after release. A new unit case keeps every key from 48 concurrent in-process writers. Writers in a second process on the same profile remain open. |
 | `T2_Settings_04_Low_Memory_Resource_Boundary` | Resource samples and bounded image requests have evidence; no controlled low-memory boundary is established. Remaining gap. |
 | `T2_Settings_05_DPAPI_Cryptography_Failure_Fallback` | **Replaced October 21 by a real test of decryption failure:** keys this account cannot decrypt (marked and legacy formats) are reported once, kept byte-identical through an untouched Save, and replaced only by a newly entered key, which is stored protected. Writing it found and fixed the untouched-Save erasure. Encryption failure itself is not injected; by inspection it throws before any setting changes, and its visible outcome remains open. |
 
 ## Tracker disposition
 
-The inventory itself is complete. The remaining 19 placeholders (of the original 22) stay skipped and are never counted as passes. Remaining behavior belongs to the checklist's download, catalog/player, shared reliability and packaged-release rows. Replace specific placeholders with meaningful tests when addressing those behaviors; preserve an explicit exclusion for redundant methods rather than renaming a shallow check as acceptance.
+The inventory itself is complete. The remaining 17 placeholders (of the original 22) stay skipped and are never counted as passes. Remaining behavior belongs to the checklist's download, catalog/player, shared reliability and packaged-release rows. Replace specific placeholders with meaningful tests when addressing those behaviors; preserve an explicit exclusion for redundant methods rather than renaming a shallow check as acceptance.

@@ -149,20 +149,66 @@ namespace UniversalMediaOS.Tests.E2E.Tests
             Assert.NotNull(saveBtn);
         }
 
-        [Fact(Skip = "Requires an injectable log sink and size boundary; the previous check did not write logs.")]
+        [Fact]
         public void T2_Settings_02_Log_File_Rotation_Boundary()
         {
-            NavigateTo("Settings");
-            var saveBtn = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByName("Save Settings"))?.AsButton();
-            Assert.NotNull(saveBtn);
+            // Startup clears a debug log larger than 5 MB and keeps one of exactly 5 MB; Settings shows its size and clears it.
+            const int limit = 5 * 1024 * 1024;
+            const string marker = "OLD-LOG-MARKER\n";
+            static string LogPath(string root) => System.IO.Path.Combine(root, "Roaming", "UniversalMediaOS", "app.log");
+            foreach (int size in new[] { limit + 1, limit })
+            {
+                using var fixture = new AppFixture(mangaPagePng: null, initializeProfile: root =>
+                    System.IO.File.WriteAllText(LogPath(root), marker + new string('x', size - marker.Length)));
+                string log = LogPath(fixture.SandboxPath);
+                Assert.True(SpinWait.SpinUntil(() => ReadShared(log).Contains("Application session started.", StringComparison.Ordinal),
+                    TimeSpan.FromSeconds(10)), "The new session was not logged.");
+                string started = ReadShared(log);
+                OpenSection(fixture, "Services");
+                if (size > limit)
+                {
+                    Assert.Contains("Log cleared due to size constraints (exceeded 5MB).", started.Split('\n')[0], StringComparison.Ordinal);
+                    Assert.DoesNotContain("OLD-LOG-MARKER", started, StringComparison.Ordinal);
+                    Assert.EndsWith(" KB", LogSizeText(fixture), StringComparison.Ordinal);
+                    continue;
+                }
+
+                Assert.StartsWith(marker, started, StringComparison.Ordinal);
+                Assert.Equal("Debug log size: 5.00 MB", LogSizeText(fixture));
+                SettingsRoot(fixture).FindFirstDescendant(cf => cf.ByName("Clear debug log").And(cf.ByControlType(ControlType.Button)))!
+                    .AsButton().Invoke();
+                AnswerMessageBox(fixture, "Clear Debug Log", new[] { "Clear Debug Log", "Logs" }, "6");
+                AnswerMessageBox(fixture, "Logs", new[] { "Logs" }, "2");
+                string cleared = ReadShared(log);
+                Assert.Contains("Log manually cleared.", cleared.Split('\n')[0], StringComparison.Ordinal);
+                Assert.DoesNotContain("OLD-LOG-MARKER", cleared, StringComparison.Ordinal);
+                Assert.True(SpinWait.SpinUntil(() => LogSizeText(fixture).EndsWith(" KB", StringComparison.Ordinal),
+                    TimeSpan.FromSeconds(5)), LogSizeText(fixture));
+            }
         }
 
-        [Fact(Skip = "Requires concurrent settings writers; the previous check did not create a lock collision.")]
+        [Fact]
         public void T2_Settings_03_Settings_Lock_Collision()
         {
-            NavigateTo("Settings");
-            var saveBtn = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByName("Save Settings"))?.AsButton();
-            Assert.NotNull(saveBtn);
+            // Another program holds config.json open without delete sharing, as a sync or backup tool can, so the
+            // replace fails. Settings reports it and changes nothing on disk; the same Save succeeds once it is released.
+            using var fixture = new AppFixture();
+            const string seed = "https://locked.example.test/";
+            string config = ConfigPath(fixture);
+            OpenSection(fixture, "Providers & Scrapers");
+            Field(fixture, "Scraper Seed URL").AsTextBox().Text = seed;
+            byte[] before = System.IO.File.ReadAllBytes(config);
+            using (new System.IO.FileStream(config, System.IO.FileMode.Open, System.IO.FileAccess.Read, System.IO.FileShare.Read))
+            {
+                SaveAndConfirm(fixture, "Save Error");
+                Assert.Equal(before, System.IO.File.ReadAllBytes(config));
+            }
+            string log = System.IO.Path.Combine(fixture.SandboxPath, "Roaming", "UniversalMediaOS", "app.log");
+            Assert.Contains("Failed to save config synchronously", ReadShared(log), StringComparison.Ordinal);
+
+            SaveAndConfirm(fixture);
+            Assert.Equal(seed, StoredSetting(fixture, "OtherMediaScraperUrl"));
+            Assert.False(System.IO.File.Exists(config + ".tmp"), "A temporary settings file was left behind.");
         }
 
         [Fact(Skip = "Requires an injectable resource monitor; the previous check did not create a low-memory condition.")]
@@ -225,27 +271,39 @@ namespace UniversalMediaOS.Tests.E2E.Tests
             Thread.Sleep(300);
         }
 
+        private static AutomationElement SettingsRoot(AppFixture fixture) =>
+            MainWindowOf(fixture).FindFirstDescendant(cf => cf.ByAutomationId("SettingsView"))
+            ?? throw new InvalidOperationException("Settings is not open.");
+
         private static AutomationElement Field(AppFixture fixture, string name) =>
-            MainWindowOf(fixture).FindFirstDescendant(cf => cf.ByAutomationId("SettingsView"))!
-                .FindFirstDescendant(cf => cf.ByName(name).And(cf.ByControlType(ControlType.Edit)))
+            SettingsRoot(fixture).FindFirstDescendant(cf => cf.ByName(name).And(cf.ByControlType(ControlType.Edit)))
             ?? throw new InvalidOperationException($"Settings field '{name}' is missing.");
 
+        private static string LogSizeText(AppFixture fixture) => System.Linq.Enumerable.FirstOrDefault(
+            SettingsRoot(fixture).FindAllDescendants(cf => cf.ByControlType(ControlType.Text)),
+            text => text.Name.StartsWith("Debug log size: ", StringComparison.Ordinal))?.Name ?? string.Empty;
+
         /// <summary>Saves through the visible Save Settings button and dismisses the confirmation, as a user does.</summary>
-        private static void SaveAndConfirm(AppFixture fixture)
+        private static void SaveAndConfirm(AppFixture fixture, string expected = "Settings Saved")
         {
-            var saves = MainWindowOf(fixture).FindFirstDescendant(cf => cf.ByAutomationId("SettingsView"))!
+            var saves = SettingsRoot(fixture)
                 .FindAllDescendants(cf => cf.ByName("Save Settings").And(cf.ByControlType(ControlType.Button)));
             (System.Linq.Enumerable.FirstOrDefault(saves, button => !button.IsOffscreen) ?? saves[0]).AsButton().Invoke();
+            AnswerMessageBox(fixture, expected, new[] { "Settings Saved", "Save Error", "Validation Error" }, "2");
+        }
 
-            // The confirmation, or the error that replaces it, is a message box owned by the main window.
+        /// <summary>Waits for one of the message boxes the action can show, which is owned by the main window,
+        /// requires the expected one and presses the button with the given Win32 ID (2 OK/Cancel, 6 Yes).</summary>
+        private static void AnswerMessageBox(AppFixture fixture, string expected, string[] possible, string buttonId)
+        {
             Window? dialog = null;
-            Window? Dialog() => System.Linq.Enumerable.FirstOrDefault(
+            Window? Dialog(string[] titles) => System.Linq.Enumerable.FirstOrDefault(
                 System.Linq.Enumerable.Concat(MainWindowOf(fixture).ModalWindows, fixture.App.GetAllTopLevelWindows(fixture.Automation)),
-                window => window.Title is "Settings Saved" or "Save Error" or "Validation Error");
-            Assert.True(SpinWait.SpinUntil(() => (dialog = Dialog()) != null, TimeSpan.FromSeconds(10)), "Saving showed no confirmation.");
-            Assert.True(dialog!.Title == "Settings Saved", $"Saving showed '{dialog.Title}' instead of the confirmation.");
-            dialog.FindFirstDescendant(cf => cf.ByAutomationId("2").And(cf.ByControlType(ControlType.Button)))!.AsButton().Invoke();
-            Assert.True(SpinWait.SpinUntil(() => Dialog() == null, TimeSpan.FromSeconds(5)), "The confirmation did not close.");
+                window => Array.IndexOf(titles, window.Title) >= 0);
+            Assert.True(SpinWait.SpinUntil(() => (dialog = Dialog(possible)) != null, TimeSpan.FromSeconds(10)), $"No '{expected}' message appeared.");
+            Assert.True(dialog!.Title == expected, $"'{dialog.Title}' appeared instead of '{expected}'.");
+            dialog.FindFirstDescendant(cf => cf.ByAutomationId(buttonId).And(cf.ByControlType(ControlType.Button)))!.AsButton().Invoke();
+            Assert.True(SpinWait.SpinUntil(() => Dialog(new[] { expected }) == null, TimeSpan.FromSeconds(5)), $"'{expected}' did not close.");
         }
 
         private static string ConfigPath(AppFixture fixture) =>
