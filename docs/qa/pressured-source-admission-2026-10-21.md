@@ -28,10 +28,36 @@
 
 Designing this case exposed a real defect: a failed journaled commit stranded deferred admission and zeroed the next read. It was repaired first in [a9f0ce2](failed-journaled-commit-2026-10-20.md). Build: zero warnings and errors.
 
+## Hosted checkpoint failure and test repair (later on October 21)
+
+The hosted checkpoint for **0c8f634** ([run 39614476383](https://github.com/tntcool48-dot/UniversalMediaOS/actions/runs/39614476383)) finished **1,400 passed / 1 failed / 22 skipped of 1,423** in 13 min 1 s. The failure was this case: "The pressured source change did not wait." The runner's app log showed:
+
+- all 16 Plays and 16 Pauses;
+- no durable save after the pre-writer 31.7 s;
+- the episode's Open admitted at once;
+- its restore still waiting behind the writer, with no warning or error.
+
+**Cause: the test's assumption, not the app.** A journaled commit applies its own journal revision, and a newer observation of the same unit replaces the older record. The runner's write-through journal writes took longer than one ~90 ms Play/Pause cycle. So the second pause was journaled before the first commit looked its revision up. That commit correctly found its record superseded and skipped SQLite, and no operation held the shared gate behind the writer. Each later commit was superseded the same way. Fewer than 30 operations were ever outstanding, so admission correctly let the source change through. This is the coalescing working as designed. Locally a journal write takes milliseconds, so the first commit always reached the writer first.
+
+**Repair (test only).** After the first pressured pause, the test waits until the journal holds that position, then allows 1 s for the commit's single queued journal lookup. From then on the first commit is inside SQLite behind the writer, and every later operation queues behind the gate, whatever the storage speed.
+
+**Reproduction.** A temporary scratchpad variant held the journal lock in 150 ms pulses for the whole pressure loop, so every journal write took longer than a cycle. The test file was restored afterwards with a matching hash.
+
+| Run | Result | TRX |
+| --- | --- | --- |
+| Unchanged test at the current head | Pass, 14 s | `packaged-source-admission-head-20261021.trx` |
+| One 800 ms lock hold (insufficient emulation: the loop finished before it ended) | Pass with the unchanged test, so discarded as evidence | `packaged-source-admission-slow-journal-before-20261021.trx` |
+| Unchanged test, pulsed slow journal | **Fail**, with the runner's message and log signature: 16 Plays and 16 Pauses, no later durable save, the episode Open admitted at once, its restore waiting, no warnings | `packaged-source-admission-slow-journal-pulses-before-20261021.trx` |
+| Repaired test, pulsed slow journal | **Pass**, 15 s | `packaged-source-admission-slow-journal-pulses-after-20261021.trx` |
+| Repaired test, normal | **Pass**, 15 s | `packaged-source-admission-supersede-fix-20261021.trx` |
+
+A first attempt at the pulsed variant did not compile (the xUnit analyzer rejects a blocking `Wait()`), so its two runs used the previous build. Those results were deleted and are not counted.
+
 ## Limits
 
 - The evidence is FlaUI driving the actual executable on the second monitor, not a human observation.
+- The repaired case is not yet confirmed on a hosted runner; the next checkpoint will show it.
 - The shared 64-operation threshold across players is not exercised; that remains covered by the 20-player automated matrix.
-- The case relies on the transport cycles finishing well before SQLite's 30 s command timeout (asserted under 25 s; 2.3 s locally). Hosted-runner timing is unverified until the next checkpoint.
+- The case relies on the transport cycles finishing well before SQLite's 30 s command timeout (asserted under 25 s; 2.3 s locally before the added wait of about 1 s).
 - Like the 50-second durability case, whether this 14-second case stays in the hosted suite is an open product decision.
 - Real Windows shutdown and portable configuration migration remain open in the same checklist group.

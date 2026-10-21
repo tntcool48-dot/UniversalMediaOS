@@ -115,6 +115,14 @@ public sealed class PackagedSourceAdmissionTests(ITestOutputHelper output)
                 Toggle(toPlaying: true);
                 if (cycle == 1) Thread.Sleep(2000); // Moves the film clearly past its committed position.
                 Toggle(toPlaying: false);
+                if (cycle != 1) continue;
+                // A commit applies its own journal revision. If the next pause is journaled before the first
+                // commit looks its revision up (slow write-through storage), the newer record supersedes it, the
+                // commit skips SQLite and nothing holds the gate. Let the first commit reach the held writer.
+                double firstPressured = Position();
+                Assert.True(SpinWait.SpinUntil(() => ResumeDispatcherContentionTests.PendingPosition(journal, FilmWork, FilmUnit)
+                    is double staged && Math.Abs(staged - firstPressured) <= 1, TimeSpan.FromSeconds(5)), ReadShared(journal));
+                Thread.Sleep(1000); // Its lookup is one queued journal read.
             }
             pressure.Stop();
             // The first blocked commit fails at SQLite's 30-second command timeout, releasing two operations.
