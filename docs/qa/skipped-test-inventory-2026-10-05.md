@@ -4,6 +4,8 @@ The last full baseline (`browser-pip-full-2026-10-04.trx`) contains **22 skipped
 
 This inventory distinguishes existing meaningful coverage from remaining gaps. It does not waive those gaps or complete the packaged release gate. Names below omit the common namespace `UniversalMediaOS.Tests.E2E.Tests`.
 
+**Update, October 21, 2026:** three Settings placeholders are now real UI tests and no longer skipped, so **19** skipped methods remain: nine Downloads, five Search and five Settings. See the [Settings save/restart QA](settings-save-restart-and-protected-keys-2026-10-21.md).
+
 ## Downloads — nine
 
 | Skipped method in `DownloadTests` | Existing evidence and remaining gap |
@@ -28,19 +30,19 @@ This inventory distinguishes existing meaningful coverage from remaining gaps. I
 | `T1_Search_05_Safe_Error_Display_On_Scraper_Offline` | Catalog view-model checks retain cards through later failure and reject stale responses. AniList outage and wider provider failure UI remain open. |
 | `T2_Search_04_Scraper_Returns_Empty_Or_Null` | `CatalogPagingTests.EmptySuccessAndMalformedPayloadAreDistinct` and `CatalogViewModelPagingTests.EmptyFilteredPageKeepsLoadMoreButFailureIsNotNoResults` exercise typed results. The old uncontrolled query did not prove a scraper null-response UI journey. |
 
-## Settings — eight
+## Settings — eight (five still skipped)
 
 | Skipped method in `SettingsTests` | Existing evidence and remaining gap |
 | --- | --- |
-| `T1_Settings_02_Set_Domain_Hot_Swap_URL` | `ConfigurationHardeningTests` assert a consistent settings snapshot and failed-write rollback. Actual Settings edit/save/restart and runtime/script invalidation remain open. |
+| `T1_Settings_02_Set_Domain_Hot_Swap_URL` | **Replaced October 21 by a real test:** the scraper seed URL is edited, saved through the visible button and confirmation, and shown again after a normal close and relaunch. Live switching of an already-open provider tab is not claimed. |
 | `T1_Settings_03_System_Resource_Check_Status_View` | `DependencyHealthTests` verify missing, broken and hung executable outcomes, and partial readiness. Deterministic resource/status UI and physical Health/Repair acceptance remain open. |
-| `T1_Settings_05_Encrypt_and_Save_API_Keys` | `ConfigurationHardeningTests.SetSettings_WritesOneConsistentSnapshot_AndProtectsSecrets` checks ciphertext; `CoreHardeningRegressionTests.ProtectedSettings_MigrateLegacyPlaintextToVersionedCiphertext` and `ProtectedSettings_MigrateLegacyUnmarkedDpapiCiphertext` check migration. The redundant UI placeholder never saved a secret. Real-profile and packaged save/reload gates remain separate. |
+| `T1_Settings_05_Encrypt_and_Save_API_Keys` | **Replaced October 21 by a real test:** a Google Books key entered in Settings is stored as `dpapi:v1:` ciphertext, its plaintext appears nowhere in `config.json`, and it reads back. Unit coverage (`ConfigurationHardeningTests`, the `CoreHardeningRegressionTests` migration cases) is unchanged. Real-profile and packaged save/reload gates remain separate. |
 | `T2_Settings_01_Duplicate_Service_Bootstrapping` | `DependencyHealthTests.ConcurrentExtensionRepairs_DoNotOverlapAndRemainRetryableAfterTimeout` covers extension repair coordination. Duplicate full service bootstrap/startup/shutdown is a distinct remaining gate. |
 | `T2_Settings_02_Log_File_Rotation_Boundary` | No boundary test is established. Production clears oversized logs on startup; the skipped method only located Save Settings. Log growth/rotation acceptance remains open. |
 | `T2_Settings_03_Settings_Lock_Collision` | Configuration rollback and consistent writes are covered, but independent concurrent settings writers/file-lock contention are not established by this placeholder. Remaining gap. |
 | `T2_Settings_04_Low_Memory_Resource_Boundary` | Resource samples and bounded image requests have evidence; no controlled low-memory boundary is established. Remaining gap. |
-| `T2_Settings_05_DPAPI_Cryptography_Failure_Fallback` | Normal encryption/migration tests do not inject DPAPI failure. Preserving secrets and reporting failed protection remain to qualify; a plaintext fallback must not be inferred as acceptable. |
+| `T2_Settings_05_DPAPI_Cryptography_Failure_Fallback` | **Replaced October 21 by a real test of decryption failure:** keys this account cannot decrypt (marked and legacy formats) are reported once, kept byte-identical through an untouched Save, and replaced only by a newly entered key, which is stored protected. Writing it found and fixed the untouched-Save erasure. Encryption failure itself is not injected; by inspection it throws before any setting changes, and its visible outcome remains open. |
 
 ## Tracker disposition
 
-The inventory itself is complete. The original 22 placeholders stay skipped and are never counted as passes. Remaining behavior belongs to the checklist's download, catalog/player, shared reliability and packaged-release rows. Replace specific placeholders with meaningful tests when addressing those behaviors; preserve an explicit exclusion for redundant methods rather than renaming a shallow check as acceptance.
+The inventory itself is complete. The remaining 19 placeholders (of the original 22) stay skipped and are never counted as passes. Remaining behavior belongs to the checklist's download, catalog/player, shared reliability and packaged-release rows. Replace specific placeholders with meaningful tests when addressing those behaviors; preserve an explicit exclusion for redundant methods rather than renaming a shallow check as acceptance.

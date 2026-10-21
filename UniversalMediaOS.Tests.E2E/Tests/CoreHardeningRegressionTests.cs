@@ -300,6 +300,45 @@ public sealed class CoreHardeningRegressionTests
         Assert.Equal("re-entered-token", new DomainHotSwapper(configPath).GetSetting("MalOAuthToken"));
     }
 
+    [Fact]
+    public void ProtectedSettings_SavingUntouchedFieldsKeepsAnotherAccountsCredential()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        using var sandbox = new TemporaryDirectory("UniversalMediaOS-config-dpapi-tests");
+        string configPath = Path.Combine(sandbox.Path, "config.json");
+        string foreign = Convert.ToBase64String(ProtectedData.Protect(
+            Encoding.UTF8.GetBytes("other-account-books-key"), [7, 7, 7], DataProtectionScope.CurrentUser));
+        File.WriteAllText(configPath, JsonSerializer.Serialize(new Dictionary<string, string>
+        {
+            ["GoogleBooksApiKey"] = foreign,
+            ["TmdbLanguage"] = "en-US"
+        }));
+        var config = new DomainHotSwapper(configPath);
+
+        // Settings saves every field; the unreadable key shows as empty and was not edited.
+        Assert.True(config.SetSettings(new Dictionary<string, string>
+        {
+            ["GoogleBooksApiKey"] = config.GetSetting("GoogleBooksApiKey"),
+            ["TmdbLanguage"] = "fr-FR"
+        }));
+        string Stored(string key)
+        {
+            using JsonDocument document = JsonDocument.Parse(File.ReadAllText(configPath));
+            return document.RootElement.GetProperty(key).GetString()!;
+        }
+        Assert.Equal(foreign, Stored("GoogleBooksApiKey"));
+        Assert.Equal("fr-FR", Stored("TmdbLanguage"));
+
+        // A key the user enters replaces it.
+        Assert.True(config.SetSettings(new Dictionary<string, string> { ["GoogleBooksApiKey"] = "replacement-key" }));
+        Assert.StartsWith("dpapi:v1:", Stored("GoogleBooksApiKey"), StringComparison.Ordinal);
+        Assert.Equal("replacement-key", new DomainHotSwapper(configPath).GetSetting("GoogleBooksApiKey"));
+    }
+
     private sealed class IdleExecutor : IDownloadJobExecutor
     {
         public Task<DownloadExecutionResult> ExecuteAsync(

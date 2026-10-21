@@ -267,6 +267,7 @@ namespace UniversalMediaOS.Core.Configuration
 
         public void SetSetting(string key, string value)
         {
+            if (UnchangedProtectedSetting(key, value)) return;
             string storedValue = ProtectSettingValue(key, value);
             bool saved;
             _saveLock.Wait();
@@ -298,9 +299,9 @@ namespace UniversalMediaOS.Core.Configuration
                 return true;
             }
 
-            var protectedSettings = settings.ToDictionary(
-                setting => setting.Key,
-                setting => ProtectSettingValue(setting.Key, setting.Value));
+            var protectedSettings = settings
+                .Where(setting => !UnchangedProtectedSetting(setting.Key, setting.Value))
+                .ToDictionary(setting => setting.Key, setting => ProtectSettingValue(setting.Key, setting.Value));
             bool saved;
             _saveLock.Wait();
             try
@@ -343,6 +344,7 @@ namespace UniversalMediaOS.Core.Configuration
 
         public async Task SetSettingAsync(string key, string value)
         {
+            if (UnchangedProtectedSetting(key, value)) return;
             string storedValue = ProtectSettingValue(key, value);
             bool saved;
             await _saveLock.WaitAsync();
@@ -365,6 +367,11 @@ namespace UniversalMediaOS.Core.Configuration
                 OnSettingChanged(key, value);
             }
         }
+
+        /// <summary>A protected value equal to what callers already read is not rewritten. Settings saves every
+        /// field, and a value saved by another Windows account reads as empty here; it stays until one is entered.</summary>
+        private bool UnchangedProtectedSetting(string key, string value) =>
+            IsProtectedSetting(key) && _domainMap.ContainsKey(key) && GetSetting(key) == value;
 
         private void RestoreSetting(string key, bool existed, string? value)
         {
