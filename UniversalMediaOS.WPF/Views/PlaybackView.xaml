@@ -289,7 +289,7 @@
                                         <Button Content="{helpers:Loc CC}" Command="{Binding ToggleCaptionsCommand}" IsEnabled="{Binding CaptionsAvailable}"
                                                 Style="{StaticResource ControlButtonStyle}" Margin="0,0,6,6"
                                                 AutomationProperties.Name="{helpers:Loc Toggle subtitles}" ToolTip="{helpers:Loc Turn subtitles on or off; keep the selected language}"/>
-                                        <ComboBox ItemsSource="{Binding CaptionOptions}" SelectedItem="{Binding SelectedCaption, Mode=TwoWay}"
+                                        <ComboBox x:Name="CaptionTrackMenu" ItemsSource="{Binding CaptionOptions}" SelectedItem="{Binding SelectedCaption, Mode=TwoWay}"
                                                   ItemTemplate="{StaticResource LocalizedTrackLabel}" ItemContainerStyle="{StaticResource LocalizedTrackItem}" Style="{StaticResource CompactComboBox}" Width="180" Height="34" Margin="0,0,8,6"
                                                   IsEnabled="{Binding CaptionsAvailable}" AutomationProperties.Name="{helpers:Loc Subtitle track}" ToolTip="{helpers:Loc Choose subtitles or turn them off}"/>
                                         <CheckBox Content="{helpers:Loc Auto next}" IsChecked="{Binding AutoPlayNext, Mode=TwoWay}"

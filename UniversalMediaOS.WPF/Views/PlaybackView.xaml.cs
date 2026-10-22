@@ -296,6 +296,8 @@ namespace UniversalMediaOS.WPF.Views
         {
             if (startupResources != null) Resources.MergedDictionaries.Add(startupResources);
             InitializeComponent();
+            // The subtitle menu lives in VLC's separate overlay window; record why it closes.
+            Helpers.DropDownDiagnostics.Attach(CaptionTrackMenu, "Subtitle track menu");
             Loaded += PlaybackView_Loaded;
             Unloaded += PlaybackView_Unloaded;
             DataContextChanged += PlaybackView_DataContextChanged;
@@ -378,7 +380,7 @@ namespace UniversalMediaOS.WPF.Views
             // Keep the existing browser document and subscriptions in that case.
             if (_viewLoaded)
             {
-                RefreshVisibleNativeSurface();
+                RefreshVisibleNativeSurface("view reloaded");
                 return;
             }
 
@@ -398,7 +400,7 @@ namespace UniversalMediaOS.WPF.Views
             if (DataContext is ViewModels.PlaybackViewModel vm)
             {
                 vm.ActivateWatchTogetherPlayback();
-                AttachNativeVideoSurface(vm);
+                AttachNativeVideoSurface(vm, "view loaded");
                 vm.PropertyChanged += Vm_PropertyChanged;
                 vm.WebPlaybackCommandRequested -= Vm_WebPlaybackCommandRequested;
                 vm.WebPlaybackCommandRequested += Vm_WebPlaybackCommandRequested;
@@ -440,7 +442,7 @@ namespace UniversalMediaOS.WPF.Views
             if (IsVisible && DataContext is ViewModels.PlaybackViewModel vm && vm.IsTabActive)
             {
                 vm.ActivateWatchTogetherPlayback();
-                RefreshVisibleNativeSurface();
+                RefreshVisibleNativeSurface("view shown");
                 ShowControlsTemporarily();
             }
             else
@@ -457,7 +459,7 @@ namespace UniversalMediaOS.WPF.Views
 
         private void SurfaceWindow_Activated(object? sender, EventArgs e)
         {
-            RefreshVisibleNativeSurface();
+            RefreshVisibleNativeSurface("app window activated");
             if (IsVisible) ShowControlsTemporarily();
         }
 
@@ -486,7 +488,7 @@ namespace UniversalMediaOS.WPF.Views
                 if (changed && IsLoaded && IsVisible &&
                     DataContext is ViewModels.PlaybackViewModel { IsTabActive: true, IsWebViewActive: false } vm)
                 {
-                    AttachNativeVideoSurface(vm);
+                    AttachNativeVideoSurface(vm, "display changed");
                     vm.RedrawPausedNativeFrame();
                     UpdateControlsLayout();
                 }
@@ -505,13 +507,13 @@ namespace UniversalMediaOS.WPF.Views
             PlaybackRoot_PreviewKeyDown(sender, e);
         }
 
-        private void RefreshVisibleNativeSurface()
+        private void RefreshVisibleNativeSurface(string reason)
         {
             Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
             {
                 if (!_webViewDisposed && !_closedForTab && IsLoaded && IsVisible &&
                     DataContext is ViewModels.PlaybackViewModel { IsTabActive: true } vm)
-                    AttachNativeVideoSurface(vm);
+                    AttachNativeVideoSurface(vm, reason);
             }));
         }
 
@@ -921,7 +923,7 @@ namespace UniversalMediaOS.WPF.Views
                 if (_viewLoaded && !_webViewDisposed)
                 {
                     vm.ActivateWatchTogetherPlayback();
-                    AttachNativeVideoSurface(vm);
+                    AttachNativeVideoSurface(vm, "player changed");
                     vm.PropertyChanged += Vm_PropertyChanged;
                     vm.WebPlaybackCommandRequested -= Vm_WebPlaybackCommandRequested;
                     vm.WebPlaybackCommandRequested += Vm_WebPlaybackCommandRequested;
@@ -1000,7 +1002,7 @@ namespace UniversalMediaOS.WPF.Views
             }
         }
 
-        private void AttachNativeVideoSurface(ViewModels.PlaybackViewModel vm)
+        private void AttachNativeVideoSurface(ViewModels.PlaybackViewModel vm, string reason)
         {
             if (vm.IsDisposed || vm.IsWebViewActive)
             {
@@ -1021,7 +1023,7 @@ namespace UniversalMediaOS.WPF.Views
                 if (VlcPlayer.Template?.FindName("PART_PlayerHost", VlcPlayer) is HwndHost host &&
                     host.Handle != IntPtr.Zero && vm.MediaPlayer.Hwnd != host.Handle)
                     vm.MediaPlayer.Hwnd = host.Handle;
-                AppLogger.Log($"[PlaybackView] Native video surface attached hwnd={vm.MediaPlayer.Hwnd.ToInt64():X}.");
+                AppLogger.Log($"[PlaybackView] Native video surface attached hwnd={vm.MediaPlayer.Hwnd.ToInt64():X}. Trigger: {reason}.");
             }
             catch (Exception ex)
             {

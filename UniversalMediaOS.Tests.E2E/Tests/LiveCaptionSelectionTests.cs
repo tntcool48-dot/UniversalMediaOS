@@ -112,6 +112,18 @@ public sealed class LiveCaptionSelectionTests(ITestOutputHelper output)
         bool? PauseState() => ReadPauseState(Button("Play or pause"));
         bool IsPaused() => PauseState() == true;
         string logPath = Path.Combine(fixture.SandboxPath, "Roaming", "UniversalMediaOS", "app.log");
+        string MenuEvents()
+        {
+            // The app logs each menu open and close with its cause. A close is logged once its burst settles,
+            // and the log is written in the background, so wait briefly for every open to have its close.
+            string events = "";
+            SpinWait.SpinUntil(() =>
+            {
+                events = string.Join("\n", ReadLog(logPath).Split('\n').Where(line => line.Contains("[Menu]", StringComparison.Ordinal)));
+                return events.Split(" opened: ").Length <= events.Split(" closed after ").Length;
+            }, TimeSpan.FromSeconds(2));
+            return events;
+        }
         void WaitForReloadState(string label, int priorLogLength, Stopwatch selectionTimer,
             double minimumPosition, Func<double> maximumPosition)
         {
@@ -183,8 +195,8 @@ public sealed class LiveCaptionSelectionTests(ITestOutputHelper output)
             // native clock/track refreshes instead of clicking immediately.
             Thread.Sleep(2000);
             Snapshot("after-two-second-open-interval");
-            Assert.Equal(ExpandCollapseState.Expanded,
-                Captions()!.Patterns.ExpandCollapse.Pattern.ExpandCollapseState.Value);
+            Assert.True(Captions()!.Patterns.ExpandCollapse.Pattern.ExpandCollapseState.Value == ExpandCollapseState.Expanded,
+                $"The caption menu closed during the open interval before {label}.\n{MenuEvents()}\n{ReadLog(logPath)}");
             // Choice labels follow a language switch through the next caption refresh; wait for the label.
             ComboBoxItem? choice = null;
             Assert.True(SpinWait.SpinUntil(() => (choice = Captions()?.Items.SingleOrDefault(item => item.Text == label)) != null,
@@ -298,7 +310,8 @@ public sealed class LiveCaptionSelectionTests(ITestOutputHelper output)
         string offLabel = arabic ? "إيقاف الترجمة" : "CC Off";
         string onLabel = arabic ? "الإنجليزية (ملف منزل)" : "English (downloaded)";
         SelectCaption(offLabel);
-        Assert.True(SpinWait.SpinUntil(() => Captions()?.SelectedItem?.Text == offLabel, TimeSpan.FromSeconds(3)), ReadLog(logPath));
+        Assert.True(SpinWait.SpinUntil(() => Captions()?.SelectedItem?.Text == offLabel, TimeSpan.FromSeconds(3)),
+            $"The {offLabel} choice did not take.\n{MenuEvents()}\n{ReadLog(logPath)}");
         WaitForReloadState("CC Off", priorLogLength, selectionTimer, position - 750,
             () => position + (paused ? 1500 : elapsed.Elapsed.TotalMilliseconds + 2500));
         Thread.Sleep(600); // Includes another decoder time/track refresh.
@@ -312,7 +325,8 @@ public sealed class LiveCaptionSelectionTests(ITestOutputHelper output)
         priorLogLength = ReadLog(logPath).Length;
         selectionTimer.Restart();
         SelectCaption(onLabel);
-        Assert.True(SpinWait.SpinUntil(() => Captions()?.SelectedItem?.Text == onLabel, TimeSpan.FromSeconds(3)), ReadLog(logPath));
+        Assert.True(SpinWait.SpinUntil(() => Captions()?.SelectedItem?.Text == onLabel, TimeSpan.FromSeconds(3)),
+            $"The {onLabel} choice did not take.\n{MenuEvents()}\n{ReadLog(logPath)}");
         WaitForReloadState("English (downloaded)", priorLogLength, selectionTimer, position - 750,
             () => position + (paused ? 2500 : elapsed.Elapsed.TotalMilliseconds + 3500));
         Thread.Sleep(600);
@@ -323,6 +337,7 @@ public sealed class LiveCaptionSelectionTests(ITestOutputHelper output)
         Assert.Equal(originalBytes, new FileInfo(video).Length);
         Assert.Equal(originalWriteTime, File.GetLastWriteTimeUtc(video));
         await HoldForVisualObservation("on-restored");
+        if (dropdown) output.WriteLine(MenuEvents());
     }
 
     private static string ReadLog(string path)
