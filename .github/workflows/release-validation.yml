@@ -13,7 +13,8 @@ on:
 jobs:
   build-and-test:
     runs-on: windows-latest
-    timeout-minutes: 20
+    # The real-app journeys put the test step near 18 minutes; the limit still stops a stuck run.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
