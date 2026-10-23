@@ -109,18 +109,25 @@ namespace UniversalMediaOS.Core.Archiving
                         return false;
                     }
                     token.ThrowIfCancellationRequested();
-                    var bestTorrent = SelectBestBatchTorrent(torrents, animeTitle, log, audioPreference);
+                    // A feed entry without a valid hash, or whose hash conflicts with its magnet, cannot be pinned
+                    // or transferred. Skip it rather than let a better-seeded bad entry fail every attempt.
+                    var releaseHashes = new Dictionary<TorrentResult, string>(ReferenceEqualityComparer.Instance);
+                    foreach (var torrent in torrents)
+                    {
+                        string? hash = TryGetConsistentReleaseHash(torrent);
+                        if (hash != null) releaseHashes.Add(torrent, hash);
+                        else log($"[P2P Season Downloader] Skipped \"{torrent.Title}\": its magnet link has no valid transfer hash or conflicts with the feed's hash.");
+                    }
+                    if (releaseHashes.Count == 0)
+                        throw new TorrentDownloadOwnershipException("No release found has a magnet link with a valid transfer hash. No torrent transfer was started; existing files were retained.");
+                    var bestTorrent = SelectBestBatchTorrent(releaseHashes.Keys.ToList(), animeTitle, log, audioPreference);
                     if (bestTorrent == null)
                     {
                         log("[P2P Season Downloader] ERROR: Could not identify a valid healthy batch torrent matching parameters.");
                         return false;
                     }
                     log($"[P2P Season Downloader] SELECTED BATCH: \"{bestTorrent.Title}\" ({bestTorrent.Seeders} seeders) from {bestTorrent.Source}");
-                    string selectedHash = GetReleaseHash(bestTorrent.MagnetLink);
-                    string feedHash = bestTorrent.InfoHash?.Trim() ?? "";
-                    if (feedHash.Length == 32) feedHash = Base32ToHex(feedHash.ToUpperInvariant());
-                    if (feedHash.Length != 0 && !selectedHash.Equals(feedHash, StringComparison.OrdinalIgnoreCase))
-                        throw new TorrentDownloadOwnershipException("The selected release's hash conflicts with its magnet link. No torrent transfer was started; existing files were retained.");
+                    string selectedHash = releaseHashes[bestTorrent];
                     selection = new DownloadReleaseSelection(selectedHash, bestTorrent.MagnetLink, bestTorrent.Title,
                         animeTitle, NormalizeAudioPreference(audioPreference), _downloadDir);
                 }
@@ -353,6 +360,16 @@ namespace UniversalMediaOS.Core.Archiving
                 throw new TorrentDownloadOwnershipException("The original release's physical download folder could not be verified. Existing files were retained; restore its folder before retrying.");
         }
 
+        private static string? TryGetConsistentReleaseHash(TorrentResult result)
+        {
+            string hash;
+            try { hash = GetReleaseHash(result.MagnetLink); }
+            catch (TorrentDownloadOwnershipException) { return null; }
+            string feedHash = result.InfoHash?.Trim() ?? "";
+            if (feedHash.Length == 32) feedHash = Base32ToHex(feedHash.ToUpperInvariant());
+            return feedHash.Length == 0 || hash.Equals(feedHash, StringComparison.OrdinalIgnoreCase) ? hash : null;
+        }
+
         private static string GetReleaseHash(string magnetLink)
         {
             try
@@ -523,7 +540,9 @@ namespace UniversalMediaOS.Core.Archiving
                         ? result.MagnetLink
                         : result.Title,
                     StringComparer.OrdinalIgnoreCase)
-                .Select(group => group.OrderByDescending(item => item.Seeders).First())
+                // A duplicate whose magnet conflicts with the claimed hash must not displace a consistent one.
+                .Select(group => group.OrderByDescending(item => TryGetConsistentReleaseHash(item) != null)
+                    .ThenByDescending(item => item.Seeders).First())
                 .ToList();
         }
 
