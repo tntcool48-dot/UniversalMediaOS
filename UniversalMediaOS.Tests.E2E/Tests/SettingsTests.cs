@@ -125,6 +125,76 @@ namespace UniversalMediaOS.Tests.E2E.Tests
                 TimeSpan.FromSeconds(5)), HealthText(fixture));
         }
 
+        [Fact]
+        public void Settings_RepairServicesKeepsKeyboardFocusThroughItsBusyState()
+        {
+            // Repair services is unavailable while it runs. A keyboard user who pressed it must still be on it
+            // afterwards, so Tab continues to the next control instead of starting over from the window.
+            using var fixture = new AppFixture(mangaPagePng: null, initializeProfile: SeedPinnedUBlock);
+            OpenSection(fixture, "Services");
+            var repair = SettingsButton(fixture, "Repair services");
+            FocusWithKeyboard(fixture, repair);
+
+            FlaUI.Core.Input.Keyboard.Type(FlaUI.Core.WindowsAPI.VirtualKeyShort.ENTER);
+            Assert.True(SpinWait.SpinUntil(() => !repair.IsEnabled, TimeSpan.FromSeconds(10)), "Repair services showed no busy state.");
+            Assert.True(SpinWait.SpinUntil(() => repair.IsEnabled, TimeSpan.FromSeconds(150)), "Repair services did not finish.");
+            Assert.True(SpinWait.SpinUntil(() => repair.Properties.HasKeyboardFocus.ValueOrDefault, TimeSpan.FromSeconds(5)),
+                "Keyboard focus after Repair services: " + Describe(fixture.Automation.FocusedElement()));
+
+            FlaUI.Core.Input.Keyboard.Type(FlaUI.Core.WindowsAPI.VirtualKeyShort.TAB);
+            var focused = fixture.Automation.FocusedElement();
+            Assert.True(focused?.Name == "Save Settings", "Tab after Repair services reached " + Describe(focused));
+        }
+
+        [Fact]
+        public void Settings_SaveKeepsKeyboardFocusAfterItsConfirmation()
+        {
+            // Save is unavailable while it runs, and its confirmation opens meanwhile. Closing the confirmation
+            // with the keyboard must leave focus on Save, not on the section's scroll pane.
+            using var fixture = new AppFixture();
+            OpenSection(fixture, "Services");
+            var save = System.Linq.Enumerable.First(SettingsRoot(fixture).FindAllDescendants(
+                cf => cf.ByName("Save Settings").And(cf.ByControlType(ControlType.Button))), button => !button.IsOffscreen).AsButton();
+            FocusWithKeyboard(fixture, save);
+
+            FlaUI.Core.Input.Keyboard.Type(FlaUI.Core.WindowsAPI.VirtualKeyShort.ENTER);
+            Window? dialog = null;
+            Assert.True(SpinWait.SpinUntil(() => (dialog = System.Linq.Enumerable.FirstOrDefault(MainWindowOf(fixture).ModalWindows,
+                window => window.Title == "Settings Saved")) != null, TimeSpan.FromSeconds(10)), "No 'Settings Saved' confirmation appeared.");
+            dialog!.SetForeground();
+            FlaUI.Core.Input.Keyboard.Type(FlaUI.Core.WindowsAPI.VirtualKeyShort.ENTER);
+            Assert.True(SpinWait.SpinUntil(() => MainWindowOf(fixture).ModalWindows.Length == 0, TimeSpan.FromSeconds(5)),
+                "The confirmation did not close from the keyboard.");
+
+            Assert.True(SpinWait.SpinUntil(() => save.IsEnabled && save.Properties.HasKeyboardFocus.ValueOrDefault, TimeSpan.FromSeconds(5)),
+                "Keyboard focus after Save: " + Describe(fixture.Automation.FocusedElement()));
+        }
+
+        /// <summary>Installs the pinned uBlock manifest in the profile, so Repair verifies it instead of downloading.</summary>
+        private static void SeedPinnedUBlock(string root)
+        {
+            string extension = System.IO.Path.Combine(root, "Local", "UniversalMediaOS", "Extensions", "ublock-origin");
+            System.IO.Directory.CreateDirectory(extension);
+            System.IO.File.WriteAllText(System.IO.Path.Combine(extension, "manifest.json"), "{\"version\":\"1.71.0\"}");
+        }
+
+        private static Button SettingsButton(AppFixture fixture, string name) =>
+            SettingsRoot(fixture).FindFirstDescendant(cf => cf.ByName(name).And(cf.ByControlType(ControlType.Button)))?.AsButton()
+            ?? throw new InvalidOperationException($"Settings button '{name}' is missing.");
+
+        /// <summary>Puts keyboard focus on an element of the foreground main window, as Tab would.</summary>
+        private static void FocusWithKeyboard(AppFixture fixture, AutomationElement element)
+        {
+            MainWindowOf(fixture).SetForeground();
+            element.Focus();
+            Assert.True(SpinWait.SpinUntil(() => element.Properties.HasKeyboardFocus.ValueOrDefault, TimeSpan.FromSeconds(5)),
+                $"'{element.Name}' did not take keyboard focus; focus is on " + Describe(fixture.Automation.FocusedElement()));
+        }
+
+        private static string Describe(AutomationElement? element) => element == null ? "nothing" :
+            $"{element.Properties.ControlType.ValueOrDefault} '{element.Properties.Name.ValueOrDefault}' " +
+            $"id='{element.Properties.AutomationId.ValueOrDefault}' class='{element.Properties.ClassName.ValueOrDefault}'";
+
         private static string HealthText(AppFixture fixture) => System.Linq.Enumerable.FirstOrDefault(
             SettingsRoot(fixture).FindAllDescendants(cf => cf.ByControlType(ControlType.Text)),
             text => text.Name.StartsWith("Python scraper: ", StringComparison.Ordinal))?.Name ?? string.Empty;

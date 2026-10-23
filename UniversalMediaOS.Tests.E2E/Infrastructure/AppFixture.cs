@@ -28,7 +28,8 @@ namespace UniversalMediaOS.Tests.E2E.Infrastructure
             Func<System.Net.HttpListenerRequest, int>? mangaPageStatus = null,
             Action<string>? initializeProfile = null,
             Func<System.Net.HttpListenerRequest, (int Status, string Body)>? malLibraryFeed = null,
-            Func<System.Net.HttpListenerRequest, (int Status, string Body)>? aniListFeed = null)
+            Func<System.Net.HttpListenerRequest, (int Status, string Body)>? aniListFeed = null,
+            System.Collections.Generic.IReadOnlyDictionary<string, string?>? environment = null)
         {
             // 1. Start Mock HTTP Server
             _server = new MockHttpServer(mangaPagePng: mangaPagePng, mangaChapterFeed: mangaChapterFeed,
@@ -136,6 +137,12 @@ namespace UniversalMediaOS.Tests.E2E.Infrastructure
                 UseShellExecute = false
             };
             psi.Environment["UNIVERSAL_MEDIA_OS_DATA_ROOT"] = SandboxPath;
+            // Only the launched app sees these (PATH, proxies); null removes an inherited variable.
+            foreach (var variable in environment ?? new Dictionary<string, string?>())
+            {
+                if (variable.Value == null) psi.Environment.Remove(variable.Key);
+                else psi.Environment[variable.Key] = variable.Value;
+            }
             _launchStartInfo = psi;
 
             // Launch the application
