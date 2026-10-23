@@ -860,7 +860,8 @@ namespace UniversalMediaOS.WPF.ViewModels
                     if (lease == null || !SameInput() || _preferredCaptionKey != option.Key) return;
                     var previousIds = MediaPlayer.SpuDescription.Select(t => t.Id).ToHashSet();
                     previousIds.UnionWith((_currentMedia?.Tracks ?? []).Where(t => t.TrackType == TrackType.Text).Select(t => t.Id));
-                    if (!MediaPlayer.AddSlave(MediaSlaveType.Subtitle, new Uri(lease.Path).AbsoluteUri, select: false)) return;
+                    if (Helpers.NativeLocalPath.ToLocation(lease.Path) is not { } leaseLocation ||
+                        !MediaPlayer.AddSlave(MediaSlaveType.Subtitle, leaseLocation, select: false)) return;
                     // Once attached, retain the owned file until this input stops,
                     // even if the user changes caption choice during native loading.
                     _preparedEmbeddedCaptions[option.Key] = (option, -1, lease);
@@ -976,14 +977,14 @@ namespace UniversalMediaOS.WPF.ViewModels
             _lastMediaCookie = effectiveCookie;
             _lastMediaRequestHeaders = capturedHeaders;
             _lastMediaSubtitles = MediaSubtitleTrack.Copy(subtitles)
-                .Concat(_lastLocalCaptionPaths.Select(path =>
+                .Concat(_lastLocalCaptionPaths.Where(path => Helpers.NativeLocalPath.ToLocation(path) != null).Select(path =>
                 {
                     string fileName = Path.GetFileNameWithoutExtension(path);
                     string language = fileName.EndsWith(".en", StringComparison.OrdinalIgnoreCase) ||
                         fileName.EndsWith(".eng", StringComparison.OrdinalIgnoreCase) ? "en" :
                         fileName.EndsWith(".ar", StringComparison.OrdinalIgnoreCase) ||
                         fileName.EndsWith(".ara", StringComparison.OrdinalIgnoreCase) ? "ar" : string.Empty;
-                    return new MediaSubtitleTrack(new Uri(Path.GetFullPath(path)).AbsoluteUri,
+                    return new MediaSubtitleTrack(Helpers.NativeLocalPath.ToLocation(path)!,
                         string.IsNullOrEmpty(language) ? "Downloaded subtitles" :
                         language == "en" ? "English (downloaded)" : "Arabic (downloaded)", language);
                 })).ToArray();
@@ -1051,12 +1052,19 @@ namespace UniversalMediaOS.WPF.ViewModels
                 }
             }
 
+            string? localLocation = null;
             if (isLocal)
             {
                 path = path.Replace('/', System.IO.Path.DirectorySeparatorChar);
                 if (!System.IO.File.Exists(path))
                 {
                     ReportPlaybackError($"The video file no longer exists: {path}");
+                    return;
+                }
+                localLocation = Helpers.NativeLocalPath.ToLocation(path);
+                if (localLocation == null)
+                {
+                    ReportPlaybackError("This file's folder path is too long for the native player. Move it, or choose a shorter download folder in Settings.");
                     return;
                 }
             }
@@ -1070,9 +1078,8 @@ namespace UniversalMediaOS.WPF.ViewModels
 
                 if (isLocal)
                 {
-                    string escapedUri = new Uri(path).AbsoluteUri;
-                    AppLogger.Log($"Converting local path to escaped Uri for LibVLC: '{escapedUri}'");
-                    _currentMedia = new Media(_libVLC, escapedUri, FromType.FromLocation);
+                    AppLogger.Log($"Converting local path to escaped Uri for LibVLC: '{localLocation}'");
+                    _currentMedia = new Media(_libVLC, localLocation!, FromType.FromLocation);
                 }
                 else
                 {
