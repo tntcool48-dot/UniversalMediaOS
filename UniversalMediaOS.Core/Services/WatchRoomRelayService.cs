@@ -4,7 +4,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Net.Sockets;
 using System.Net.WebSockets;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -16,11 +18,14 @@ namespace UniversalMediaOS.Core.Services
     public sealed class WatchRoomRelayService : IDisposable
     {
         internal const int MaximumIncomingMessageBytes = WatchTogetherClientService.MaximumIncomingMessageBytes;
+        private const string WebSocketAcceptGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+        private const int MaximumHandshakeBytes = 16 * 1024;
+        private static readonly TimeSpan HandshakeTimeout = TimeSpan.FromSeconds(10);
         private readonly ConcurrentDictionary<string, WatchRoom> _rooms = new(StringComparer.OrdinalIgnoreCase);
-        private HttpListener? _listener;
+        private TcpListener? _listener;
         private CancellationTokenSource? _cts;
 
-        public bool IsRunning => _listener?.IsListening == true;
+        public bool IsRunning => _listener != null;
         public int Port { get; private set; }
         public string ListenUrl { get; private set; } = string.Empty;
 
@@ -33,8 +38,9 @@ namespace UniversalMediaOS.Core.Services
 
             Port = Math.Clamp(port <= 0 ? 8000 : port, 1, 65535);
             _cts = CancellationTokenSource.CreateLinkedTokenSource(token);
-            _listener = StartListener(Port);
-            _ = Task.Run(() => AcceptLoopAsync(_cts.Token));
+            TcpListener listener = StartListener(Port);
+            _listener = listener;
+            _ = Task.Run(() => AcceptLoopAsync(listener, _cts.Token));
             AppLogger.Log($"Watch Together relay listening at {ListenUrl}");
             return Task.CompletedTask;
         }
@@ -42,7 +48,7 @@ namespace UniversalMediaOS.Core.Services
         public void Stop()
         {
             try { _cts?.Cancel(); } catch { }
-            try { _listener?.Close(); } catch { }
+            try { _listener?.Stop(); } catch { }
 
             foreach (var room in _rooms.Values)
             {
@@ -57,45 +63,41 @@ namespace UniversalMediaOS.Core.Services
             ListenUrl = string.Empty;
         }
 
-        private HttpListener StartListener(int port)
+        private TcpListener StartListener(int port)
         {
-            Exception? lastException = null;
-            foreach (string prefix in new[]
-                     {
-                         $"http://+:{port}/",
-                         $"http://*:{port}/",
-                         $"http://localhost:{port}/",
-                         $"http://127.0.0.1:{port}/"
-                     })
+            // HttpListener needs an administrator URL reservation for anything but localhost,
+            // so an ordinary user's relay rejected LAN and VPN peers. A socket listener does not.
+            bool dualMode = Socket.OSSupportsIPv6;
+            var listener = new TcpListener(dualMode ? IPAddress.IPv6Any : IPAddress.Any, port);
+            try
             {
-                var listener = new HttpListener();
-                try
+                if (dualMode)
                 {
-                    listener.Prefixes.Add(prefix);
-                    listener.Start();
-                    ListenUrl = prefix.Replace("http://+:", "http://localhost:").Replace("http://*:", "http://localhost:").TrimEnd('/');
-                    return listener;
+                    listener.Server.DualMode = true;
                 }
-                catch (Exception ex)
-                {
-                    lastException = ex;
-                    try { listener.Close(); } catch { }
-                }
+
+                listener.Start();
+            }
+            catch (SocketException ex)
+            {
+                listener.Stop();
+                throw new InvalidOperationException($"Unable to start Watch Together relay on port {port}: {ex.Message}", ex);
             }
 
-            throw new InvalidOperationException($"Unable to start Watch Together relay on port {port}: {lastException?.Message}");
+            ListenUrl = $"http://localhost:{port}";
+            return listener;
         }
 
-        private async Task AcceptLoopAsync(CancellationToken token)
+        private async Task AcceptLoopAsync(TcpListener listener, CancellationToken token)
         {
-            while (!token.IsCancellationRequested && _listener?.IsListening == true)
+            while (!token.IsCancellationRequested)
             {
-                HttpListenerContext context;
+                TcpClient client;
                 try
                 {
-                    context = await _listener.GetContextAsync();
+                    client = await listener.AcceptTcpClientAsync(token);
                 }
-                catch (Exception) when (token.IsCancellationRequested || _listener?.IsListening != true)
+                catch (Exception) when (token.IsCancellationRequested || !ReferenceEquals(_listener, listener))
                 {
                     break;
                 }
@@ -105,37 +107,124 @@ namespace UniversalMediaOS.Core.Services
                     continue;
                 }
 
-                _ = Task.Run(() => HandleContextAsync(context, token), token);
+                _ = Task.Run(() => HandleClientAsync(client, token));
             }
         }
 
-        private async Task HandleContextAsync(HttpListenerContext context, CancellationToken token)
+        private async Task HandleClientAsync(TcpClient client, CancellationToken token)
         {
-            string roomId = ResolveRoomId(context.Request.Url?.AbsolutePath ?? string.Empty);
-            if (!context.Request.IsWebSocketRequest || string.IsNullOrWhiteSpace(roomId))
+            using (client)
             {
-                context.Response.StatusCode = 404;
-                context.Response.Close();
-                return;
+                NetworkStream stream = client.GetStream();
+                string roomId;
+                try
+                {
+                    using var handshakeCts = CancellationTokenSource.CreateLinkedTokenSource(token);
+                    handshakeCts.CancelAfter(HandshakeTimeout);
+                    UpgradeRequest? request = await ReadUpgradeRequestAsync(stream, handshakeCts.Token);
+                    roomId = ResolveRoomId(request?.Path ?? string.Empty);
+                    if (request == null || !request.IsWebSocketUpgrade || string.IsNullOrWhiteSpace(roomId))
+                    {
+                        await WriteHandshakeAsync(stream, "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", handshakeCts.Token);
+                        return;
+                    }
+
+                    if (!request.Version.Equals("13", StringComparison.Ordinal) || !IsValidKey(request.Key))
+                    {
+                        await WriteHandshakeAsync(stream, "HTTP/1.1 400 Bad Request\r\nSec-WebSocket-Version: 13\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", handshakeCts.Token);
+                        return;
+                    }
+
+                    string accept = Convert.ToBase64String(SHA1.HashData(Encoding.ASCII.GetBytes(request.Key + WebSocketAcceptGuid)));
+                    await WriteHandshakeAsync(stream, $"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n", handshakeCts.Token);
+                }
+                catch (Exception ex) when (ex is IOException or SocketException or OperationCanceledException or ObjectDisposedException)
+                {
+                    if (!token.IsCancellationRequested)
+                    {
+                        AppLogger.Log($"Watch Together WebSocket handshake failed: {ex.Message}", "WARNING");
+                    }
+
+                    return;
+                }
+
+                using WebSocket socket = WebSocket.CreateFromStream(stream, isServer: true, subProtocol: null, WebSocket.DefaultKeepAliveInterval);
+                var connection = new WatchConnection(socket, Guid.NewGuid().ToString("N"));
+                var room = _rooms.GetOrAdd(roomId, _ => new WatchRoom());
+                await ConnectAsync(roomId, room, connection, token);
+                await ReceiveLoopAsync(roomId, room, connection, token);
+            }
+        }
+
+        private static async Task<UpgradeRequest?> ReadUpgradeRequestAsync(Stream stream, CancellationToken token)
+        {
+            // Read byte by byte so no WebSocket frame bytes are consumed past the header.
+            var header = new List<byte>(512);
+            byte[] next = new byte[1];
+            while (!EndsWithBlankLine(header))
+            {
+                if (header.Count >= MaximumHandshakeBytes || await stream.ReadAsync(next, token) == 0)
+                {
+                    return null;
+                }
+
+                header.Add(next[0]);
             }
 
-            WebSocketContext wsContext;
-            try
+            string[] lines = Encoding.ASCII.GetString(header.ToArray()).Split("\r\n");
+            string[] requestLine = lines[0].Split(' ');
+            if (requestLine.Length != 3 || !requestLine[0].Equals("GET", StringComparison.Ordinal))
             {
-                wsContext = await context.AcceptWebSocketAsync(null);
-            }
-            catch (Exception ex)
-            {
-                AppLogger.Log($"Watch Together WebSocket accept failed: {ex.Message}", "WARNING");
-                context.Response.StatusCode = 500;
-                context.Response.Close();
-                return;
+                return null;
             }
 
-            var connection = new WatchConnection(wsContext.WebSocket, Guid.NewGuid().ToString("N"));
-            var room = _rooms.GetOrAdd(roomId, _ => new WatchRoom());
-            await ConnectAsync(roomId, room, connection, token);
-            await ReceiveLoopAsync(roomId, room, connection, token);
+            var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string line in lines.Skip(1))
+            {
+                int colon = line.IndexOf(':');
+                if (colon > 0)
+                {
+                    headers[line[..colon].Trim()] = line[(colon + 1)..].Trim();
+                }
+            }
+
+            string target = requestLine[1];
+            string path = Uri.TryCreate(target, UriKind.Absolute, out var absolute) &&
+                          absolute.Scheme.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+                ? absolute.AbsolutePath
+                : target.Split('?', '#')[0];
+            bool upgrade = HasToken(headers, "Upgrade", "websocket") && HasToken(headers, "Connection", "upgrade");
+            return new UpgradeRequest(
+                path,
+                upgrade,
+                headers.GetValueOrDefault("Sec-WebSocket-Key") ?? string.Empty,
+                headers.GetValueOrDefault("Sec-WebSocket-Version") ?? string.Empty);
+        }
+
+        private static bool EndsWithBlankLine(List<byte> header)
+        {
+            int count = header.Count;
+            return count >= 4 &&
+                   header[count - 4] == '\r' && header[count - 3] == '\n' &&
+                   header[count - 2] == '\r' && header[count - 1] == '\n';
+        }
+
+        private static bool HasToken(Dictionary<string, string> headers, string name, string token)
+        {
+            return headers.TryGetValue(name, out string? value) &&
+                   value.Split(',').Any(part => part.Trim().Equals(token, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static bool IsValidKey(string key)
+        {
+            Span<byte> decoded = stackalloc byte[32];
+            return Convert.TryFromBase64String(key, decoded, out int length) && length == 16;
+        }
+
+        private static async Task WriteHandshakeAsync(Stream stream, string response, CancellationToken token)
+        {
+            await stream.WriteAsync(Encoding.ASCII.GetBytes(response), token);
+            await stream.FlushAsync(token);
         }
 
         private async Task ConnectAsync(string roomId, WatchRoom room, WatchConnection connection, CancellationToken token)
@@ -341,6 +430,8 @@ namespace UniversalMediaOS.Core.Services
                 var result = await socket.ReceiveAsync(buffer, token);
                 if (result.MessageType == WebSocketMessageType.Close)
                 {
+                    // Answer the close frame; a client waiting on its close handshake would otherwise hang.
+                    await CloseOutputSafelyAsync(socket, WebSocketCloseStatus.NormalClosure, "Left room");
                     return null;
                 }
 
@@ -432,6 +523,8 @@ namespace UniversalMediaOS.Core.Services
             Stop();
             _cts?.Dispose();
         }
+
+        private sealed record UpgradeRequest(string Path, bool IsWebSocketUpgrade, string Key, string Version);
 
         private sealed class WatchRoom
         {

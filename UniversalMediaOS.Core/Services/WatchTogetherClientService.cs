@@ -31,6 +31,7 @@ namespace UniversalMediaOS.Core.Services
         private readonly SemaphoreSlim _sendLock = new(1, 1);
 
         internal const int MaximumIncomingMessageBytes = 64 * 1024;
+        private static readonly TimeSpan CloseHandshakeTimeout = TimeSpan.FromSeconds(3);
 
         public event EventHandler<WatchTogetherMessageEventArgs>? MessageReceived;
         public event EventHandler? StateChanged;
@@ -130,7 +131,10 @@ namespace UniversalMediaOS.Core.Services
                 {
                     if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
                     {
-                        await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Disconnected", CancellationToken.None);
+                        // A relay behind a dropped VPN link, or an older relay, may never answer the
+                        // close frame; leaving the room must not wait for it indefinitely.
+                        using var closeDeadline = new CancellationTokenSource(CloseHandshakeTimeout);
+                        await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Disconnected", closeDeadline.Token);
                     }
                 }
                 catch
