@@ -170,7 +170,7 @@ public sealed class TemporaryEpisodeWatchService
                     : numberedSpecial ? FileMatchesNumberedSpecial(result.Title, episode, titles)
                     : !SeasonConflicts(title, result.Title) &&
                       titles.Any(t => SeasonDownloader.TitleLooksLikeMatch(result.Title, StripSeasonMarker(t))) &&
-                      !Regex.IsMatch(result.Title, @"\b(movie|ova|ona|special)\b", RegexOptions.IgnoreCase) &&
+                      !Regex.IsMatch(result.Title, @"\b(movies?|ovas?|onas?|oads?|specials?)\b", RegexOptions.IgnoreCase) &&
                       (!Regex.IsMatch(result.Title, EpisodeMarkerPattern, RegexOptions.IgnoreCase) || EpisodeMatches(result.Title, episode))) &&
                 (audio == "Dub" ? HasDubLabel(result.Title) : !HasDubLabel(result.Title) ||
                     Regex.IsMatch(result.Title, @"\bdual[\s._-]*audio\b", RegexOptions.IgnoreCase)))

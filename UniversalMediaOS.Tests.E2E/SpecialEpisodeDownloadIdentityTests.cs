@@ -162,6 +162,31 @@ public sealed class SpecialEpisodeDownloadIdentityTests
     }
 
     [Theory]
+    [InlineData("[Group] No Game No Life - 01 [1080p].mkv", true)]
+    // Live October 23: the separate SPECIAL entry's release must not become TV episode 1.
+    [InlineData("[anon] No Game No Life Specials - 01 [1080p].mkv", false)]
+    [InlineData("[Group] No Game No Life OVAs - 01 [1080p].mkv", false)]
+    [InlineData("[Group] No Game No Life OAD - 01 [1080p].mkv", false)]
+    [InlineData("[Group] No Game No Life Movies - 01 [1080p].mkv", false)]
+    public async Task OrdinaryEpisodeDiscoveryRejectsPluralSpecialLabels(string release, bool expected)
+    {
+        string root = Path.Combine(Path.GetTempPath(), "UniversalMediaOS.Tests", Guid.NewGuid().ToString("N"));
+        Task<List<TorrentResult>> Search(string _, Action<string>? __, CancellationToken token) =>
+            Task.FromResult(new List<TorrentResult>
+            {
+                new() { Title = release, MagnetLink = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567", Seeders = 5 }
+            });
+        try
+        {
+            var service = new TemporaryEpisodeWatchService(Search, root);
+            var results = await service.FindCandidatesAsync("No Game No Life", [], 1, "Sub", _ => { },
+                CancellationToken.None, "TV", 12);
+            Assert.Equal(expected ? 1 : 0, results.Count);
+        }
+        finally { Directory.Delete(root); }
+    }
+
+    [Theory]
     [InlineData("[Group] " + Title + " OVA.mkv", true)]
     [InlineData("[Group] " + Alias + ".mkv", true)]
     [InlineData("[Group] " + Title + " - 01.mkv", true)]
