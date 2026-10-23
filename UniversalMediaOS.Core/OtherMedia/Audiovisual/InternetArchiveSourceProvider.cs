@@ -454,6 +454,13 @@ public sealed class InternetArchiveSourceProvider : IAudiovisualSourceProvider
         AudiovisualMediaKind kind)
     {
         string title = GetScalarString(metadata, "title");
+        int? year = GetYear(metadata);
+        IReadOnlyList<string> alternateTitles = GetStringValues(metadata, "alternate_titles");
+        if (WithoutOwnYearSuffix(title, year) is { } bareTitle)
+        {
+            alternateTitles = [.. alternateTitles, bareTitle];
+        }
+
         return new AudiovisualIdentity
         {
             Kind = kind,
@@ -471,10 +478,27 @@ public sealed class InternetArchiveSourceProvider : IAudiovisualSourceProvider
             },
             Title = title,
             OriginalTitle = GetScalarString(metadata, "original_title"),
-            AlternateTitles = GetStringValues(metadata, "alternate_titles"),
-            Year = GetYear(metadata),
+            AlternateTitles = alternateTitles,
+            Year = year,
             TmdbId = GetInteger(metadata, "tmdb_id", "tmdbid")
         };
+    }
+
+    /// <summary>Uploaders often append the item's own year to its title ("Title (1964)", "Title [1950]",
+    /// "Title 1964"). Only a suffix that repeats the item's own year is formatting; any other year stays
+    /// part of the title, and a title that is only a year is kept whole.</summary>
+    private static string? WithoutOwnYearSuffix(string title, int? year)
+    {
+        if (!year.HasValue)
+        {
+            return null;
+        }
+
+        string normalized = ExactAudiovisualMatcher.NormalizeTitle(title);
+        string suffix = " " + year.Value.ToString(CultureInfo.InvariantCulture);
+        return normalized.Length > suffix.Length && normalized.EndsWith(suffix, StringComparison.Ordinal)
+            ? normalized[..^suffix.Length]
+            : null;
     }
 
     private static AudiovisualIdentity MergeIdentity(
