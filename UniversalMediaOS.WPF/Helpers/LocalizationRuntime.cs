@@ -194,6 +194,7 @@ namespace UniversalMediaOS.WPF.Helpers
             ["Open media URL or path"] = "فتح رابط الوسائط أو مسار الملف",
             ["Choose a local media file"] = "اختيار ملف وسائط محلي",
             ["Seek video"] = "تغيير موضع الفيديو",
+            ["{0} of {1}"] = "{0} من {1}",
             ["Seek to a position in the video."] = "الانتقال إلى موضع في الفيديو.",
             ["Playback volume"] = "مستوى صوت التشغيل",
             ["Adjust playback volume."] = "ضبط مستوى صوت التشغيل.",

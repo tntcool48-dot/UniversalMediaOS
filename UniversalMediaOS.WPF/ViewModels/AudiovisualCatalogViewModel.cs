@@ -64,12 +64,17 @@ public sealed partial class AudiovisualCardViewModel : ObservableObject
 public sealed record AudiovisualSeasonChoice(int? Number)
 {
     public string DisplayName => Number.HasValue ? $"Season {Number}" : "Unassigned season";
+
+    // Screen readers name an unopened selector's item by ToString().
+    public override string ToString() => DisplayName;
 }
 
 public sealed record AudiovisualEpisodeChoice(AudiovisualEpisodeMetadata Metadata)
 {
     public string DisplayName => Metadata.Unit?.EpisodeNumber is { } number
         ? $"{number}. {Metadata.Title}" : $"{(Metadata.IsSpecial ? "Special" : "Unnumbered")}: {Metadata.Title}";
+
+    public override string ToString() => DisplayName;
 }
 
 public sealed class AudiovisualSourceViewModel
