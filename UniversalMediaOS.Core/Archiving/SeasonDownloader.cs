@@ -333,6 +333,13 @@ namespace UniversalMediaOS.Core.Archiving
             catch (TorrentDownloadOwnershipException) { throw; }
             catch (TorrentContentOutsideFolderException) { throw; }
             catch (ReleaseAudioUnavailableException) { throw; }
+            catch (InvalidDataException ex)
+            {
+                // Only qBittorrent's lookup and monitor raise this here: its transfer of this release belongs to
+                // another folder or hash. Retrying cannot change that, so the job shows the reason.
+                log($"[P2P Season Downloader] {ex.Message}");
+                throw new TorrentDownloadOwnershipException(ex.Message + " Existing files were retained.", ex);
+            }
             catch (Exception ex)
             {
                 log($"[P2P Season Downloader] CRITICAL ERROR during batch process: {ex.Message}");

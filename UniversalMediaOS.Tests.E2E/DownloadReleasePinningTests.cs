@@ -226,6 +226,24 @@ public sealed class DownloadReleasePinningTests
         Assert.Equal(release, job.ReleaseSelection?.Title);
     }
 
+    /// <summary>An older or manually added qBittorrent transfer of the same release in another folder is left
+    /// untouched; the row must say so instead of a generic failure that Retry repeats.</summary>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public async Task QBitTransferInAnotherFolderShowsWhyTheJobStopped(int lookupsBeforeMove)
+    {
+        await using var fixture = new PinningFixture { ForeignAfterLookups = lookupsBeforeMove };
+        fixture.MarkPresent(PinningFixture.HashA);
+        using var queue = fixture.Queue();
+        var job = queue.Enqueue("Pinning Show", "Sub");
+        await WaitForFailure(queue, job.Id);
+
+        Assert.Contains("belongs to a different download folder", job.StatusMessage, StringComparison.Ordinal);
+        Assert.Empty(fixture.AddedHashes);
+        Assert.DoesNotContain(fixture.Messages, message => message.Contains("Booting built-in", StringComparison.Ordinal));
+    }
+
     private static async Task WaitForFailure(DownloadQueueService queue, Guid id)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -252,6 +270,10 @@ public sealed class DownloadReleasePinningTests
         public string? MalformedItem { get; set; }
         public bool OfferValidRelease { get; set; } = true;
         public string FeedTitle { get; set; } = "Pinning Show Season 1 [Batch]";
+        /// <summary>After this many transfer lookups, qBittorrent reports present transfers in the foreign folder.</summary>
+        public int ForeignAfterLookups { get; set; } = int.MaxValue;
+        private int _lookups;
+        public void MarkPresent(string hash) => _present.Add(hash);
         public ConcurrentQueue<string> AddedHashes { get; } = new();
         public ConcurrentQueue<string> ResumedHashes { get; } = new();
         public ConcurrentQueue<string> QueueSnapshotsAtAdd { get; } = new();
@@ -321,9 +343,10 @@ public sealed class DownloadReleasePinningTests
                     else if (path == "/api/v2/torrents/info")
                     {
                         string hash = context.Request.QueryString["hashes"] ?? "";
+                        string savePath = Interlocked.Increment(ref _lookups) > ForeignAfterLookups ? ForeignDirectory : DownloadDirectory;
                         body = _present.Contains(hash) ? JsonSerializer.Serialize(new[] { new
                         {
-                            hash, save_path = DownloadDirectory, progress = 1, state = "stoppedUP"
+                            hash, save_path = savePath, progress = 1, state = "stoppedUP"
                         } }) : "[]";
                     }
                     else if (path == "/api/v2/torrents/add")
