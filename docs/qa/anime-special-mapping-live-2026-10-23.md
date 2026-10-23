@@ -46,3 +46,18 @@ Repeating the live discovery with the repaired code now returns the exact releas
 | Hellsing Ultimate 05 | `[Tsubaki-Subs] Hellsing Ultimate OVA - 05` | 0 |
 
 No wrong episode or work was accepted. The fifth target, Lost Girls 01, was then re-run after the resolution-tag addition. It accepted exactly `[BlurayDesuYo] Shingeki no Kyojin - Lost Girls OVA - 01 (DVD 1024x576 AAC 10bit)` (7 seeders) and `[AoTs] ... Lost Girls OVA - 01` (0 seeders). Two releases in the same results stayed out: the unlabelled `[O-IM] Shingeki no Kyojin Lost Girls - 01` and the `16.5 ... OVA - 1 [ENGSUB].ass` subtitle file. A repaired re-run of *Attack on Titan OVA* (18397, OVA/3) episode 1 saw all of these in one result set. It accepted only `[DeadFish] Shingeki no Kyojin - 01 - OVA [DVD][480p][AAC].mp4`, which matches its romaji title *Shingeki no Kyojin OVA*. It rejected both Lost Girls episode-1 releases, `Kuinaki Sentaku - 01 - OVA`, every batch/range and the underscore-separated `Shingeki_no_Kyojin_OVA_-_01` files. *No Regrets* (20811) episode 1 remains honestly unmatched: its only labelled single release omits the catalog's `Gaiden`.
+
+## Ordinary episodes no longer take a plural-labelled special
+
+Reviewing the change exposed a wrong-work acceptance in the ordinary (TV) feed filter, which existed before this batch. Its special exclusion matched only singular `movie/ova/ona/special`. A TV request for *No Game No Life* episode 1 therefore accepted `[anon] No Game No Life Specials - 01 [1080p].mkv`, a live release of the separate SPECIAL entry 20769, and also `OVAs`, `OAD` and `Movies` forms. The new regression failed **4 / 5** (only the plain `- 01` control passed). The filter now also excludes `movies`, `ovas`, `onas`, `oad(s)` and `specials`. The affected and related download scope then passed **173 / 173**, including the existing download-routing regressions.
+
+## Bounded real transfers through the production pipeline
+
+The production `TemporaryEpisodeWatchService.DownloadAsync` ran live against Nyaa and real peers. It used an owned scratch data root and a 25-minute cap, and held the shared desktop lock in case of a firewall prompt. No app window was opened.
+
+**Attack on Titan: Lost Girls, episode 1 (Sub): honestly unavailable.** The run took 64 seconds and transferred no payload.
+- `[BlurayDesuYo] ... Lost Girls OVA - 01` (7 seeders) was rejected at the torrent-metadata stage. Its metadata names `Shingeki no Kyou`**`jin`** while the feed and catalog say `Kyojin`. A romanization difference is not whole-title evidence, and no transliteration was added.
+- `[AoTs] ... Lost Girls OVA - 01` has an exact single-file name (391,512,217 bytes) but no peers. Its metadata timed out at the existing 60-second limit.
+- Both owned job folders were removed. The result was the existing *No matching episode could be downloaded and verified* error.
+
+The metadata for `[DKB] ... Coleus no Yume - E01 (OVA)` drops the `(OVA)` label (`... - E01 [1080p][HEVC x265 10bit][Multi-Subs].mkv`), so that release stays rejected at the metadata stage by the unchanged label rule.
