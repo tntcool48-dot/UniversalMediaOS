@@ -330,7 +330,7 @@ public sealed class InternetArchiveSourceProvider : IAudiovisualSourceProvider
                 return null;
             }
 
-            string? fileName = SelectVideoFile(files, candidateIdentity.Title, candidateUnit);
+            string? fileName = SelectVideoFile(files, candidateIdentity, candidateUnit);
             if (string.IsNullOrWhiteSpace(fileName))
             {
                 return null;
@@ -552,8 +552,9 @@ public sealed class InternetArchiveSourceProvider : IAudiovisualSourceProvider
             : identity;
     }
 
-    private static string? SelectVideoFile(JsonElement files, string itemTitle, AudiovisualUnit itemUnit)
+    private static string? SelectVideoFile(JsonElement files, AudiovisualIdentity item, AudiovisualUnit itemUnit)
     {
+        string itemTitle = item.Title;
         return files
             .EnumerateArray()
             .Where(file => file.ValueKind == JsonValueKind.Object)
@@ -565,7 +566,8 @@ public sealed class InternetArchiveSourceProvider : IAudiovisualSourceProvider
                 Size = GetLong(file, "size")
             })
             .Where(file => IsSupportedVideoFile(file.Name, file.Format) &&
-                !IsSupplementalVideo(file.Name, itemTitle) && !HasConflictingFileUnit(file.Name, itemTitle, itemUnit))
+                !IsSupplementalVideo(file.Name, itemTitle) && !HasConflictingFileUnit(file.Name, itemTitle, itemUnit) &&
+                !NamesAnotherFilm(file.Name, item))
             .OrderByDescending(file => file.Source.Equals("original", StringComparison.OrdinalIgnoreCase))
             .ThenByDescending(file => Path.GetExtension(file.Name).Equals(".mp4", StringComparison.OrdinalIgnoreCase))
             .ThenByDescending(file => file.Size)
@@ -604,6 +606,31 @@ public sealed class InternetArchiveSourceProvider : IAudiovisualSourceProvider
             observedName = observedName.Replace(" " + observedTitle + " ", " ", StringComparison.Ordinal);
         }
         return observedName;
+    }
+
+    /// <summary>Whether a file's own name declares another film: a release year other than the item's beside
+    /// words that do not include the item's title, such as The_Saint's_Girl_Friday_1953.mp4 uploaded as
+    /// His Girl Friday (1940). A different year beside the item's own title (a re-release or restoration)
+    /// and a bare number (an upload ID) do not.</summary>
+    private static bool NamesAnotherFilm(string fileName, AudiovisualIdentity item)
+    {
+        string label = " " + ExactAudiovisualMatcher.NormalizeTitle(Path.ChangeExtension(fileName, null)) + " ";
+        string[] observedTitles = new[] { item.Title, item.OriginalTitle }
+            .Concat(item.AlternateTitles)
+            .Select(ExactAudiovisualMatcher.NormalizeTitle)
+            .Where(title => title.Length > 0)
+            .ToArray();
+        if (item.Year is not int itemYear || observedTitles.Length == 0 ||
+            observedTitles.Any(title => label.Contains(" " + title + " ", StringComparison.Ordinal)))
+        {
+            return false;
+        }
+
+        string[] tokens = label.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        bool otherYear = tokens.Any(token => token.Length == 4 &&
+            int.TryParse(token, NumberStyles.None, CultureInfo.InvariantCulture, out int year) &&
+            year >= 1880 && year <= DateTime.UtcNow.Year + 1 && year != itemYear);
+        return otherYear && tokens.Any(token => token.Length >= 3 && token.All(char.IsLetter));
     }
 
     private static bool HasConflictingFileUnit(string fileName, string itemTitle, AudiovisualUnit itemUnit)
