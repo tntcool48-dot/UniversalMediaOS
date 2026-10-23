@@ -208,6 +208,8 @@ namespace UniversalMediaOS.Core.Archiving
                         if (success)
                         {
                             var relativePaths = await _qbit.GetTorrentFilesAsync(infoHash, token);
+                            if (TorrentFileContainment.FindOutside(relativePaths.Select(file => file.Name), _downloadDir) != null)
+                                throw new TorrentContentOutsideFolderException("qBittorrent reports a file outside the download folder; it was not checked or played. Its files were left in place.");
                             foreach (var p in relativePaths)
                             {
                                 string fullPath = Path.Combine(_downloadDir, p.Name);
@@ -322,6 +324,7 @@ namespace UniversalMediaOS.Core.Archiving
             catch (InsufficientDownloadSpaceException) { throw; }
             catch (NativeTorrentStorageException) { throw; }
             catch (TorrentDownloadOwnershipException) { throw; }
+            catch (TorrentContentOutsideFolderException) { throw; }
             catch (Exception ex)
             {
                 log($"[P2P Season Downloader] CRITICAL ERROR during batch process: {ex.Message}");
@@ -881,6 +884,11 @@ namespace UniversalMediaOS.Core.Archiving
             }
             catch (InsufficientDownloadSpaceException) { throw; }
             catch (NativeTorrentStorageException) { throw; }
+            catch (TorrentContentOutsideFolderException ex)
+            {
+                log($"[MonoTorrent] Error: {ex.Message}");
+                throw;
+            }
             catch (Exception ex)
             {
                 log($"[MonoTorrent] Error: {ex.Message}");
@@ -898,7 +906,7 @@ namespace UniversalMediaOS.Core.Archiving
         private void ThrowIfOutsideDownloadDirectory(TorrentManager manager)
         {
             if (TorrentFileContainment.FindOutside(manager.Files, _downloadDir) != null)
-                throw new InvalidDataException("The torrent lists a file outside the download folder; it was not started.");
+                throw new TorrentContentOutsideFolderException("The torrent lists a file outside the download folder; it was not started.");
         }
 
         private static bool MatchesRequestedHashes(Torrent torrent, MagnetLink magnet) =>

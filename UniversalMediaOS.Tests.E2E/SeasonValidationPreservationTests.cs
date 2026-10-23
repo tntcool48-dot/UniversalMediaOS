@@ -39,17 +39,7 @@ public sealed class SeasonValidationPreservationTests
     public async Task ReadableExactReportedFileStillCompletesAndRetainsItsBytes()
     {
         await using var fixture = new CompletedTransfer(false, ".avi");
-        var start = new ProcessStartInfo("ffmpeg")
-        {
-            UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true
-        };
-        foreach (string argument in new[] { "-v", "error", "-f", "lavfi", "-i", "testsrc=size=320x180:rate=10",
-            "-t", "5", "-an", "-c:v", "rawvideo", "-pix_fmt", "bgr24", "-y", fixture.PreservedFile })
-            start.ArgumentList.Add(argument);
-        using var encoder = Process.Start(start)!;
-        var errors = encoder.StandardError.ReadToEndAsync();
-        await encoder.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(20));
-        Assert.True(encoder.ExitCode == 0, await errors);
+        await EncodeReadableAviAsync(fixture.PreservedFile);
         byte[] before = await File.ReadAllBytesAsync(fixture.PreservedFile);
         Assert.True(before.Length > 5 * 1024 * 1024);
         using var downloader = new SeasonDownloader(fixture.Configuration);
@@ -59,6 +49,55 @@ public sealed class SeasonValidationPreservationTests
             token: cancellation.Token, audioPreference: "Sub"));
         Assert.Equal(fixture.PreservedFile, downloader.LastCompletedVideoPath);
         Assert.Equal(before, await File.ReadAllBytesAsync(fixture.PreservedFile));
+    }
+
+    /// <summary>qBittorrent's file list names where its transfer wrote. A name that resolves outside the download
+    /// folder must not be probed, reported as the completed episode or played after download.</summary>
+    [Theory]
+    [InlineData("parent")]
+    [InlineData("absolute")]
+    [InlineData("root-relative")]
+    public async Task QBitFileReportedOutsideTheDownloadFolderIsNeitherValidatedNorCompleted(string form)
+    {
+        await using var fixture = new CompletedTransfer(false, ".avi");
+        string outside = Path.Combine(fixture.Root, "outside", "episode-1.avi");
+        Directory.CreateDirectory(Path.GetDirectoryName(outside)!);
+        await EncodeReadableAviAsync(outside);
+        byte[] before = await File.ReadAllBytesAsync(outside);
+        fixture.ReportedName = form switch
+        {
+            "parent" => @"..\outside\episode-1.avi",
+            "absolute" => outside,
+            _ => outside[(Path.GetPathRoot(outside)!.Length - 1)..]
+        };
+        using var downloader = new SeasonDownloader(fixture.Configuration);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var messages = new List<string>();
+
+        bool? completed = null;
+        var error = await Record.ExceptionAsync(async () => completed = await downloader.DownloadSeasonAsync(
+            "Preservation Show", messages.Add, token: cancellation.Token, audioPreference: "Sub"));
+
+        Assert.True(error != null, $"Not refused: completed={completed}, completed path={downloader.LastCompletedVideoPath}.");
+        Assert.Contains("outside the download folder", error.Message, StringComparison.Ordinal);
+        Assert.Null(downloader.LastCompletedVideoPath);
+        Assert.DoesNotContain(messages, message => message.Contains("Validating", StringComparison.Ordinal));
+        Assert.Equal(before, await File.ReadAllBytesAsync(outside));
+    }
+
+    private static async Task EncodeReadableAviAsync(string path)
+    {
+        var start = new ProcessStartInfo("ffmpeg")
+        {
+            UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true
+        };
+        foreach (string argument in new[] { "-v", "error", "-f", "lavfi", "-i", "testsrc=size=320x180:rate=10",
+            "-t", "5", "-an", "-c:v", "rawvideo", "-pix_fmt", "bgr24", "-y", path })
+            start.ArgumentList.Add(argument);
+        using var encoder = Process.Start(start)!;
+        var errors = encoder.StandardError.ReadToEndAsync();
+        await encoder.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(20));
+        Assert.True(encoder.ExitCode == 0, await errors);
     }
 
     [Fact]
@@ -86,8 +125,10 @@ public sealed class SeasonValidationPreservationTests
         private readonly CancellationTokenSource _lifetime = new();
         private readonly Task _server;
         private readonly string _root;
-        private readonly string _reportedFile;
         private readonly string? _previousDataRoot;
+        public string Root => _root;
+        /// <summary>The file name qBittorrent reports, relative to its save path.</summary>
+        public string ReportedName { get; set; }
         public string PreservedFile { get; }
         public string ManagedProbePath => Path.Combine(_root, "Local", "UniversalMediaOS", "Services", "ffprobe.exe");
         public DomainHotSwapper Configuration { get; }
@@ -97,7 +138,7 @@ public sealed class SeasonValidationPreservationTests
             _root = Path.Combine(Path.GetTempPath(), "UniversalMediaOS-season-validation-" + Guid.NewGuid().ToString("N"));
             string downloads = Path.Combine(_root, "downloads");
             string filename = "episode-1" + extension;
-            _reportedFile = missingReportedPath ? "reported/" + filename : filename;
+            ReportedName = missingReportedPath ? "reported/" + filename : filename;
             PreservedFile = Path.Combine(downloads,
                 missingReportedPath ? "unrelated/" + filename : filename);
             Directory.CreateDirectory(Path.GetDirectoryName(PreservedFile)!);
@@ -144,7 +185,7 @@ public sealed class SeasonValidationPreservationTests
                     }
                     else if (path == "/api/v2/torrents/files")
                     {
-                        body = $"[{{\"name\":\"{_reportedFile}\",\"size\":{new FileInfo(PreservedFile).Length}}}]";
+                        body = JsonSerializer.Serialize(new[] { new { name = ReportedName, size = File.Exists(PreservedFile) ? new FileInfo(PreservedFile).Length : 0 } });
                     }
                     else if (path is "/api/v2/torrents/start" or "/api/v2/torrents/resume") body = "";
                     else
