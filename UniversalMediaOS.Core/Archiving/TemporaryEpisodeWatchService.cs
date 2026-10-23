@@ -506,6 +506,7 @@ public sealed class TemporaryEpisodeWatchService
         string file = Path.GetFileName(name);
         if (VideoExtensions.Contains(Path.GetExtension(file), StringComparer.OrdinalIgnoreCase))
             file = Path.GetFileNameWithoutExtension(file);
+        file = file.Replace('_', ' '); // Older releases separate every word with underscores.
         if (!Regex.IsMatch(file, @"\b(?:ova|specials?)\b", RegexOptions.IgnoreCase) ||
             Regex.IsMatch(file, @"\b(?:batch|complete|movie|ona|tv)\b|\b(?:ova|specials?)\s*\d|" +
                 @"\b(?:season\s*\d+|s\d{1,2}(?:e\d+)?|\d+(?:st|nd|rd|th)\s+season)\b", RegexOptions.IgnoreCase))
