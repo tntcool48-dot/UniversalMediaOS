@@ -61,3 +61,13 @@ The production `TemporaryEpisodeWatchService.DownloadAsync` ran live against Nya
 - Both owned job folders were removed. The result was the existing *No matching episode could be downloaded and verified* error.
 
 The metadata for `[DKB] ... Coleus no Yume - E01 (OVA)` drops the `(OVA)` label (`... - E01 [1080p][HEVC x265 10bit][Multi-Subs].mkv`), so that release stays rejected at the metadata stage by the unchanged label rule.
+
+**KONOSUBA 3 BONUS STAGE (AniList 181244, OVA/2), episode 1 (Sub): completed.** The firewall now has inbound Allow rules for `dotnet.exe`, so this run raised no prompt and opened no window, and it ran without the desktop lock.
+- **Accepted release:** `[DKB] Kono Subarashii Sekai ni Shukufuku wo! 3 Bonus Stage - E01 (OVA)[1080p][HEVC x265 10bit][Multi-Subs]`, 2 seeders.
+- **Metadata:** the torrent name keeps the whole romaji title, the `(OVA)` label and `E01`. It lists one video, so the sole-video rule selected it and only that file was prioritised (`Downloading only episode 1 (552 MiB)`).
+- **Transfer:** 20:27:46 → 20:35:01 UTC, **438 seconds**. The completed file is **579,171,988 bytes**, equal to its metadata length. SHA-256 `F7D434A60F2FCA081FC0909B0EAD440266FA1D733DFC47EEB8D4F7BA1F0AB99F`.
+- **Production checks:** the existing ffprobe verification passed (video, audio, selectable subtitles, so no caption notice), and the file was published to the owned job as `episode-0001.mkv` under the catalog unit, not the provider label.
+- **Independent ffprobe:** 1920×1080 HEVC, **1,470.078 s**, AAC tagged `jpn` "Japanese", and five ASS subtitle tracks (`eng` English, `spa`, `por`, `ara`, `rus`). These tags do not prove spoken Japanese or rendered English cues.
+- **Cleanup:** releasing the final lease deleted the owned job folder (`job folder exists=False`), so no test media remains.
+
+This qualifies one real numbered multi-episode OVA transfer through the production feed → metadata → sole-video → verification → publish → release pipeline. It does not qualify in-app native playback, physical controls, captions or spoken audio for this file. No visible app journey was run for it.
