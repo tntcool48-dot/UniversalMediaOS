@@ -486,7 +486,10 @@
                                            TextWrapping="Wrap"
                                            Margin="0,4,0,14"/>
 
-                                <ItemsControl ItemsSource="{Binding DubAvailabilityProvidersList}" Margin="0,0,0,14">
+                                <!-- The list is not a Tab stop itself (empty, it was an unnamed stop); its rows' controls are. -->
+                                <ItemsControl ItemsSource="{Binding DubAvailabilityProvidersList}" Margin="0,0,0,14"
+                                              Focusable="False"
+                                              AutomationProperties.Name="Dub availability providers">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
                                             <Border BorderBrush="{DynamicResource BorderSubtle}" BorderThickness="0,0,0,1" Padding="0,0,0,12" Margin="0,0,0,12">

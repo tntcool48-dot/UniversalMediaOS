@@ -56,6 +56,69 @@ namespace UniversalMediaOS.Tests.E2E.Tests
         }
 
         [Fact]
+        public void Settings_TabReachesEverySectionControlInOrderWithoutUnnamedStops()
+        {
+            // From each section's button, Tab must visit every visible control of that section once, in the order
+            // they are laid out, and never stop on something a screen reader can only call "pane" or "group".
+            using var fixture = new AppFixture();
+            var problems = new System.Collections.Generic.List<string>();
+            foreach (string section in new[] { "Appearance", "Services", "qBittorrent", "MAL", "Providers & Scrapers", "Notifications", "Privacy", "Language" })
+            {
+                OpenSection(fixture, section);
+                var settings = SettingsRoot(fixture);
+                var navigation = settings.FindFirstDescendant(cf => cf.ByName(section).And(cf.ByControlType(ControlType.Button)))!;
+                var expected = System.Linq.Enumerable.ToList(System.Linq.Enumerable.Where(settings.FindAllDescendants(),
+                    control => control.Properties.IsKeyboardFocusable.ValueOrDefault && control.IsEnabled &&
+                               !control.Properties.IsOffscreen.ValueOrDefault && !IsNavigation(settings, control) &&
+                               control.ControlType is not (ControlType.Thumb or ControlType.ScrollBar or ControlType.Pane or ControlType.Group or ControlType.Custom)));
+                FocusWithKeyboard(fixture, navigation);
+
+                var visited = new System.Collections.Generic.List<AutomationElement>();
+                for (int press = 0; press < 80; press++)
+                {
+                    FlaUI.Core.Input.Keyboard.Type(FlaUI.Core.WindowsAPI.VirtualKeyShort.TAB);
+                    Thread.Sleep(60);
+                    var focused = fixture.Automation.FocusedElement();
+                    if (focused == null) { problems.Add($"{section}: focus went nowhere after {visited.Count} stops."); break; }
+                    if (IsNavigation(settings, focused)) continue; // the remaining section buttons come first
+                    if (!IsWithin(settings, focused)) break;       // left Settings: the section is done
+                    if (System.Linq.Enumerable.Any(visited, seen => fixture.Automation.Compare(seen, focused)))
+                    { problems.Add($"{section}: Tab returned to {Describe(focused)} before leaving Settings."); break; }
+                    if (string.IsNullOrWhiteSpace(focused.Name))
+                        problems.Add($"{section}: unnamed Tab stop {Describe(focused)}.");
+                    visited.Add(focused);
+                }
+
+                foreach (var control in expected)
+                    if (!System.Linq.Enumerable.Any(visited, seen => fixture.Automation.Compare(seen, control)))
+                        problems.Add($"{section}: Tab never reached {Describe(control)}.");
+                // Layout order: the reached controls appear in the same order as in the view's own tree.
+                var order = System.Linq.Enumerable.ToList(System.Linq.Enumerable.Select(visited,
+                    seen => expected.FindIndex(control => fixture.Automation.Compare(control, seen))));
+                for (int i = 1; i < order.Count; i++)
+                    if (order[i] >= 0 && order[i - 1] >= 0 && order[i] < order[i - 1])
+                        problems.Add($"{section}: Tab moved back from {Describe(visited[i - 1])} to {Describe(visited[i])}.");
+            }
+            Assert.True(problems.Count == 0, string.Join(Environment.NewLine, problems));
+        }
+
+        /// <summary>The section buttons in the Settings sidebar (188 px wide at 100% scale).</summary>
+        private static bool IsNavigation(AutomationElement settings, AutomationElement element) =>
+            element.ControlType == ControlType.Button && Array.IndexOf(SettingsSections, element.Name) >= 0 &&
+            IsWithin(settings, element) && element.Properties.BoundingRectangle.ValueOrDefault.Left < settings.BoundingRectangle.Left + 200;
+
+        private static readonly string[] SettingsSections =
+            ["Appearance", "Services", "qBittorrent", "MAL", "Providers & Scrapers", "Notifications", "Privacy", "Language"];
+
+        private static bool IsWithin(AutomationElement root, AutomationElement element)
+        {
+            var walker = root.Automation.TreeWalkerFactory.GetControlViewWalker();
+            for (var current = element; current != null; current = walker.GetParent(current))
+                if (root.Automation.Compare(current, root)) return true;
+            return false;
+        }
+
+        [Fact]
         public void Settings_AutoManageCheckbox_CanBeToggledAndRestored()
         {
             try
