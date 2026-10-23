@@ -279,6 +279,32 @@ public sealed class AutomaticResolutionRegressionTests
         });
     }
 
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData("und", false)]
+    [InlineData("eng", false)]
+    [InlineData("jpn", true)]
+    public async Task NativeSubWithoutAReportedServerChoiceKeepsItsAudioUnverified(string? language, bool japaneseDeclared)
+    {
+        // Direct media on the episode page, or several changed player frames,
+        // leave the provider's server choice unknown rather than Sub.
+        var scraper = new StubResolver
+        {
+            Result = new ScraperStreamResult("https://example.com/episode.m3u8", null, null, null, null, null, false, null)
+            {
+                AudioLanguages = [language!],
+                Subtitles = [new MediaSubtitleTrack("https://captions.example/en.vtt", "English", "en")]
+            }
+        };
+        await WithRouter(scraper, async router =>
+        {
+            var source = await router.ResolveBestSourceAsync("Fixture", "2", "", audioPreference: "sub");
+            Assert.NotNull(source);
+            Assert.Equal(SourceTier.Tier1_PythonScraper, source.Tier);
+            Assert.Equal(japaneseDeclared ? "" : "Audio language unverified.", source.AudioNotice);
+        });
+    }
+
     private static async Task WithRouter(StubResolver scraper, Func<TripleNetHandoff, Task> assertion)
     {
         string root = Path.Combine(Path.GetTempPath(), "UniversalMediaOS.Tests", Guid.NewGuid().ToString("N"));
