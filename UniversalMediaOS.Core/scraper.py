@@ -79,29 +79,64 @@ BLOCKED_SITE_KEYWORDS = (
 
 LOG_URL_RE = re.compile(r"https?://[^\s'\"<>]+", re.I)
 LOG_URL_TRAILING_PUNCTUATION = ")]},;.!"
-LOG_HEX_TOKEN_RE = re.compile(r"^[a-f0-9]{32,}$", re.I)
-LOG_BASE64URL_TOKEN_RE = re.compile(r"^[a-z0-9_-]{40,}$", re.I)
+# Keep these rules in step with LogSanitizer.cs; tools/tests/fixtures/log-url-redaction.json
+# is the shared contract both implementations are tested against.
+LOG_TOKEN_RUN_RE = re.compile(r"[A-Za-z0-9_+-]+")
+LOG_HEX_TOKEN_RE = re.compile(r"^[a-f0-9]{16,}$", re.I)
+LOG_MEDIA_EXTENSION_RE = re.compile(r"\.(?:m3u8?|mpd|mp4|m4[sav]|ts|aac|vtt|srt|webm|key)$", re.I)
+LOG_CREDENTIAL_ROUTE_KEYS = frozenset((
+    "token", "tokens", "sig", "sign", "signature", "hmac", "hash", "auth", "key", "apikey", "api_key",
+    "access_token", "secret", "expires", "expiry", "exp", "policy", "session", "sid", "jwt"))
+
+
+def log_token_run_is_opaque(run):
+    """Recognize signatures, JWT parts and encoded blobs inside one path segment."""
+    def classes(text):
+        return (any(char.isupper() for char in text), any(char.islower() for char in text),
+                any(char.isdigit() for char in text))
+
+    if LOG_HEX_TOKEN_RE.fullmatch(run) and (len(run) >= 32 or (
+            any(char.isdigit() for char in run) and any(char.isalpha() for char in run))):
+        return True
+    if run.startswith("eyJ") and len(run) >= 16:
+        return True
+    if len(run) >= 40 and all(classes(run)) and len(set(run)) >= 16:
+        return True
+    for word in re.split(r"[_+-]", run):
+        if len(word) >= 20 and all(classes(word)):
+            # Random text switches between upper, lower and digit far more often
+            # than camel-case titles such as NightOfTheLivingDead1968 do.
+            kinds = ["u" if char.isupper() else "l" if char.islower() else "d" for char in word]
+            changes = sum(1 for left, right in zip(kinds, kinds[1:]) if left != right)
+            if changes * 2 >= len(word) - 1:
+                return True
+    return False
+
+
+def log_path_segment_is_sensitive(segment, previous_segment):
+    if not segment:
+        return False
+    if "://" in segment or "=" in segment:
+        return True
+    if previous_segment.lower() in LOG_CREDENTIAL_ROUTE_KEYS:
+        return True
+    return any(log_token_run_is_opaque(run) for run in LOG_TOKEN_RUN_RE.findall(segment))
 
 
 def redact_log_urls(message):
     """Retain useful URL routes without leaking signed queries or path tokens."""
     def redact_path(path):
         segments = path.split("/")
+        previous = ""
         for index, raw_segment in enumerate(segments):
             try:
                 segment = unquote(raw_segment)
             except (TypeError, ValueError):
                 segment = raw_segment
-            looks_hex = bool(LOG_HEX_TOKEN_RE.fullmatch(segment))
-            looks_base64url = (
-                bool(LOG_BASE64URL_TOKEN_RE.fullmatch(segment))
-                and any(char.islower() for char in segment)
-                and any(char.isupper() for char in segment)
-                and any(char.isdigit() for char in segment)
-                and len(set(segment)) >= 16
-            )
-            if looks_hex or looks_base64url:
-                segments[index] = "<redacted>"
+            if log_path_segment_is_sensitive(segment, previous):
+                extension = LOG_MEDIA_EXTENSION_RE.search(segment)
+                segments[index] = "<redacted>" + (extension.group(0) if extension else "")
+            previous = segment
         return "/".join(segments)
 
     def redact_malformed(value):
@@ -133,11 +168,20 @@ def redact_log_urls(message):
                 host = f"{host}:{parts.port}"
             query = "<redacted>" if parts.query else ""
             fragment = "<redacted>" if parts.fragment else ""
-            return urlunsplit((parts.scheme, host, redact_path(parts.path), query, fragment)) + suffix
+            redacted = urlunsplit((parts.scheme, host, redact_path(parts.path), query, fragment))
+            if content[-1:] in ("?", "#") and not redacted.endswith(content[-1]):
+                # An earlier pass left this marker in front of "<redacted>".
+                redacted += content[-1]
+            return redacted + suffix
         except (TypeError, ValueError):
             return redact_malformed(content) + suffix
 
     return LOG_URL_RE.sub(replace, str(message))
+
+
+def log_url(url, limit=160):
+    """Shorten a URL for a log line only after redaction, so no token stub survives."""
+    return redact_log_urls(url)[:limit]
 
 
 def log(message):
@@ -1266,7 +1310,7 @@ def validate_media_payload(url, headers, result=None, deadline=None):
         if ok and content_type.lower().startswith("image/"):
             log(f"  Verified MPEG-TS bytes despite Content-Type={content_type}")
         if not ok:
-            log(f"  Media payload rejected status={resp.status_code} type={content_type} bytes={len(data)} url={url[:160]}")
+            log(f"  Media payload rejected status={resp.status_code} type={content_type} bytes={len(data)} url={log_url(url)}")
         return ok
     except Exception as e:
         log(f"  Media payload validation failed: {e}")
@@ -1298,12 +1342,12 @@ def validate_hls_result(url, headers, result=None, inspect_alternate_audio=True,
         final_url = str(getattr(resp, "url", current_url) or current_url)
         text = resp.text if hasattr(resp, "text") else ""
         if resp.status_code >= 400 or not is_safe_public_url(final_url) or not text.lstrip().startswith("#EXTM3U"):
-            log(f"  Manifest validation rejected status={resp.status_code} type={content_type} url={current_url[:160]}")
+            log(f"  Manifest validation rejected status={resp.status_code} type={content_type} url={log_url(current_url)}")
             return False
 
         uris = manifest_uri_lines(text)
         if not uris:
-            log(f"  Manifest validation rejected an empty playlist: {final_url[:160]}")
+            log(f"  Manifest validation rejected an empty playlist: {log_url(final_url)}")
             return False
 
         # A master playlist points at another playlist. A media playlist has
@@ -1337,7 +1381,7 @@ def validate_hls_result(url, headers, result=None, inspect_alternate_audio=True,
                     validate_hls_result(english_rendition, headers, inspect_alternate_audio=False, deadline=deadline)
                 if valid_audio:
                     result["audio_languages"] = list(dict.fromkeys(result.get("audio_languages", []) + ["eng"]))
-            log(f"  Proxy validation OK manifest={url[:140]} segment={segment_url[:120]}")
+            log(f"  Proxy validation OK manifest={log_url(url, 140)} segment={log_url(segment_url, 120)}")
             return True
         return False
     return False
@@ -1350,7 +1394,7 @@ def is_proxy_fetchable_result(result):
         return result["_proxy_fetchable"]
     url = result["url"]
     if not is_safe_public_url(url):
-        log(f"  Proxy validation rejected unsafe URL: {url[:160]}")
+        log(f"  Proxy validation rejected unsafe URL: {log_url(url)}")
         return False
     if not cffi_req:
         log("  Proxy validation skipped: curl_cffi unavailable")
@@ -1534,10 +1578,10 @@ def listen_for_media(page, timeout=NETWORK_SNIFF_SECONDS, referer=None):
                     except Exception:
                         pass
                 if is_probable_media_url(url, content_type):
-                    log(f"  Network: captured media url={url[:180]}")
+                    log(f"  Network: captured media url={log_url(url, 180)}")
                     return make_stream_result(url, page, referer or getattr(page, "url", ""), request_headers)
                 if content_type and "mpegurl" in content_type.lower():
-                    log(f"  Network: captured media by content-type url={url[:180]}")
+                    log(f"  Network: captured media by content-type url={log_url(url, 180)}")
                     return make_stream_result(url, page, referer or getattr(page, "url", ""), request_headers)
         except Exception as e:
             log(f"  Network listener read failed: {e}")
@@ -1696,7 +1740,7 @@ def collect_iframe_sources(page, limit=10, audio_preference="sub"):
         -audio_score(src, audio_preference)
     ))
     if sources:
-        log(f"  iframe sources={len(sources)} audio={normalize_audio_preference(audio_preference)} first={sources[0][:140]}")
+        log(f"  iframe sources={len(sources)} audio={normalize_audio_preference(audio_preference)} first={log_url(sources[0], 140)}")
     return sources[:limit]
 
 
@@ -2347,11 +2391,11 @@ def extract_player_page(page, src, parent_url, depth=0, visited=None, audio_pref
     page._ums_selected_audio = selected_audio
 
     if is_probable_media_url(src):
-        log(f"  Player crawl: iframe src is direct media={src[:160]}")
+        log(f"  Player crawl: iframe src is direct media={log_url(src)}")
         return accept_stream_result(make_stream_result(src, page, parent_url), "Direct iframe", audio_preference, browser_fallbacks)
 
     try:
-        log(f"  Player crawl depth={depth}: {src[:180]}")
+        log(f"  Player crawl depth={depth}: {log_url(src, 180)}")
         page._ums_subtitle_tracks = []
         if start_media_listener(page):
             if page.get(src, retry=0, timeout=seconds_left(deadline, TIMEOUT_PER_MIRROR)) is False:
@@ -2373,7 +2417,7 @@ def extract_player_page(page, src, parent_url, depth=0, visited=None, audio_pref
             return None
         dom_urls = extract_dom_media_urls(page)
         if dom_urls:
-            log(f"  Player crawl: DOM media url={dom_urls[0][:160]}")
+            log(f"  Player crawl: DOM media url={log_url(dom_urls[0])}")
             for dom_url in dom_urls:
                 if deadline_expired(deadline):
                     return None
@@ -2475,13 +2519,13 @@ def stage_d_carpet_bomb(page, audio_preference="sub"):
         for url in dom_urls:
             result = candidate(url)
             if result:
-                log(f"  Stage D: found DOM/performance media url={url[:160]}")
+                log(f"  Stage D: found DOM/performance media url={log_url(url)}")
                 return result
         urls = extract_media_urls_from_text(html, referer)
         for url in urls:
             result = candidate(url)
             if result:
-                log(f"  Stage D: found direct media url={url[:160]}")
+                log(f"  Stage D: found direct media url={log_url(url)}")
                 return result
         for script in re.finditer(r'<script[^>]*>(.*?)</script>', html, re.S | re.I):
             text = script.group(1)
@@ -2495,7 +2539,7 @@ def stage_d_carpet_bomb(page, audio_preference="sub"):
                     if found:
                         result = candidate(found)
                         if result:
-                            log(f"  Stage D: found stream in inline json={found[:160]}")
+                            log(f"  Stage D: found stream in inline json={log_url(found)}")
                             return result
                 except Exception:
                     pass
@@ -2506,7 +2550,7 @@ def stage_d_carpet_bomb(page, audio_preference="sub"):
                 for url in urls:
                     result = candidate(url)
                     if result:
-                        log(f"  Stage D: found base64 stream={url[:160]}")
+                        log(f"  Stage D: found base64 stream={log_url(url)}")
                         return result
             except Exception:
                 pass

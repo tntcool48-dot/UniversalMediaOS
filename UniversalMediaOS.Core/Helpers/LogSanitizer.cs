@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
 
@@ -15,13 +16,26 @@ namespace UniversalMediaOS.Core.Helpers
             "https?://[^\\s'\\\"<>]+",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
+        // Keep these rules in step with redact_log_urls in scraper.py;
+        // tools/tests/fixtures/log-url-redaction.json is the shared contract
+        // both implementations are tested against.
+        private static readonly Regex TokenRunPattern = new(
+            "[A-Za-z0-9_+-]+",
+            RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
         private static readonly Regex HexTokenPattern = new(
-            "^[a-f0-9]{32,}$",
+            "^[a-f0-9]{16,}$",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
-        private static readonly Regex Base64UrlTokenPattern = new(
-            "^[a-z0-9_-]{40,}$",
+        private static readonly Regex MediaExtensionPattern = new(
+            "\\.(?:m3u8?|mpd|mp4|m4[sav]|ts|aac|vtt|srt|webm|key)$",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+        private static readonly HashSet<string> CredentialRouteKeys = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "token", "tokens", "sig", "sign", "signature", "hmac", "hash", "auth", "key", "apikey", "api_key",
+            "access_token", "secret", "expires", "expiry", "exp", "policy", "session", "sid", "jwt"
+        };
 
         private static readonly char[] TrailingPunctuation = [')', ']', '}', ',', ';', '.', '!'];
 
@@ -56,13 +70,18 @@ namespace UniversalMediaOS.Core.Helpers
                 : uri.IdnHost;
             string authority = uri.IsDefaultPort ? host : $"{host}:{uri.Port}";
             string redacted = $"{uri.Scheme}://{authority}{RedactSensitivePath(uri.AbsolutePath)}";
-            if (!string.IsNullOrEmpty(uri.Query))
+            // A lone "?" or "#" is what an earlier pass left in front of "<redacted>".
+            if (uri.Query.Length > 1)
             {
                 redacted += "?<redacted>";
             }
-            if (!string.IsNullOrEmpty(uri.Fragment))
+            if (uri.Fragment.Length > 1)
             {
                 redacted += "#<redacted>";
+            }
+            if (urlText.Length > 0 && urlText[^1] is '?' or '#' && !redacted.EndsWith(urlText[^1]))
+            {
+                redacted += urlText[^1];
             }
 
             return redacted + suffix;
@@ -76,6 +95,7 @@ namespace UniversalMediaOS.Core.Helpers
             }
 
             string[] segments = absolutePath.Split('/');
+            string previous = string.Empty;
             for (int index = 0; index < segments.Length; index++)
             {
                 string segment;
@@ -88,32 +108,85 @@ namespace UniversalMediaOS.Core.Helpers
                     segment = segments[index];
                 }
 
-                if (LooksLikeOpaqueToken(segment))
+                if (IsSensitiveSegment(segment, previous))
                 {
-                    segments[index] = "<redacted>";
+                    Match extension = MediaExtensionPattern.Match(segment);
+                    segments[index] = "<redacted>" + (extension.Success ? extension.Value : string.Empty);
                 }
+                previous = segment;
             }
 
             return string.Join('/', segments);
         }
 
-        private static bool LooksLikeOpaqueToken(string segment)
+        private static bool IsSensitiveSegment(string segment, string previousSegment)
         {
-            if (HexTokenPattern.IsMatch(segment))
-            {
-                return true;
-            }
-
-            if (!Base64UrlTokenPattern.IsMatch(segment))
+            if (segment.Length == 0)
             {
                 return false;
             }
 
-            bool hasLower = segment.Any(char.IsLower);
-            bool hasUpper = segment.Any(char.IsUpper);
-            bool hasDigit = segment.Any(char.IsDigit);
-            int distinctCharacters = segment.Distinct().Take(16).Count();
-            return hasLower && hasUpper && hasDigit && distinctCharacters >= 16;
+            if (segment.Contains("://", StringComparison.Ordinal) || segment.Contains('='))
+            {
+                return true;
+            }
+
+            if (CredentialRouteKeys.Contains(previousSegment))
+            {
+                return true;
+            }
+
+            return TokenRunPattern.Matches(segment).Any(run => IsOpaqueTokenRun(run.Value));
+        }
+
+        private static bool IsOpaqueTokenRun(string run)
+        {
+            if (HexTokenPattern.IsMatch(run) &&
+                (run.Length >= 32 || (run.Any(char.IsDigit) && run.Any(char.IsLetter))))
+            {
+                return true;
+            }
+
+            if (run.StartsWith("eyJ", StringComparison.Ordinal) && run.Length >= 16)
+            {
+                return true;
+            }
+
+            if (run.Length >= 40 && HasUpperLowerAndDigit(run) && run.Distinct().Take(16).Count() >= 16)
+            {
+                return true;
+            }
+
+            foreach (string word in run.Split('_', '+', '-'))
+            {
+                // Random text switches between upper, lower and digit far more often
+                // than camel-case titles such as NightOfTheLivingDead1968 do.
+                if (word.Length >= 20 && HasUpperLowerAndDigit(word) && ClassChanges(word) * 2 >= word.Length - 1)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool HasUpperLowerAndDigit(string text) =>
+            text.Any(char.IsUpper) && text.Any(char.IsLower) && text.Any(char.IsDigit);
+
+        private static int ClassChanges(string word)
+        {
+            static int Kind(char value) => char.IsUpper(value) ? 0 : char.IsLower(value) ? 1 : 2;
+
+            int changes = 0;
+            for (int index = 1; index < word.Length; index++)
+            {
+                if (Kind(word[index]) != Kind(word[index - 1]))
+                {
+                    changes++;
+                }
+            }
+
+            return changes;
         }
 
         private static string RedactMalformedUrl(string value)
