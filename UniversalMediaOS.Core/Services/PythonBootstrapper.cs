@@ -179,6 +179,9 @@ public sealed class PythonBootstrapper : IDisposable
     private void SetState(PythonPreparationState state, string code, IReadOnlyList<string> missing)
     {
         lock (_gate) _snapshot = new(state, code, Array.AsReadOnly(missing.ToArray()));
+        // The health line only says whether Python is ready; this keeps why, for support logs and qualification.
+        AppLogger.Log($"[Python] Preparation {state} ({code})" + (missing.Count == 0 ? "" : ": " + string.Join(", ", missing)),
+            state == PythonPreparationState.Failed ? "WARNING" : "INFO");
         StateChanged?.Invoke(this, EventArgs.Empty);
     }
 
