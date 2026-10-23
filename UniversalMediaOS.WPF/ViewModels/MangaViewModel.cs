@@ -20,6 +20,7 @@ namespace UniversalMediaOS.WPF.ViewModels
     public partial class MangaViewModel : ObservableObject, IDisposable
     {
         private readonly MangaService _mangaService;
+        private readonly MangaReadingProgressStore? _readingProgress;
         private readonly CancellationTokenSource _lifecycleCts = new();
         private CancellationTokenSource? _searchCts;
         private CancellationTokenSource? _chapterCts;
@@ -30,6 +31,8 @@ namespace UniversalMediaOS.WPF.ViewModels
         private bool _isInitialized;
         private bool _isDisposed;
         private string _chapterListStatus = string.Empty;
+        private int _restorePageOnOpen = -1;
+        private int _savedPageIndex = -1;
 
         // ── Search ──────────────────────────────────────────
         [ObservableProperty] private string _searchQuery = string.Empty;
@@ -71,9 +74,21 @@ namespace UniversalMediaOS.WPF.ViewModels
         [ObservableProperty] private string _breadcrumb = string.Empty;
         [ObservableProperty] private string _readerStatus = string.Empty;
 
-        public MangaViewModel(MangaService mangaService)
+        // ── Reading progress ─────────────────────────────────
+        [ObservableProperty]
+        [NotifyPropertyChangedFor(nameof(HasContinueReading))]
+        [NotifyCanExecuteChangedFor(nameof(ContinueReadingCommand))]
+        private MangaChapter? _continueChapter;
+        [ObservableProperty] private string _continueText = string.Empty;
+        [ObservableProperty] private string _continueAccessibleName = string.Empty;
+        [ObservableProperty] private int _pendingRestorePage = -1;
+        public bool HasContinueReading => ContinueChapter != null;
+        private int _continuePageIndex;
+
+        public MangaViewModel(MangaService mangaService, MangaReadingProgressStore? readingProgress = null)
         {
             _mangaService = mangaService;
+            _readingProgress = readingProgress;
         }
 
         public void Initialize()
@@ -212,6 +227,7 @@ namespace UniversalMediaOS.WPF.ViewModels
 
             SelectedManga = manga;
             CanRetryWebsite = false;
+            ClearContinueReading();
             Chapters.Clear();
             PageUrls.Clear();
             CurrentViewMode = 1;
@@ -232,6 +248,7 @@ namespace UniversalMediaOS.WPF.ViewModels
 
                 AppLogger.Log($"Loaded {chapters.Count} chapters for '{manga.Title}'");
                 Chapters.ReplaceRange(chapters);
+                ShowContinueReading(manga);
                 ReaderStatus = _chapterListStatus = chapters.Count == 0 ? "No English chapters are available for this manga." : string.Empty;
 
                 if (Chapters.Count == 0)
@@ -250,6 +267,7 @@ namespace UniversalMediaOS.WPF.ViewModels
                     string.Equals(SelectedManga?.Id, manga.Id, StringComparison.Ordinal))
                 {
                     Chapters.ReplaceRange(ex.AvailableChapters);
+                    ShowContinueReading(manga);
                     ReaderStatus = _chapterListStatus = "Some chapters could not load. Showing available chapters. Go back and retry.";
                 }
             }
@@ -279,9 +297,13 @@ namespace UniversalMediaOS.WPF.ViewModels
             AppLogger.Log($"SelectChapterCommand invoked: Ch {chapter.ChapterNumber} - '{chapter.Title}' (Id={chapter.Id})");
             var linkedCts = BeginOperation(ref _pageCts, out int generation, CancellationToken.None, OperationKind.Page);
             var token = linkedCts.Token;
+            int restorePage = _restorePageOnOpen;
+            _restorePageOnOpen = -1;
 
             SelectedChapter = chapter;
             CanRetryWebsite = false;
+            PendingRestorePage = -1;
+            _savedPageIndex = -1;
             Breadcrumb = $"{SelectedManga?.Title ?? "Manga"} \u203A Ch. {chapter.ChapterNumber}";
             ReaderStatus = string.Empty;
 
@@ -292,6 +314,7 @@ namespace UniversalMediaOS.WPF.ViewModels
                 ExternalUrl = chapter.ExternalUrl;
                 ReaderStatus = "Opening website reader...";
                 CurrentViewMode = 3;
+                SaveReadingProgress(chapter, 0, 0);
                 ClearOperation(ref _pageCts, linkedCts);
                 return;
             }
@@ -315,6 +338,13 @@ namespace UniversalMediaOS.WPF.ViewModels
                 AppLogger.Log($"Loaded {pages.Count} pages for chapter '{chapter.ChapterNumber}'");
                 PageUrls.ReplaceRange(pages);
                 ReaderStatus = pages.Count == 0 ? "No pages are available for this chapter. Select another chapter." : string.Empty;
+                if (pages.Count > 0)
+                {
+                    int openedPage = restorePage > 0 && restorePage < pages.Count ? restorePage : 0;
+                    SaveReadingProgress(chapter, openedPage, pages.Count);
+                    // Page reports from the view are ignored until it has scrolled to the restored page.
+                    PendingRestorePage = openedPage > 0 ? openedPage : -1;
+                }
 
                 if (PageUrls.Count == 0)
                 {
@@ -361,16 +391,19 @@ namespace UniversalMediaOS.WPF.ViewModels
                     // Back to chapters
                     _pageCts?.Cancel();
                     PageUrls.Clear();
+                    PendingRestorePage = -1;
                     ExternalUrl = string.Empty;
                     CurrentViewMode = 1;
                     Breadcrumb = SelectedManga?.Title ?? "Manga";
                     ReaderStatus = _chapterListStatus;
+                    if (SelectedManga != null) ShowContinueReading(SelectedManga);
                     break;
                 case 1:
                     // Back to search results
                     _chapterCts?.Cancel();
                     _pageCts?.Cancel();
                     Chapters.Clear();
+                    ClearContinueReading();
                     SelectedManga = null;
                     CurrentViewMode = 0;
                     Breadcrumb = string.Empty;
@@ -378,6 +411,80 @@ namespace UniversalMediaOS.WPF.ViewModels
                 default:
                     break;
             }
+        }
+
+        // ── Continue Reading Command ──────────────────────────
+        [RelayCommand(CanExecute = nameof(HasContinueReading))]
+        private async Task ContinueReadingAsync()
+        {
+            if (ContinueChapter is not { } chapter) return;
+            _restorePageOnOpen = _continuePageIndex;
+            await SelectChapterAsync(chapter);
+        }
+
+        /// <summary>The native reader reports its top visible page while the user scrolls.</summary>
+        internal void ReportVisiblePage(int pageIndex)
+        {
+            if (_isDisposed || CurrentViewMode != 2 || PendingRestorePage >= 0 || IsLoadingPages ||
+                SelectedChapter is not { } chapter || pageIndex < 0 || pageIndex >= PageUrls.Count ||
+                pageIndex == _savedPageIndex)
+            {
+                return;
+            }
+
+            SaveReadingProgress(chapter, pageIndex, PageUrls.Count);
+        }
+
+        /// <summary>The native reader has scrolled to the restored page; later scrolling is recorded again.</summary>
+        internal void CompletePageRestore() => PendingRestorePage = -1;
+
+        private void SaveReadingProgress(MangaChapter chapter, int pageIndex, int pageCount)
+        {
+            if (_readingProgress == null || SelectedManga is not { } manga ||
+                string.IsNullOrWhiteSpace(manga.Id) || string.IsNullOrWhiteSpace(chapter.Id))
+            {
+                return;
+            }
+
+            _savedPageIndex = pageIndex;
+            _readingProgress.Save(new MangaReadingProgress(manga.Id, manga.Title, chapter.Id, chapter.ChapterNumber,
+                pageIndex, pageCount, chapter.IsExternal, DateTime.UtcNow));
+        }
+
+        private void ShowContinueReading(MangaSearchResult manga)
+        {
+            ClearContinueReading();
+            if (_readingProgress?.Get(manga.Id) is not { } progress) return;
+
+            // Only the exact saved chapter ID is offered; a renumbered or removed chapter is not guessed at.
+            MangaChapter? chapter = Chapters.FirstOrDefault(candidate =>
+                string.Equals(candidate.Id, progress.ChapterId, StringComparison.Ordinal));
+            if (chapter == null) return;
+
+            _continuePageIndex = chapter.IsExternal ? 0 : progress.PageIndex;
+            if (chapter.IsExternal)
+            {
+                ContinueText = $"Continue Ch. {chapter.ChapterNumber} on the website";
+                ContinueAccessibleName = $"Continue chapter {chapter.ChapterNumber} on the website";
+            }
+            else
+            {
+                int page = progress.PageIndex + 1;
+                ContinueText = progress.PageCount > 0
+                    ? $"Continue Ch. {chapter.ChapterNumber} · page {page} of {progress.PageCount}"
+                    : $"Continue Ch. {chapter.ChapterNumber} · page {page}";
+                ContinueAccessibleName = $"Continue chapter {chapter.ChapterNumber} from page {page}";
+            }
+
+            ContinueChapter = chapter;
+        }
+
+        private void ClearContinueReading()
+        {
+            ContinueChapter = null;
+            ContinueText = string.Empty;
+            ContinueAccessibleName = string.Empty;
+            _continuePageIndex = 0;
         }
 
         private enum OperationKind

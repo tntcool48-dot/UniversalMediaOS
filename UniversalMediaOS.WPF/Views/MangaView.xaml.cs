@@ -2,8 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Threading.Tasks;
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
+using System.Windows.Media;
+using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
 using UniversalMediaOS.Core.Helpers;
 using UniversalMediaOS.Core.Services;
@@ -20,6 +23,10 @@ namespace UniversalMediaOS.WPF.Views
         private ViewModels.MangaViewModel? _subscribedViewModel;
         private CoreWebView2? _navigationCore;
         private ExternalNavigation? _externalNavigation;
+        private readonly DispatcherTimer _pageReportTimer;
+        private readonly DispatcherTimer _restoreTimer;
+        private int _restoreTicks;
+        private int _restoreStableTicks;
 
         private sealed class ExternalNavigation(ViewModels.MangaViewModel viewModel, MangaChapter chapter, string url)
         {
@@ -36,9 +43,104 @@ namespace UniversalMediaOS.WPF.Views
         {
             if (resources != null) Resources.MergedDictionaries.Add(resources);
             InitializeComponent();
+            _pageReportTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(300) };
+            _pageReportTimer.Tick += PageReportTimer_Tick;
+            _restoreTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(100) };
+            _restoreTimer.Tick += RestoreTimer_Tick;
             DataContextChanged += MangaView_DataContextChanged;
             Loaded += MangaView_Loaded;
             Unloaded += MangaView_Unloaded;
+        }
+
+        private void MangaPageList_ScrollChanged(object sender, ScrollChangedEventArgs e)
+        {
+            if (!_isLoaded || _subscribedViewModel is not { CurrentViewMode: 2 }) return;
+            // Record the page once scrolling settles rather than on every pixel.
+            _pageReportTimer.Stop();
+            _pageReportTimer.Start();
+        }
+
+        private void PageReportTimer_Tick(object? sender, EventArgs e)
+        {
+            _pageReportTimer.Stop();
+            if (_isLoaded && _subscribedViewModel is { CurrentViewMode: 2 } vm && TopVisiblePage() is int page and >= 0)
+                vm.ReportVisiblePage(page);
+        }
+
+        private int TopVisiblePage()
+        {
+            if (FindDescendant<ScrollViewer>(MangaPageList) is not { } viewer) return -1;
+            for (int i = 0; i < MangaPageList.Items.Count; i++)
+            {
+                if (PageTop(viewer, i) is double top &&
+                    MangaPageList.ItemContainerGenerator.ContainerFromIndex(i) is FrameworkElement item &&
+                    top + item.ActualHeight > 1)
+                {
+                    return i;
+                }
+            }
+            return -1;
+        }
+
+        private double? PageTop(ScrollViewer viewer, int index)
+        {
+            if (MangaPageList.ItemContainerGenerator.ContainerFromIndex(index) is not FrameworkElement { IsVisible: true } item)
+                return null;
+            try { return item.TransformToAncestor(viewer).Transform(new Point()).Y; }
+            catch (InvalidOperationException) { return null; }
+        }
+
+        private void StartPageRestore()
+        {
+            _restoreTicks = 0;
+            _restoreStableTicks = 0;
+            _restoreTimer.Stop();
+            _restoreTimer.Start();
+        }
+
+        private void RestoreTimer_Tick(object? sender, EventArgs e)
+        {
+            if (!_isLoaded || _subscribedViewModel is not { CurrentViewMode: 2 } vm ||
+                vm.PendingRestorePage < 0 || vm.PendingRestorePage >= MangaPageList.Items.Count)
+            {
+                _restoreTimer.Stop();
+                return;
+            }
+
+            int index = vm.PendingRestorePage;
+            if (FindDescendant<ScrollViewer>(MangaPageList) is not { } viewer) return;
+            if (PageTop(viewer, index) is not double top)
+            {
+                MangaPageList.ScrollIntoView(MangaPageList.Items[index]);
+                _restoreStableTicks = 0;
+            }
+            else if (Math.Abs(top) > 1 && !(top > 0 && viewer.VerticalOffset >= viewer.ScrollableHeight - 0.5))
+            {
+                // Pages above the restored one change height as they decode; keep its top aligned.
+                viewer.ScrollToVerticalOffset(viewer.VerticalOffset + top);
+                _restoreStableTicks = 0;
+            }
+            else
+            {
+                _restoreStableTicks++;
+            }
+
+            if (_restoreStableTicks >= 5 || ++_restoreTicks >= 100)
+            {
+                _restoreTimer.Stop();
+                vm.CompletePageRestore();
+            }
+        }
+
+        private static T? FindDescendant<T>(DependencyObject parent) where T : DependencyObject
+        {
+            for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
+            {
+                DependencyObject child = VisualTreeHelper.GetChild(parent, i);
+                if (child is T match) return match;
+                if (FindDescendant<T>(child) is T nested) return nested;
+            }
+            return null;
         }
 
         private void RetryMangaPage_Click(object sender, System.Windows.RoutedEventArgs e)
@@ -77,6 +179,9 @@ namespace UniversalMediaOS.WPF.Views
         {
             _isLoaded = false;
             DetachViewModel();
+            // A running DispatcherTimer is rooted by the dispatcher and would keep this view alive.
+            _pageReportTimer.Stop();
+            _restoreTimer.Stop();
             if (_navigationCore != null)
             {
                 _navigationCore.NavigationStarting -= ExternalNavigationStarting;
@@ -108,6 +213,8 @@ namespace UniversalMediaOS.WPF.Views
             vm.PropertyChanged += Vm_PropertyChanged;
             if (vm.CurrentViewMode == 3)
                 _ = NavigateExternalAsync(vm.ExternalUrl);
+            else if (vm.PendingRestorePage >= 0)
+                StartPageRestore();
         }
 
         private void DetachViewModel()
@@ -137,6 +244,11 @@ namespace UniversalMediaOS.WPF.Views
                         await NavigateExternalAsync(vm.ExternalUrl);
                     else
                         StopExternalNavigation();
+                }
+                else if (e.PropertyName == nameof(ViewModels.MangaViewModel.PendingRestorePage))
+                {
+                    if (vm.PendingRestorePage >= 0) StartPageRestore();
+                    else _restoreTimer.Stop();
                 }
                 else if (e.PropertyName == nameof(ViewModels.MangaViewModel.ExternalUrl))
                 {
