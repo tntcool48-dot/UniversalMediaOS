@@ -506,12 +506,14 @@ public sealed class TemporaryEpisodeWatchService
         string file = Path.GetFileName(name);
         if (VideoExtensions.Contains(Path.GetExtension(file), StringComparer.OrdinalIgnoreCase))
             file = Path.GetFileNameWithoutExtension(file);
-        if (!Regex.IsMatch(file, @"\b(?:ova|special)\b", RegexOptions.IgnoreCase) ||
-            Regex.IsMatch(file, @"\b(?:batch|complete|movie|ona|tv)\b|\b(?:ova|special)\s*\d|" +
+        if (!Regex.IsMatch(file, @"\b(?:ova|specials?)\b", RegexOptions.IgnoreCase) ||
+            Regex.IsMatch(file, @"\b(?:batch|complete|movie|ona|tv)\b|\b(?:ova|specials?)\s*\d|" +
                 @"\b(?:season\s*\d+|s\d{1,2}(?:e\d+)?|\d+(?:st|nd|rd|th)\s+season)\b", RegexOptions.IgnoreCase))
             return false;
+        // Release groups write one explicit unit as Episode/Ep/E N or " - N".
+        // Season-qualified and "#" units still need a mapping, not a guess.
         var units = Regex.Matches(file, EpisodeMarkerPattern, RegexOptions.IgnoreCase);
-        if (units.Count != 1 || !Regex.IsMatch(units[0].Value, @"^(?:episode|ep)\s*\d", RegexOptions.IgnoreCase) ||
+        if (units.Count != 1 || !Regex.IsMatch(units[0].Value, @"^(?:(?:episode|ep|e)\s*\d|\s[-–—])", RegexOptions.IgnoreCase) ||
             !EpisodeMatches(file, episode)) return false;
         string withoutUnit = file.Remove(units[0].Index, units[0].Length);
         // A leading release-group label is not a work title. Everything else
@@ -520,8 +522,10 @@ public sealed class TemporaryEpisodeWatchService
         static string Words(string value) => string.Join(' ', Regex.Matches(value, @"[\p{L}\p{N}]+")
             .Select(match => match.Value.ToLowerInvariant()));
         string observed = Words(withoutUnit);
-        const string decoration = @"ova|special|sub|subbed|dub|dubbed|dual audio|english audio|english dub|" +
-            @"eng|jpn|japanese|480p|720p|1080p|2160p|4k|8bit|10bit|hevc|x264|x265|h264|h265|aac|eac3|flac|opus|[a-f0-9]{8}";
+        const string decoration = @"ova|specials?|sub|subbed|dub|dubbed|dual audio|english audio|english dub|" +
+            @"eng|jpn|japanese|480p|720p|1080p|2160p|4k|8bit|10bit|hevc|x264|x265|h264|h265|aac|eac3|flac|opus|[a-f0-9]{8}|" +
+            // Source and subtitle tags describe the file, never another work.
+            @"bd|bdrip|dvd|dvdrip|web|webrip|web dl|cr|ac3|multi subs?|multisubs?";
         foreach (string title in titles.Where(title => !string.IsNullOrWhiteSpace(title)))
         {
             string literalTitle = title.Normalize().Trim();
@@ -544,7 +548,7 @@ public sealed class TemporaryEpisodeWatchService
                 }
             }
             else if (Regex.IsMatch(observed,
-                @"^(?:(?:ova|special) )?" + Regex.Escape(Words(title)) + @"(?: (?:" + decoration + @"))*$"))
+                @"^(?:(?:ova|specials?) )?" + Regex.Escape(Words(title)) + @"(?: (?:" + decoration + @"))*$"))
                 return true;
         }
         return false;
