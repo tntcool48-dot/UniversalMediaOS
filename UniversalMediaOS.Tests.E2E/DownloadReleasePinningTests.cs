@@ -194,6 +194,38 @@ public sealed class DownloadReleasePinningTests
         Assert.Equal(new[] { PinningFixture.HashA }, fixture.AddedHashes.ToArray());
     }
 
+    /// <summary>A permanent season must not substitute another audio track for the one requested: Dub needs a Dub or
+    /// dual-audio label, and Sub excludes Dub-only releases, as the temporary watch already requires.</summary>
+    [Theory]
+    [InlineData("Dub", "Pinning Show Season 1 [Batch]")]
+    [InlineData("Dub", "Pinning Show Season 1 [Batch] [Sub]")]
+    [InlineData("Sub", "Pinning Show Season 1 [Batch] [English Dub]")]
+    public async Task SeasonWithoutTheRequestedAudioLabelIsNotDownloaded(string audio, string onlyRelease)
+    {
+        await using var fixture = new PinningFixture { FeedTitle = onlyRelease };
+        using var queue = fixture.Queue();
+        var job = queue.Enqueue("Pinning Show", audio);
+        await WaitForFailure(queue, job.Id);
+
+        Assert.True(fixture.AddedHashes.IsEmpty, $"Downloaded \"{job.ReleaseSelection?.Title}\" for {audio}; job: {job.StatusMessage}");
+        Assert.Null(job.ReleaseSelection);
+        Assert.Contains(audio == "Dub" ? "Dub" : "Sub", job.StatusMessage, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("Dub", "Pinning Show Season 1 [Batch] [Dual Audio]")]
+    [InlineData("Sub", "Pinning Show Season 1 [Batch] [Dual Audio]")]
+    [InlineData("Sub", "Pinning Show Season 1 [Batch]")]
+    public async Task SeasonWithTheRequestedAudioLabelIsStillDownloaded(string audio, string release)
+    {
+        await using var fixture = new PinningFixture { FeedTitle = release };
+        using var queue = fixture.Queue();
+        var job = queue.Enqueue("Pinning Show", audio);
+        await WaitForFailure(queue, job.Id);
+        Assert.Equal(new[] { PinningFixture.HashA }, fixture.AddedHashes.ToArray());
+        Assert.Equal(release, job.ReleaseSelection?.Title);
+    }
+
     private static async Task WaitForFailure(DownloadQueueService queue, Guid id)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -219,6 +251,7 @@ public sealed class DownloadReleasePinningTests
         /// <summary>The body of an extra, better-seeded feed result for the same season.</summary>
         public string? MalformedItem { get; set; }
         public bool OfferValidRelease { get; set; } = true;
+        public string FeedTitle { get; set; } = "Pinning Show Season 1 [Batch]";
         public ConcurrentQueue<string> AddedHashes { get; } = new();
         public ConcurrentQueue<string> ResumedHashes { get; } = new();
         public ConcurrentQueue<string> QueueSnapshotsAtAdd { get; } = new();
@@ -277,7 +310,7 @@ public sealed class DownloadReleasePinningTests
                         string malformed = MalformedItem == null ? "" :
                             $"<item><title>Pinning Show Season 1 [Batch] (mirror)</title>{MalformedItem}<nyaa:seeders>50</nyaa:seeders></item>";
                         string valid = !OfferValidRelease ? "" :
-                            $"<item><title>Pinning Show Season 1 [Batch]</title><link>magnet:?xt=urn:btih:{FeedHash}</link><nyaa:seeders>20</nyaa:seeders><nyaa:infoHash>{FeedHash}</nyaa:infoHash></item>";
+                            $"<item><title>{FeedTitle}</title><link>magnet:?xt=urn:btih:{FeedHash}</link><nyaa:seeders>20</nyaa:seeders><nyaa:infoHash>{FeedHash}</nyaa:infoHash></item>";
                         body = $"<rss version=\"2.0\" xmlns:nyaa=\"https://nyaa.si/xmlns/nyaa\"><channel>{malformed}{valid}</channel></rss>";
                     }
                     else if (path == "/api/v2/auth/login")

@@ -332,6 +332,7 @@ namespace UniversalMediaOS.Core.Archiving
             catch (NativeTorrentStorageException) { throw; }
             catch (TorrentDownloadOwnershipException) { throw; }
             catch (TorrentContentOutsideFolderException) { throw; }
+            catch (ReleaseAudioUnavailableException) { throw; }
             catch (Exception ex)
             {
                 log($"[P2P Season Downloader] CRITICAL ERROR during batch process: {ex.Message}");
@@ -568,17 +569,19 @@ namespace UniversalMediaOS.Core.Archiving
 
             if (seasonMatched.Count == 0) return null;
 
-            // 3. Filter by User Audio Preference
-            string pref = NormalizeAudioPreference(audioPreference);
-            var candidates = seasonMatched;
-            if (pref.StartsWith("Dub", StringComparison.OrdinalIgnoreCase))
+            // 3. Keep only releases labelled with the requested audio, as the temporary watch does: Dub needs a Dub
+            // or dual-audio label, and Sub excludes Dub-only releases. Never substitute the other audio.
+            bool dub = NormalizeAudioPreference(audioPreference).StartsWith("Dub", StringComparison.OrdinalIgnoreCase);
+            var candidates = seasonMatched.Where(t => dub
+                ? TemporaryEpisodeWatchService.HasDubLabel(t.Title)
+                : !TemporaryEpisodeWatchService.HasDubLabel(t.Title) || Regex.IsMatch(t.Title, @"\bdual[\s._-]*audio\b", RegexOptions.IgnoreCase)).ToList();
+            if (candidates.Count == 0)
+                throw new ReleaseAudioUnavailableException(dub
+                    ? "No Dub release found: no matching release is labelled Dub or Dual Audio. Nothing was downloaded; retry later or choose Sub."
+                    : "No Sub release found: every matching release is labelled Dub only. Nothing was downloaded; retry later or choose Dub.");
+            if (!dub)
             {
-                var dubs = seasonMatched.Where(t => t.Title.IndexOf("Dub", StringComparison.OrdinalIgnoreCase) >= 0 || t.Title.IndexOf("Dual Audio", StringComparison.OrdinalIgnoreCase) >= 0).ToList();
-                if (dubs.Count > 0) candidates = dubs;
-            }
-            else // Subbed preference
-            {
-                var subs = seasonMatched.Where(t => t.Title.IndexOf("Sub", StringComparison.OrdinalIgnoreCase) >= 0).ToList();
+                var subs = candidates.Where(t => t.Title.IndexOf("Sub", StringComparison.OrdinalIgnoreCase) >= 0).ToList();
                 if (subs.Count > 0) candidates = subs;
             }
 
