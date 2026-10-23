@@ -2554,12 +2554,15 @@ namespace UniversalMediaOS.WPF.ViewModels
                     native?.Description ?? "", type == TrackType.Text ? "Subtitle" : "Audio");
             }).ToArray();
             if (type != TrackType.Text || _preparedEmbeddedCaptions.Count == 0) return options;
-            return options.Where(option => !_preparedEmbeddedCaptions.Values.Any(p =>
-                p.NativeId >= 0 && p.Original.NativeId == option.NativeId)).Select(option =>
+            // A prepared copy registers as the newest track; show it in its original track's place.
+            var copies = _preparedEmbeddedCaptions.Values
+                .Where(p => p.NativeId >= 0 && options.Any(option => option.NativeId == p.NativeId)).ToArray();
+            return options.Where(option => copies.All(copy => copy.NativeId != option.NativeId)).Select(option =>
             {
-                var prepared = _preparedEmbeddedCaptions.Values.FirstOrDefault(p => p.NativeId == option.NativeId);
-                return prepared.Lease == null ? option : prepared.Original with { NativeId = option.NativeId };
-            }).ToArray();
+                var copy = copies.FirstOrDefault(p => p.Original.NativeId == option.NativeId);
+                return copy.Lease == null ? option : copy.Original with { NativeId = copy.NativeId };
+            }).Concat(copies.Where(copy => options.All(option => option.NativeId != copy.Original.NativeId))
+                .Select(copy => copy.Original with { NativeId = copy.NativeId })).ToArray();
         }
 
         private void RefreshCaptionState()

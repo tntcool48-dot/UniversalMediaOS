@@ -908,6 +908,73 @@ public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
             }
         });
 
+    [Fact]
+    public Task PreparedEmbeddedCaptionsKeepTheirPlaceInTheMenu()
+        => OnDispatcher(async () =>
+        {
+            // Sintel's ten embedded tracks reordered themselves: each language whose seek-safe copy was
+            // prepared moved to the end of the menu, because the copy is registered as the newest track.
+            string? previous = Environment.GetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable);
+            string root = Path.Combine(Path.GetTempPath(), "UniversalMediaOS.Tests", "CaptionOrder-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, root);
+            string? connectionString = null;
+            try
+            {
+                string video = Path.Combine(root, "tracks.mkv");
+                string german = Path.Combine(root, "german.srt"), english = Path.Combine(root, "english.srt");
+                File.WriteAllText(german, "1\n00:00:00,000 --> 00:00:08,000\nDeutsch\n");
+                File.WriteAllText(english, "1\n00:00:00,000 --> 00:00:08,000\nEnglish\n");
+                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                var encoded = await new PreparationProcessRunner().RunAsync("ffmpeg", ["-nostdin", "-hide_banner", "-v", "error",
+                    "-f", "lavfi", "-i", "color=c=black:size=160x90:rate=24", "-i", german, "-i", english,
+                    "-map", "0:v", "-map", "1:s", "-map", "2:s", "-t", "10", "-c:v", "libx264", "-c:s", "srt",
+                    "-metadata:s:s:0", "language=ger", "-metadata:s:s:1", "language=eng", "-y", video], deadline.Token);
+                Assert.Equal(0, encoded.ExitCode);
+                File.Delete(german);
+                File.Delete(english);
+                using (var seed = new DatabaseContext())
+                {
+                    seed.Database.EnsureCreated();
+                    connectionString = seed.Database.GetConnectionString();
+                }
+                using var memory = new MemoryVideo();
+                using var player = new PlaybackViewModel(new DatabaseContext());
+                memory.Attach(player.MediaPlayer);
+                player.Volume = 0;
+                player.LoadMedia(video, "Caption order fixture");
+                player.PlayPending();
+                await Wait(() => player.IsPlaying && player.CaptionOptions.Count == 3, player);
+                player.TogglePlayPauseCommand.Execute(null);
+                await Wait(() => !player.IsPlaying && player.MediaPlayer.State == VLCState.Paused, player);
+                string[] order = ["CC Off", "German", "English"];
+                Assert.Equal(order, player.CaptionOptions.Select(option => option.Label).ToArray());
+                foreach (string label in new[] { "German", "English" })
+                {
+                    var original = player.CaptionOptions.Single(option => option.Label == label);
+                    player.SelectedCaption = original;
+                    await player.EmbeddedCaptionPreparation;
+                    await Wait(() => player.SelectedCaption?.Label == label && player.SelectedCaption.NativeId != original.NativeId, player,
+                        () => $"menu={string.Join(", ", player.CaptionOptions.Select(option => $"{option.Label}#{option.NativeId}"))}");
+                    Assert.Equal(order, player.CaptionOptions.Select(option => option.Label).ToArray());
+                }
+                player.Dispose();
+                await player.EmbeddedCaptionPreparation;
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, previous);
+                if (connectionString != null)
+                {
+                    using var connection = new Microsoft.Data.Sqlite.SqliteConnection(connectionString);
+                    Microsoft.Data.Sqlite.SqliteConnection.ClearPool(connection);
+                }
+                Assert.StartsWith(Path.GetFullPath(Path.Combine(Path.GetTempPath(), "UniversalMediaOS.Tests")) + Path.DirectorySeparatorChar,
+                    Path.GetFullPath(root), StringComparison.OrdinalIgnoreCase);
+                if (Directory.Exists(root)) Directory.Delete(root, true);
+            }
+        });
+
     [Theory]
     [InlineData("sub", "japanese")]
     [InlineData("dub", "english")]
