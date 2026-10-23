@@ -105,20 +105,37 @@ namespace UniversalMediaOS.Tests.E2E.Tests
             Assert.False(season.Button("Pause").IsEnabled);
         }
 
-        [Fact(Skip = "Requires a source-selection fixture; the previous check only opened the Downloads view.")]
-        public void T1_Downloads_05_Audio_Language_Preference_Selection()
+        [Fact]
+        public async System.Threading.Tasks.Task T1_Downloads_05_Audio_Language_Preference_Selection()
         {
-            NavigateTo("Downloads");
-            var refreshBtn = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByName("Refresh"))?.AsButton();
-            Assert.NotNull(refreshBtn);
+            // A Dub season whose only release is labelled Sub must not download it: the row fails and says why, and
+            // nothing is transferred. Once that release is listed as Dual Audio, Retry downloads and pins it.
+            // Labels select releases; they do not prove the spoken language, which stays a player check.
+            await using var season = await QueuedSeason.StartAsync(64 * 1024, seeder =>
+                seeder.ReleaseTitle = $"[Fixture] {NativeTemporaryDownloadBoundaryTests.LocalSeeder.Title} Season 1 [Batch] [Sub]", audio: "Dub");
+            Assert.True(SpinWait.SpinUntil(() => season.Status() == "Failed", TimeSpan.FromSeconds(60)), season.State());
+            Assert.Contains("No Dub release found", season.State(), StringComparison.Ordinal);
+            Assert.Equal(0, season.Seeder.UploadedBytes);
+
+            string dualAudio = $"[Fixture] {NativeTemporaryDownloadBoundaryTests.LocalSeeder.Title} Season 1 [Batch] [Dual Audio]";
+            season.Seeder.ReleaseTitle = dualAudio;
+            season.Press("Retry");
+            season.WaitForProgress(above: 0);
+            Assert.Contains(System.Text.Json.JsonSerializer.Serialize(dualAudio), season.QueueFile(), StringComparison.Ordinal);
         }
 
-        [Fact(Skip = "Requires a sandboxed output-path injection point; the previous check did not attempt traversal.")]
-        public void T2_Downloads_01_Output_Path_Traversal_Attempt()
+        [Fact]
+        public async System.Threading.Tasks.Task T2_Downloads_01_Output_Path_Traversal_Attempt()
         {
-            NavigateTo("Downloads");
-            var refreshBtn = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByName("Refresh"))?.AsButton();
-            Assert.NotNull(refreshBtn);
+            // The seeder's torrent names a file outside every download folder. The engine must refuse it before
+            // starting, and the row must say why instead of a generic failure that suggests retrying.
+            await using var season = await QueuedSeason.StartAsync(128 * 1024, outsideEntry: true);
+            Assert.True(SpinWait.SpinUntil(() => season.Status() == "Failed", TimeSpan.FromSeconds(60)), season.State());
+            Assert.Contains("The torrent lists a file outside the download folder; it was not started.", season.State(), StringComparison.Ordinal);
+            Assert.False(System.IO.Directory.Exists(season.Seeder.Outside), "The refused torrent created its outside entry.");
+            Assert.Empty(System.IO.Directory.GetFiles(season.Library, "*" + NativeTemporaryDownloadBoundaryTests.LocalSeeder.Title + "*",
+                System.IO.SearchOption.AllDirectories));
+            Assert.True(season.Button("Remove").IsEnabled, season.State());
         }
 
         [Fact(Skip = "Requires an isolated torrent-client endpoint; the previous check did not simulate an outage.")]
@@ -137,12 +154,26 @@ namespace UniversalMediaOS.Tests.E2E.Tests
             Assert.NotNull(refreshBtn);
         }
 
-        [Fact(Skip = "Requires direct malformed-magnet submission; the previous check did not submit a magnet URI.")]
-        public void T2_Downloads_04_Malformed_Info_Hash_Magnet_Link()
+        [Fact]
+        public async System.Threading.Tasks.Task T2_Downloads_04_Malformed_Info_Hash_Magnet_Link()
         {
-            NavigateTo("Downloads");
-            var refreshBtn = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByName("Refresh"))?.AsButton();
-            Assert.NotNull(refreshBtn);
+            // Magnets reach the queue only through the feeds. First the feed lists only a release whose magnet has no
+            // valid hash: the row fails and says so, and nothing is transferred. Once the usable release is listed
+            // below the better-seeded malformed one, Retry searches again and downloads the usable release.
+            await using var season = await QueuedSeason.StartAsync(64 * 1024, seeder =>
+            {
+                seeder.MalformedMagnet = "magnet:?xt=urn:btih:0123456789ABCDEF&dn=Queue+Space+Fixture";
+                seeder.OfferRelease = false;
+            });
+            Assert.True(SpinWait.SpinUntil(() => season.Status() == "Failed", TimeSpan.FromSeconds(60)), season.State());
+            Assert.Contains("No release found has a magnet link with a valid transfer hash", season.State(), StringComparison.Ordinal);
+            Assert.Equal(0, season.Seeder.UploadedBytes);
+            Assert.Equal(0, season.PartialBytes());
+
+            season.Seeder.OfferRelease = true;
+            season.Press("Retry");
+            season.WaitForProgress(above: 0);
+            Assert.True(season.PartialBytes() > 0, season.State());
         }
 
         [Fact]
@@ -178,12 +209,15 @@ namespace UniversalMediaOS.Tests.E2E.Tests
             public AppFixture App { get; }
             public string Library => System.IO.Path.Combine(App.SandboxPath, "library");
 
-            public static async System.Threading.Tasks.Task<QueuedSeason> StartAsync(int rate)
+            /// <summary>Starts the seeder, lets <paramref name="prepare"/> change its feed, then starts the app.</summary>
+            public static async System.Threading.Tasks.Task<QueuedSeason> StartAsync(int rate,
+                Action<NativeTemporaryDownloadBoundaryTests.LocalSeeder>? prepare = null, bool outsideEntry = false, string audio = "Sub")
             {
-                var seeder = await NativeTemporaryDownloadBoundaryTests.LocalSeeder.StartAsync(rate);
+                var seeder = await NativeTemporaryDownloadBoundaryTests.LocalSeeder.StartAsync(rate, outsideEntry: outsideEntry);
                 try
                 {
-                    var app = new AppFixture(mangaPagePng: null, initializeProfile: root => Seed(root, seeder));
+                    prepare?.Invoke(seeder);
+                    var app = new AppFixture(mangaPagePng: null, initializeProfile: root => Seed(root, seeder, audio));
                     var season = new QueuedSeason(seeder, app);
                     season.OpenDownloads();
                     return season;
@@ -195,7 +229,7 @@ namespace UniversalMediaOS.Tests.E2E.Tests
                 }
             }
 
-            private static void Seed(string root, NativeTemporaryDownloadBoundaryTests.LocalSeeder seeder)
+            private static void Seed(string root, NativeTemporaryDownloadBoundaryTests.LocalSeeder seeder, string audio)
             {
                 string profile = System.IO.Path.Combine(root, "Roaming", "UniversalMediaOS");
                 string configPath = System.IO.Path.Combine(profile, "config.json");
@@ -210,7 +244,7 @@ namespace UniversalMediaOS.Tests.E2E.Tests
                 var job = new UniversalMediaOS.Core.Archiving.DownloadQueueJob
                 {
                     Title = NativeTemporaryDownloadBoundaryTests.LocalSeeder.Title,
-                    AudioPreference = "Sub",
+                    AudioPreference = audio,
                     TotalEpisodes = 1,
                     ReleaseSelectionProtocol = 1
                 };
@@ -260,6 +294,9 @@ namespace UniversalMediaOS.Tests.E2E.Tests
                 Dialog()!.FindFirstDescendant(cf => cf.ByAutomationId("6").And(cf.ByControlType(ControlType.Button)))!.AsButton().Invoke();
                 Assert.True(SpinWait.SpinUntil(() => Dialog() == null, TimeSpan.FromSeconds(5)), $"'{title}' did not close.");
             }
+
+            public string QueueFile() => System.IO.File.ReadAllText(
+                System.IO.Path.Combine(App.SandboxPath, "Roaming", "UniversalMediaOS", "download-queue.json"));
 
             public string PlayerTitle() =>
                 MainWindow().FindFirstDescendant(cf => cf.ByAutomationId("MediaTitleText"))?.Name ?? string.Empty;
