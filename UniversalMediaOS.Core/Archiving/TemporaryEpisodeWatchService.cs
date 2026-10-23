@@ -523,7 +523,7 @@ public sealed class TemporaryEpisodeWatchService
             .Select(match => match.Value.ToLowerInvariant()));
         string observed = Words(withoutUnit);
         const string decoration = @"ova|specials?|sub|subbed|dub|dubbed|dual audio|english audio|english dub|" +
-            @"eng|jpn|japanese|480p|720p|1080p|2160p|4k|8bit|10bit|hevc|x264|x265|h264|h265|aac|eac3|flac|opus|[a-f0-9]{8}|" +
+            @"eng|jpn|japanese|[0-9]{3,4}p|[0-9]{3,4}x[0-9]{3,4}|4k|8bit|10bit|hevc|x264|x265|h264|h265|aac|eac3|flac|opus|[a-f0-9]{8}|" +
             // Source and subtitle tags describe the file, never another work.
             @"bd|bdrip|dvd|dvdrip|web|webrip|web dl|cr|ac3|multi subs?|multisubs?";
         foreach (string title in titles.Where(title => !string.IsNullOrWhiteSpace(title)))
