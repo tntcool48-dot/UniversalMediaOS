@@ -35,7 +35,7 @@ public sealed class NativeAudioPreferenceMatchingTests
             "unrecognized-tag" => [PlaybackTrackOption.Native(7, "Japanese", "not-a-language", "New dialogue", "Audio")],
             _ => throw new ArgumentOutOfRangeException(nameof(scenario))
         };
-        var selected = PlaybackTrackOption.RememberedNativeAudio(choices, previous.Key, previous.NativeLanguage);
+        var selected = PlaybackTrackOption.Remembered(choices, previous.Key, previous.NativeLanguage);
         Assert.Equal(expected, selected?.NativeId ?? -1);
     }
 }

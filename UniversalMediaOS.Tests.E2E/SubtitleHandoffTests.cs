@@ -219,6 +219,52 @@ public sealed class SubtitleHandoffTests
     }
 
     [Fact]
+    public void RequestedCaptionLanguageSurvivesProvidersThatLabelItDifferentlyWithoutGuessingBetweenFiles()
+    {
+        using var profile = new CaptionTestDataScope();
+        using var player = new PlaybackViewModel(new DatabaseContext());
+        player.SetTabActive(false);
+        player.LoadMedia("https://first-provider.example/2.m3u8", "Fixture", subtitles: [
+            new("https://captions.first.example/2/en.vtt", "English", "en"),
+            new("https://captions.first.example/2/ar.vtt", "Arabic", "ar")]);
+        player.SelectedCaption = player.CaptionOptions.Single(option => option.Label == "Arabic");
+        // Another provider declares the same requested language under its own name.
+        player.LoadMedia("https://second-provider.example/2.m3u8", "Fixture", subtitles: [
+            new("https://captions.second.example/2/eng.vtt", "English [CC]", "eng"),
+            new("https://captions.second.example/2/ara.vtt", "العربية", "ara")]);
+        Assert.Equal("العربية", player.SelectedCaption!.Label);
+        Assert.Contains("ara.vtt", Assert.Single(CurrentMedia(player).Slaves).Uri);
+        player.RetryPlaybackCommand.Execute(null);
+        Assert.Equal("العربية", player.SelectedCaption!.Label);
+        Assert.Contains("ara.vtt", Assert.Single(CurrentMedia(player).Slaves).Uri);
+
+        // Off/on on a later provider restores that language, not the first file.
+        player.ToggleCaptionsCommand.Execute(null);
+        Assert.Equal("off", player.SelectedCaption!.Key);
+        player.LoadMedia("https://third-provider.example/3.m3u8", "Fixture", subtitles: [
+            new("https://captions.third.example/3/en.vtt", "English", "en"),
+            new("https://captions.third.example/3/ar.vtt", "Arabic (Full)", "ar")]);
+        Assert.Equal("off", player.SelectedCaption!.Key);
+        Assert.Empty(CurrentMedia(player).Slaves);
+        player.ToggleCaptionsCommand.Execute(null);
+        Assert.Equal("Arabic (Full)", player.SelectedCaption!.Label);
+        Assert.Contains("/3/ar.vtt", Assert.Single(CurrentMedia(player).Slaves).Uri);
+
+        // Two files of the requested language, or none, remain unresolved rather than guessed.
+        player.LoadMedia("https://fourth-provider.example/4.m3u8", "Fixture", subtitles: [
+            new("https://captions.fourth.example/4/ar-signs.vtt", "Arabic Signs", "ar"),
+            new("https://captions.fourth.example/4/ar-dialogue.vtt", "Arabic Dialogue", "ara"),
+            new("https://captions.fourth.example/4/en.vtt", "English", "en")]);
+        Assert.Equal("off", player.SelectedCaption!.Key);
+        Assert.Empty(CurrentMedia(player).Slaves);
+        player.LoadMedia("https://fifth-provider.example/5.m3u8", "Fixture", subtitles: [
+            new("https://captions.fifth.example/5/en.vtt", "English", "en"),
+            new("https://captions.fifth.example/5/unknown.vtt", "Arabic", "")]);
+        Assert.Equal("off", player.SelectedCaption!.Key);
+        Assert.Empty(CurrentMedia(player).Slaves);
+    }
+
+    [Fact]
     public void BoundDownloadedCaptionSelectorRetainsOffAndEnglishAcrossRefreshAndRetry()
     {
         RecoveryLayoutTests.RunSta(() =>

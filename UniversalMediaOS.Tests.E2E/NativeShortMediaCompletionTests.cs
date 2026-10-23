@@ -1021,6 +1021,111 @@ public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
             }
         }, TimeSpan.FromSeconds(60));
 
+    [Fact]
+    public Task NativeRetryAfterAFailedProviderStartResumesTheUnitsSavedPosition()
+        => NativeUnstartedReloadAsync(captionChoice: false);
+
+    [Fact]
+    public Task SidecarCaptionChoiceBeforeNativeStartKeepsTheUnitsSavedPosition()
+        => NativeUnstartedReloadAsync(captionChoice: true);
+
+    private static Task NativeUnstartedReloadAsync(bool captionChoice)
+        => OnDispatcher(async () =>
+        {
+            string? previous = Environment.GetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable);
+            string parent = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "UniversalMediaOS.Tests"));
+            string root = Path.Combine(parent, "NativeUnstartedReload-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, root);
+            string? connectionString = null;
+            PlaybackProgressService? progress = null;
+            const string work = "anime:anilist:731904";
+            const string notice = "Sub server selected · audio language unverified";
+            try
+            {
+                string video = Path.Combine(root, captionChoice ? "episode-0002.mkv" : "episode-0002.mp4");
+                string caption = Path.Combine(root, "episode-0002.en.srt");
+                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                var encoded = await new PreparationProcessRunner().RunAsync("ffmpeg", ["-nostdin", "-hide_banner", "-v", "error",
+                    "-f", "lavfi", "-i", "testsrc=size=160x90:rate=10", "-t", "45", "-c:v", "mpeg4",
+                    .. (captionChoice ? Array.Empty<string>() : ["-movflags", "+faststart"]), "-y", video], deadline.Token);
+                Assert.Equal(0, encoded.ExitCode);
+                File.WriteAllText(caption, "1\n00:00:00,000 --> 00:00:45,000\nSidecar English cue\nSecond line\n");
+                using (var seed = new DatabaseContext())
+                {
+                    seed.Database.EnsureCreated();
+                    connectionString = seed.Database.GetConnectionString();
+                    seed.SaveResumeState(work, "episode:2", 17);
+                    seed.SaveResumeState(work, "episode:3", 11);
+                }
+                // The selected provider host is unavailable for the first request,
+                // as observed live, and serves the same episode on the person's Retry.
+                var resources = new System.Collections.Concurrent.ConcurrentDictionary<string, byte[]>();
+                using var server = new VideoServer(resources, Path.GetFileName(video));
+                var context = new EpisodePlaybackContext(1, 3, (_, _) => Task.FromResult<ResolvedEpisodePlayback?>(null),
+                    "sub", new AnimePlaybackIdentity(731904));
+                progress = new(new AudiovisualLibraryService());
+                using var memory = new MemoryVideo();
+                using var player = new PlaybackViewModel(new DatabaseContext(), null, null, playbackProgress: progress);
+                memory.Attach(player.MediaPlayer);
+                player.Volume = 0;
+                if (captionChoice)
+                {
+                    player.LoadMedia(video, "Downloaded episode 2", episodeNumber: "2", episodeContext: context,
+                        audioNotice: notice, localCaptionPaths: [caption]);
+                    await player.ResumeLoadCompleted.WaitAsync(TimeSpan.FromSeconds(5));
+                    Assert.Contains("English", player.SelectedCaption!.Label);
+                    // The person turns captions off while the episode is still opening.
+                    player.SelectedCaption = player.CaptionOptions.Single(option => option.Key == "off");
+                    player.PlayPending();
+                }
+                else
+                {
+                    player.LoadMedia(server.Url, "Streamed episode 2", episodeNumber: "2", episodeContext: context,
+                        audioNotice: notice);
+                    player.PlayPending();
+                    await Wait(() => player.HasPlaybackError, player);
+                    Assert.Equal(0, memory.Frames);
+                    resources[Path.GetFileName(video)] = await File.ReadAllBytesAsync(video);
+                    player.RetryPlaybackCommand.Execute(null);
+                }
+                // Twelve seconds of decoding from zero cannot reach the saved 17 seconds.
+                await Wait(() => memory.Frames >= 2 && player.MediaPlayer.Time >= 16_500 && !player.HasPlaybackError, player,
+                    () => $"native time={player.MediaPlayer.Time}, frames={memory.Frames}, state={player.MediaPlayer.State}");
+                Assert.InRange(player.MediaPlayer.Time, 16_500, 24_000);
+                // Neither the failed start nor the early choice was a pause request.
+                await Wait(() => player.IsPlaying && player.MediaPlayer.State == VLCState.Playing, player);
+                if (captionChoice) Assert.Equal("off", player.SelectedCaption!.Key);
+                Assert.Equal(notice, player.AudioNotice);
+                Assert.Equal("sub", player.BrowserAudioPreference);
+                Assert.Contains("Episode 2", player.EpisodeInfo);
+                player.TogglePlayPauseCommand.Execute(null);
+                await Wait(() => player.MediaPlayer.State == VLCState.Paused && !player.IsPlaying, player);
+                long paused = player.MediaPlayer.Time;
+                player.SetTabActive(false);
+                await player.FlushResumeAsync().WaitAsync(TimeSpan.FromSeconds(5));
+                player.Dispose();
+                await progress.FlushAsync().WaitAsync(TimeSpan.FromSeconds(5));
+                using var verify = new DatabaseContext();
+                Assert.InRange(verify.GetResumeState(work, "episode:2"), 16.5, paused / 1000.0 + 0.5);
+                Assert.Equal(11, verify.GetResumeState(work, "episode:3"));
+                Assert.True(File.Exists(caption));
+            }
+            finally
+            {
+                if (progress != null) await progress.FlushAsync().WaitAsync(TimeSpan.FromSeconds(5));
+                Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, previous);
+                if (connectionString != null)
+                {
+                    using var pool = new Microsoft.Data.Sqlite.SqliteConnection(connectionString);
+                    Microsoft.Data.Sqlite.SqliteConnection.ClearPool(pool);
+                }
+                Assert.StartsWith(parent + Path.DirectorySeparatorChar, root, StringComparison.OrdinalIgnoreCase);
+                Assert.Null(new DirectoryInfo(root).LinkTarget);
+                if (Directory.Exists(root)) Directory.Delete(root, true);
+            }
+        });
+
     private sealed class MemoryVideo(bool capturePixels = false) : IDisposable
     {
         private readonly IntPtr _buffer = Marshal.AllocHGlobal(160 * 90 * 4);

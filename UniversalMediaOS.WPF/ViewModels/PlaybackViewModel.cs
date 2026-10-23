@@ -168,8 +168,10 @@ namespace UniversalMediaOS.WPF.ViewModels
         internal Task EmbeddedCaptionPreparation => _embeddedCaptionPreparation;
         private readonly HashSet<string> _mediaProxySessions = [];
         private string? _preferredCaptionKey;
+        private string? _preferredCaptionLanguage;
         private PlaybackTrackOption? _attachedCaption;
         private string? _lastEnabledCaptionKey;
+        private string? _lastEnabledCaptionLanguage;
         private bool _suppressTrackSelection;
         private bool _restoringCurrentPosition;
         private string? _preferredAudioKey;
@@ -690,7 +692,7 @@ namespace UniversalMediaOS.WPF.ViewModels
         {
             if (!_suppressTrackSelection && !IsWebViewActive && !IsDisposed &&
                 newValue?.Key == "off" && oldValue is { Key: not "off" })
-                _lastEnabledCaptionKey = oldValue.Key;
+                (_lastEnabledCaptionKey, _lastEnabledCaptionLanguage) = (oldValue.Key, oldValue.DeclaredLanguage);
         }
 
         partial void OnSelectedCaptionChanged(PlaybackTrackOption? value)
@@ -705,8 +707,10 @@ namespace UniversalMediaOS.WPF.ViewModels
                 _attemptedEmbeddedCaptions.Remove(_pendingEmbeddedCaptionKey);
                 _pendingEmbeddedCaptionKey = null;
             }
-            if (value.Key != "off") _lastEnabledCaptionKey = value.Key;
+            if (value.Key != "off") (_lastEnabledCaptionKey, _lastEnabledCaptionLanguage) = (value.Key, value.DeclaredLanguage);
             _preferredCaptionKey = value.Key.StartsWith("unverified:", StringComparison.Ordinal) ? null : value.Key;
+            // Another provider may name the same requested language differently.
+            _preferredCaptionLanguage = value.DeclaredLanguage;
             _restoreCaptionSelection = true;
             if (value.Subtitle != null || _attachedCaption != null)
             {
@@ -844,7 +848,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             var cancellation = new CancellationTokenSource();
             _embeddedCaptionCancellation = cancellation;
             _pendingEmbeddedCaptionKey = option.Key;
-            _preferredCaptionKey = option.Key;
+            (_preferredCaptionKey, _preferredCaptionLanguage) = (option.Key, option.DeclaredLanguage);
             int generation = _playbackGeneration;
             string localBase = AppDataPaths.LocalBaseDirectory;
             _embeddedCaptionPreparation = PrepareAsync();
@@ -1138,7 +1142,7 @@ namespace UniversalMediaOS.WPF.ViewModels
             PlaybackTrackOption? selected = _preferredCaptionKey == null
                 ? choices.FirstOrDefault(option => option.Subtitle!.IsEnglish) ??
                   choices.FirstOrDefault(option => option.Subtitle!.IsDefault) ?? choices.FirstOrDefault()
-                : choices.FirstOrDefault(option => option.Key == _preferredCaptionKey);
+                : PlaybackTrackOption.Remembered(choices, _preferredCaptionKey, _preferredCaptionLanguage);
             _attachedCaption = null;
             if (selected == null) return;
             var track = selected.Subtitle!;
@@ -1844,7 +1848,7 @@ namespace UniversalMediaOS.WPF.ViewModels
                 // to the next language or guessing when that file is absent.
                 var requested = _lastEnabledCaptionKey == null
                     ? CaptionOptions.FirstOrDefault(option => option.Key != "off")
-                    : UniqueTrack(CaptionOptions, _lastEnabledCaptionKey);
+                    : PlaybackTrackOption.Remembered(CaptionOptions, _lastEnabledCaptionKey, _lastEnabledCaptionLanguage);
                 if (requested != null) SelectedCaption = requested;
             }
         }
@@ -2346,9 +2350,11 @@ namespace UniversalMediaOS.WPF.ViewModels
             double? resumePositionSeconds = null)
         {
             if (_isDisposing || IsDisposed || IsWebViewActive || string.IsNullOrWhiteSpace(_lastMediaSource)) return;
-            double positionSeconds = restart ? 0 : resumePositionSeconds ?? GetCurrentPlaybackPositionSeconds();
+            double? positionSeconds = restart ? 0 : resumePositionSeconds ?? RetainedReloadPositionSeconds();
+            // An input still opening has no paused state yet; keep its start intent.
+            bool opening = IsPlaybackBusy && !HasPlaybackError && !_nativePlaybackStarted;
             bool paused = !IsTabActive || (!restart &&
-                (_pauseWhenStarted || (!IsPlaying && !(resumeOnError && HasPlaybackError))));
+                (_pauseWhenStarted || (!IsPlaying && !opening && !(resumeOnError && HasPlaybackError))));
             PlaybackQualityOption[] options = QualityOptions.ToArray();
             string source = option?.Url ?? _lastMediaSource;
             // No deferred continuation may replace a newer episode or a disposed player.
@@ -2372,6 +2378,16 @@ namespace UniversalMediaOS.WPF.ViewModels
                 finally { _suppressQualitySelection = false; }
             }
             PlayPending();
+        }
+
+        // An input that failed, or changed choice, before a decoded clock has not
+        // left the unit's saved position. Keep its unapplied target, or let the
+        // reload read the saved row, instead of restarting the unit at zero.
+        private double? RetainedReloadPositionSeconds()
+        {
+            double current = GetCurrentPlaybackPositionSeconds();
+            if (current > 0) return current;
+            return !_resumeSeekApplied && _pendingResumePositionSeconds > 0 ? _pendingResumePositionSeconds : null;
         }
 
         internal bool RedrawPausedNativeFrame()
@@ -2595,7 +2611,8 @@ namespace UniversalMediaOS.WPF.ViewModels
                 {
                     if (_restoreCaptionSelection)
                     {
-                        var preferred = _preferredCaptionKey == "off" ? off : UniqueTrack(choices, _preferredCaptionKey);
+                        var preferred = _preferredCaptionKey == "off" ? off
+                            : PlaybackTrackOption.Remembered(choices, _preferredCaptionKey, _preferredCaptionLanguage);
                         if (preferred != null && MediaPlayer.SetSpu(preferred.NativeId)) _restoreCaptionSelection = false;
                     }
                     SelectedCaption = _pendingEmbeddedCaptionKey != null
@@ -2624,7 +2641,7 @@ namespace UniversalMediaOS.WPF.ViewModels
                 AudioTracksAvailable = choices.Count > 1;
                 if (_restoreAudioSelection && _preferredAudioKey != null)
                 {
-                    var preferred = PlaybackTrackOption.RememberedNativeAudio(choices, _preferredAudioKey, _preferredAudioLanguage);
+                    var preferred = PlaybackTrackOption.Remembered(choices, _preferredAudioKey, _preferredAudioLanguage);
                     if (preferred != null && MediaPlayer.SetAudioTrack(preferred.NativeId))
                     {
                         _preferredAudioKey = preferred.Key;
