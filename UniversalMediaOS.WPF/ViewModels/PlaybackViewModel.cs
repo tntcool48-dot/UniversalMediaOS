@@ -978,14 +978,10 @@ namespace UniversalMediaOS.WPF.ViewModels
             _lastMediaSubtitles = MediaSubtitleTrack.Copy(subtitles)
                 .Concat(_lastLocalCaptionPaths.Select(path =>
                 {
-                    string fileName = Path.GetFileNameWithoutExtension(path);
-                    string language = fileName.EndsWith(".en", StringComparison.OrdinalIgnoreCase) ||
-                        fileName.EndsWith(".eng", StringComparison.OrdinalIgnoreCase) ? "en" :
-                        fileName.EndsWith(".ar", StringComparison.OrdinalIgnoreCase) ||
-                        fileName.EndsWith(".ara", StringComparison.OrdinalIgnoreCase) ? "ar" : string.Empty;
+                    string language = CaptionLanguage.FromFileName(path);
                     return new MediaSubtitleTrack(new Uri(Path.GetFullPath(path)).AbsoluteUri,
                         string.IsNullOrEmpty(language) ? "Downloaded subtitles" :
-                        language == "en" ? "English (downloaded)" : "Arabic (downloaded)", language);
+                        $"{CaptionLanguage.EnglishName(language)} (downloaded)", language);
                 })).ToArray();
             AudioNotice = audioNotice ?? string.Empty;
             _restoreCaptionSelection = true;

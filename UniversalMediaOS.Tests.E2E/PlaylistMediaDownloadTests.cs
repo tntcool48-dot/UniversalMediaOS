@@ -229,6 +229,24 @@ public sealed class PlaylistMediaDownloadTests
     }
 
     [Fact]
+    public async Task SavedCaptionsKeepEveryDeclaredLanguageInTheirNames()
+    {
+        using var fixture = new Fixture();
+        fixture.Handler.Text("video.m3u8", Leaf());
+        fixture.Handler.Bytes("one.ts", new byte[1000]);
+        fixture.Handler.Bytes("two.ts", new byte[1000]);
+        const string cue = "WEBVTT\n\n00:00:00.000 --> 00:00:03.000\nCue\n";
+        string[] declared = ["en", "fre", "es", "pt-BR", "ara", "ja", "", "not-a-language"];
+        var source = Source() with { Subtitles = declared.Select((language, index) =>
+            new MediaSubtitleTrack($"https://93.184.216.34/caption-{index}", language, language) { InlineVtt = cue }).ToArray() };
+        var result = await fixture.Service.DownloadTemporaryAsync(source, Context(source));
+        Assert.Equal(new[] { "caption-01.en.vtt", "caption-02.fr.vtt", "caption-03.es.vtt", "caption-04.pt-br.vtt",
+            "caption-05.ar.vtt", "caption-06.ja.vtt", "caption-07.vtt", "caption-08.vtt" },
+            result.CaptionPaths.Select(path => Path.GetFileName(path)).ToArray());
+        result.Lease.Dispose();
+    }
+
+    [Fact]
     public async Task CheckedRenditionRetainsBothAudioLanguagesAndDoesNotFetchOtherVideo()
     {
         using var fixture = new Fixture();

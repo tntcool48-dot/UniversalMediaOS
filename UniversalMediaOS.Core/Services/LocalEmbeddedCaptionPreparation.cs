@@ -74,16 +74,7 @@ public sealed class LocalEmbeddedCaptionPreparation
         return format == null ? null : (number, format);
     }
 
-    private static string NormalizeLanguage(string value)
-    {
-        value = value.Trim().ToLowerInvariant();
-        if (value is "" or "und" or "unknown") return "";
-        value = value switch { "ger" => "deu", "fre" => "fra", "dut" => "nld", _ => value };
-        return CultureInfo.GetCultures(CultureTypes.NeutralCultures).FirstOrDefault(c =>
-            c.TwoLetterISOLanguageName == value || c.ThreeLetterISOLanguageName == value ||
-            c.EnglishName.Equals(value, StringComparison.OrdinalIgnoreCase) ||
-            c.NativeName.Equals(value, StringComparison.OrdinalIgnoreCase))?.TwoLetterISOLanguageName ?? value;
-    }
+    private static string NormalizeLanguage(string value) => CaptionLanguage.Normalize(value);
 }
 
 public sealed class PreparedLocalCaption : IDisposable

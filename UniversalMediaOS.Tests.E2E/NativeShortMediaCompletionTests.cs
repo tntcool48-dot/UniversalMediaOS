@@ -786,9 +786,10 @@ public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
     }
 
     [Theory]
-    [InlineData("ass")]
-    [InlineData("srt")]
-    public Task PausedEmbeddedCaptionRestorationRepaintsWithoutStartingPlayback(string subtitleCodec)
+    [InlineData("ass", "eng", "English")]
+    [InlineData("srt", "eng", "English")]
+    [InlineData("srt", "ger", "German")]
+    public Task PausedEmbeddedCaptionRestorationRepaintsWithoutStartingPlayback(string subtitleCodec, string language, string title)
         => OnDispatcher(async () =>
         {
             string? previous = Environment.GetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable);
@@ -807,7 +808,7 @@ public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
                     "-f", "lavfi", "-i", "color=c=black:size=160x90:rate=24", "-i", caption,
                     "-map", "0:v", "-map", "1:s", "-t", "15", "-c:v", subtitleCodec == "srt" ? "libx264" : "mpeg4",
                     "-g", "60", "-c:s", subtitleCodec,
-                    "-metadata:s:s:0", "language=eng", "-metadata:s:s:0", "title=English", "-y", video], deadline.Token);
+                    "-metadata:s:s:0", "language=" + language, "-metadata:s:s:0", "title=" + title, "-y", video], deadline.Token);
                 Assert.Equal(0, encoded.ExitCode);
                 File.Delete(caption); // The player must use the embedded track, not a discovered sidecar.
                 using (var seed = new DatabaseContext())
@@ -822,6 +823,15 @@ public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
                 player.Volume = 0;
                 player.LoadMedia(video, "Embedded caption fixture");
                 player.PlayPending();
+                if (language != "eng")
+                {
+                    // LibVLC enables an English-tagged track by itself but not a German one.
+                    // Enable it in the decoder the same way, and rewind so the first cue is demuxed
+                    // again, so the user's toggles below start alike.
+                    await Wait(() => player.IsPlaying && player.MediaPlayer.SpuDescription.Any(track => track.Id >= 0), player);
+                    player.MediaPlayer.SetSpu(player.MediaPlayer.SpuDescription.First(track => track.Id >= 0).Id);
+                    player.MediaPlayer.Time = 0;
+                }
                 await Wait(() => player.IsPlaying && player.MediaPlayer.Time >= 1_000 &&
                     player.SelectedCaption is { Key: not "off" } && memory.BrightPixels > 5, player);
                 player.TogglePlayPauseCommand.Execute(null);
