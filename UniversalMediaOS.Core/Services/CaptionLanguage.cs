@@ -55,12 +55,23 @@ public static class CaptionLanguage
         return IsKnown(code) ? code : string.Empty;
     }
 
-    /// <summary>The name segment that keeps a saved caption's declared language, such as ".fr";
-    /// empty when the declared tag is not a known language.</summary>
-    public static string FileSuffix(string? value)
+    /// <summary>The language a provider declares, also as a language name followed by a qualifier
+    /// ("Swedish - full", "English [CC]"). A leading code alone is not enough: "No subtitles" is not Norwegian.</summary>
+    public static string FromDeclaration(string? value)
     {
         string code = Normalize(value);
-        return IsKnown(code) && code.All(c => c is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-')
+        if (IsKnown(code)) return code;
+        string name = new((value ?? string.Empty).TrimStart().TakeWhile(char.IsLetter).ToArray());
+        return Neutral.Any(culture => culture.EnglishName.Equals(name, StringComparison.OrdinalIgnoreCase) ||
+            culture.NativeName.Equals(name, StringComparison.OrdinalIgnoreCase)) ? Normalize(name) : string.Empty;
+    }
+
+    /// <summary>The name segment that keeps a saved caption's declared language, such as ".fr";
+    /// empty when the declaration names no known language.</summary>
+    public static string FileSuffix(string? value)
+    {
+        string code = FromDeclaration(value);
+        return code.Length > 0 && code.All(c => c is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-')
             ? "." + code : string.Empty;
     }
 }

@@ -167,7 +167,8 @@ internal sealed partial class PlaylistMediaDownload
                 string extension = text.StartsWith("WEBVTT", StringComparison.Ordinal) ? ".vtt"
                     : text.StartsWith("[Script Info]", StringComparison.OrdinalIgnoreCase) ? ".ass" : ".srt";
                 // The player reads the language back from this name segment.
-                string language = CaptionLanguage.FileSuffix(track.Language);
+                string language = CaptionLanguage.FileSuffix(track.Language) is { Length: > 0 } declared
+                    ? declared : CaptionLanguage.FileSuffix(track.Label);
                 string path = Path.Combine(directory, $"caption-{paths.Count + 1:00}{language}{extension}");
                 _checkSpace(directory, bytes.Length);
                 await File.WriteAllBytesAsync(path, bytes, token).ConfigureAwait(false);

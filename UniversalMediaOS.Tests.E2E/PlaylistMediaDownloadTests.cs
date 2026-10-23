@@ -247,6 +247,25 @@ public sealed class PlaylistMediaDownloadTests
     }
 
     [Fact]
+    public async Task SavedCaptionsReadAProviderLanguageNameWithAQualifier()
+    {
+        using var fixture = new Fixture();
+        fixture.Handler.Text("video.m3u8", Leaf());
+        fixture.Handler.Bytes("one.ts", new byte[1000]);
+        fixture.Handler.Bytes("two.ts", new byte[1000]);
+        const string cue = "WEBVTT\n\n00:00:00.000 --> 00:00:03.000\nCue\n";
+        // Vidsrc declared Sintel's eleven captions this way on October 23, with the same value as label and language.
+        (string Label, string Language)[] declared = [("English full", "English full"), ("Swedish - full", "Swedish - full"),
+            ("Norwegian - full", "Norwegian - full"), ("Deutsch", ""), ("No subtitles", "No subtitles"), ("Track 3", "")];
+        var source = Source() with { Subtitles = declared.Select((track, index) =>
+            new MediaSubtitleTrack($"https://93.184.216.34/caption-{index}", track.Label, track.Language) { InlineVtt = cue }).ToArray() };
+        var result = await fixture.Service.DownloadTemporaryAsync(source, Context(source));
+        Assert.Equal(new[] { "caption-01.en.vtt", "caption-02.sv.vtt", "caption-03.no.vtt", "caption-04.de.vtt",
+            "caption-05.vtt", "caption-06.vtt" }, result.CaptionPaths.Select(path => Path.GetFileName(path)).ToArray());
+        result.Lease.Dispose();
+    }
+
+    [Fact]
     public async Task CheckedRenditionRetainsBothAudioLanguagesAndDoesNotFetchOtherVideo()
     {
         using var fixture = new Fixture();
