@@ -153,6 +153,51 @@ public sealed class PythonPreparationTests
     }
 
     [Fact]
+    public async Task InterpreterOlderThanThePinsSupportIsSkippedForTheNextCandidate()
+    {
+        // curl_cffi 0.15.0 and its dependencies require Python 3.10, so a 3.9 first on PATH can never install them.
+        var runner = new FakeRunner((_, _) => Task.FromResult("[]"))
+        {
+            VersionFor = executable => executable == "python.exe" ? "Python 3.9.13" : "Python 3.12.10"
+        };
+        using var fixture = new Fixture(runner, candidates: ["python.exe", "py.exe"]);
+
+        await fixture.Python.EnsureScraperReadyAsync();
+
+        Assert.Equal(PythonPreparationState.Ready, fixture.Python.Snapshot.State);
+        Assert.Equal("py.exe", fixture.Python.ResolvePythonExecutable());
+        Assert.DoesNotContain("python.exe", runner.ImportProbeExecutables);
+    }
+
+    [Theory]
+    [InlineData("Python 3.9.13")]
+    [InlineData("Python 3.6.8")]
+    public async Task OnlyAnInterpreterOlderThanThePinsSupportReportsItInsteadOfInstalling(string version)
+    {
+        var runner = new FakeRunner((_, _) => Task.FromResult("[\"curl_cffi\"]")) { VersionOutput = version };
+        using var fixture = new Fixture(runner, candidates: ["python.exe", "py.exe"]);
+
+        await fixture.Python.EnsureScraperReadyAsync();
+
+        Assert.Equal(PythonPreparationState.Failed, fixture.Python.Snapshot.State);
+        Assert.Equal("python_too_old", fixture.Python.Snapshot.DiagnosticCode);
+        Assert.Null(runner.InstallArguments);
+        Assert.Equal(0, runner.Probes);
+    }
+
+    [Theory]
+    [InlineData("Python 3.10.0")]
+    [InlineData("Python 3.13.2")]
+    [InlineData("Python 3.14.0rc1")]
+    public async Task SupportedInterpreterVersionsPrepare(string version)
+    {
+        var runner = new FakeRunner((_, _) => Task.FromResult("[]")) { VersionOutput = version };
+        using var fixture = new Fixture(runner);
+        await fixture.Python.EnsureScraperReadyAsync();
+        Assert.Equal(PythonPreparationState.Ready, fixture.Python.Snapshot.State);
+    }
+
+    [Fact]
     public async Task ForcedRepairSharesFreshWorkAndDoesNotCancelAnotherWaiter()
     {
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -265,13 +310,16 @@ public sealed class PythonPreparationTests
         public int Calls { get; private set; }
         public int PipExit { get; set; }
         public string VersionOutput { get; set; } = "Python 3.12.0";
+        public Func<string, string>? VersionFor { get; init; }
         public IReadOnlyList<string>? InstallArguments { get; private set; }
+        public List<string> ImportProbeExecutables { get; } = [];
         public async Task<PreparationProcessResult> RunAsync(string executable, IReadOnlyList<string> arguments, CancellationToken token)
         {
             Calls++;
-            if (arguments[0] == "--version") return new(0, VersionOutput);
+            if (arguments[0] == "--version") return new(0, VersionFor?.Invoke(executable) ?? VersionOutput);
             if (arguments[0] == "-m") { InstallArguments = arguments.ToArray(); return new(PipExit, ""); }
             if (arguments[1].StartsWith("import ast", StringComparison.Ordinal)) return new(0, "");
+            ImportProbeExecutables.Add(executable);
             return new(0, await probe(++Probes, token));
         }
     }
@@ -280,11 +328,11 @@ public sealed class PythonPreparationTests
         private readonly string _root = Path.Combine(Path.GetTempPath(), "UniversalMediaOS.PreparationTests", Guid.NewGuid().ToString("N"));
         public string Source { get; }
         public PythonBootstrapper Python { get; }
-        public Fixture(IPreparationProcessRunner runner, TimeSpan? budget = null)
+        public Fixture(IPreparationProcessRunner runner, TimeSpan? budget = null, string[]? candidates = null)
         {
             Source = Path.Combine(_root, "source"); Directory.CreateDirectory(Source);
             foreach (string script in new[] { "scraper.py", "book_scraper.py", "audiovisual_scraper.py" }) File.WriteAllText(Path.Combine(Source, script), "print('fixture')");
-            Python = new(runner, Source, Path.Combine(_root, "services"), ["fixture-python"], budget ?? TimeSpan.FromSeconds(10));
+            Python = new(runner, Source, Path.Combine(_root, "services"), candidates ?? ["fixture-python"], budget ?? TimeSpan.FromSeconds(10));
         }
         public void Dispose()
         {

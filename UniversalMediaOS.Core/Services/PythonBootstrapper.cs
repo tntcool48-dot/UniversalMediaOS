@@ -31,6 +31,7 @@ public sealed class PythonBootstrapper : IDisposable
     private bool _cancelRequested;
     private PythonPreparationSnapshot _snapshot = new(PythonPreparationState.NotStarted, "not_started", []);
     private static readonly string[] Scripts = ["scraper.py", "book_scraper.py", "audiovisual_scraper.py"];
+    private const int MinimumPythonMinor = 10;
     // Exact tested versions: release validation runs the scraper unit tests against these same pins.
     private static readonly (string Requirement, string Import)[] Packages =
     [ ("DrissionPage==4.1.1.4", "DrissionPage"), ("curl_cffi==0.15.0", "curl_cffi"), ("httpx==0.28.1", "httpx"),
@@ -89,6 +90,7 @@ public sealed class PythonBootstrapper : IDisposable
             _resolvedPython = null;
             if (Scripts.Any(s => !File.Exists(Path.Combine(_sourceDir, s))))
             { SetState(PythonPreparationState.Failed, "scripts_missing", []); return; }
+            bool tooOld = false;
             foreach (string candidate in _candidates)
             {
                 token.ThrowIfCancellationRequested();
@@ -97,14 +99,18 @@ public sealed class PythonBootstrapper : IDisposable
                 try
                 {
                     var result = await _runner.RunAsync(candidate, ["--version"], probe.Token).ConfigureAwait(false);
-                    if (result.ExitCode == 0 && result.Output.TrimStart().StartsWith("Python 3.", StringComparison.Ordinal))
-                    { _resolvedPython = candidate; break; }
+                    string version = result.Output.TrimStart();
+                    if (result.ExitCode != 0 || !version.StartsWith("Python 3.", StringComparison.Ordinal)) continue;
+                    // The pins (curl_cffi 0.15.0 and its dependencies) require 3.10; an older one can never install them.
+                    string minor = new(version["Python 3.".Length..].TakeWhile(char.IsAsciiDigit).ToArray());
+                    if (!int.TryParse(minor, out int parsed) || parsed < MinimumPythonMinor) { tooOld = true; continue; }
+                    _resolvedPython = candidate; break;
                 }
                 catch (OperationCanceledException) when (!token.IsCancellationRequested) { }
                 catch (System.ComponentModel.Win32Exception) { }
                 catch (IOException) { }
             }
-            if (_resolvedPython == null) { SetState(PythonPreparationState.Failed, "python_missing", []); return; }
+            if (_resolvedPython == null) { SetState(PythonPreparationState.Failed, tooOld ? "python_too_old" : "python_missing", []); return; }
             foreach (string script in Scripts)
             {
                 token.ThrowIfCancellationRequested();
