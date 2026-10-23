@@ -32,11 +32,13 @@ Three loads played video under hls.js without a recorded manifest response (vids
 
 Earlier probes agree: three Big Buck Bunny Archive items listed no `.mpd` (October 9), and Commons' Big Buck Bunny advertised only WebM/QuickTime renditions (October 16). The official Shaka Sintel MPD and BBC R&D streams are engineering samples without a catalog binding. The app also refuses Shaka's indexed single-file (`SegmentBase`) form.
 
-### Proposed accepted exclusion (needs the user's approval)
+### Accepted exclusion (approved by the user, 2026-10-23)
+
+The user approved this exclusion on October 23, 2026: "Accept catalog DASH as a documented exclusion".
 
 > Independently matched **catalog** DASH Watch via download/native playback is excluded from this checklist item. None of the app's real providers serves DASH for a catalog item: Internet Archive is progressive-only by design, no JSON-index provider is configured by default, and the four embed routes and vidsrc mirrors played HLS in every load that reached media. DASH transport itself stays qualified by the public finite sample with native frames and the controlled finite-DASH remux/decode/ownership checks ([DASH native QA](dash-native-validation-2026-10-03.md)). Reopen if a provider, such as a user-configured index, offers an MPD for a matched catalog item.
 
-Until the user accepts this, the DASH half of the item stays open. No code was changed for it.
+Catalog DASH is therefore closed for this item as an accepted exclusion, not as a passed journey. No code was changed for it.
 
 ## Second complete TV season
 
@@ -92,7 +94,6 @@ The 517 MB of media, the profile and the browser profiles were deleted after thi
 ## Limits and follow-ups
 
 - **What remains open in this item:**
-  - Catalog DASH waits on the user's decision on the exclusion above.
   - Spoken audio stays unknown for both qualified seasons (Breaking Bad S1, The Office S1), and so does specified-audio season acceptance.
   - Freely licensed and public-domain seasons are unavailable through the current providers.
   - These cue checks do not certify synchronization throughout each episode.
