@@ -56,3 +56,41 @@ Receipts and sanitized logs: `live-run1/*.json|.log` in the evidence folder. The
 | Frieren ep 6 **Dub** | Unavailable after 3 sites, 66.4 s | — | — |
 
 The same unit and audio can be served in one run and unavailable in the next. Availability is a live provider state, not a property of the title, and the app reported each miss as unavailable. Receipts: `live-run2/`.
+
+### Third and fourth runs (October 24, 04:09–04:41)
+
+Run 3 served Spy x Family episodes **2, 3 and 4 Sub** natively through Anikoto (17.7–18.4 s each, each with exact title, MAL and episode evidence); episode 5 Sub was unavailable. Run 4 served episodes **3 and 4 Sub**, while episode 2 Sub and episode 4 **Dub** were unavailable. The per-stream speech check found **one** untagged AAC stereo audio stream in each sample. Whisper reports Japanese for episode 3 (0.986, 12 speech segments). For episode 4 it leans Japanese (0.985) but finds **no** speech segments above its no-speech threshold in that 30-second window, so it is not counted as speech evidence. Receipts: `live-run3/`, `live/` (run 4).
+
+## Live provider media through the real player (run 4)
+
+A temporary harness, not committed (`probe/live-harness-temporary.diff`), replayed two fresh production resolver results through the production handoff (`TripleNetHandoff`), the HLS loopback proxy, provider caption attachment, the real `PlaybackViewModel` and the LibVLC decoder, with no window. The private request context (URLs, cookies, headers) was deleted straight afterwards. The saved rows were seeded at **300 s (episode 3)** and **200 s (episode 4)** in an owned data root. Each step had to decode new frames and advance the clock past its target:
+
+| Step | Result |
+|---|---|
+| Open episode 3 Sub | decoding at **301.372 s** from its saved 300 s; notice **"Sub server selected · audio language unverified"**; 12 caption choices; English default attached; one audio choice, untagged "Track 2" |
+| Choose Arabic while playing | reloaded at its clock and kept playing (303.088 s); Arabic file attached |
+| Pause, then Retry | stayed **paused** at 303.914 s (the known ~0.8 s reload drift); Arabic kept |
+| Next → episode 4 | decoding at **201.570 s** from its own saved 200 s; **Arabic kept**; same unverified notice |
+| Previous → episode 3 | resumed from its saved paused clock and played on (304.556 s); Arabic kept |
+| Saved rows | episode 3 = **304.556 s**, episode 4 = **201.570 s** |
+
+Result: **1 / 1 passed in 14 s** (`live-harness-20261023.trx`, SHA-256 `eba8ded1…`). An earlier attempt is retained as a weaker run (`live-harness-attempt2-weak-20261023.trx`): it passed while checking only seek targets, which is why the waits were strengthened. A first attempt (`…attempt1…`) had no second native unit to replay. This qualifies requested caption language and per-unit position through a caption change, Retry and unit changes on real provider media within one provider. Anikoto's label-only captions match by exact label; no cross-provider live change was available in these runs.
+
+## Remaining and limits
+
+- **Spoken audio** has automated support only for the samples above; no human listened in this batch. Three private 30-second samples are prepared for a human check (see below). Full-duration audio and other units stay unqualified.
+- **Providers:** every native result came from Anikoto. Miruro and Re:Anime matched units without catalog IDs, or not at all, within the budget. No second provider served media, so cross-provider rotation was qualified only by the repaired controlled regression.
+- **Captions:** provider VTT files (timing and multiline counts) are qualified for the units above. The visible rendering of these live cues in the app window, embedded anime captions beyond the earlier downloaded sample, and sidecar anime captions beyond the controlled regression were not repeated here.
+- **Physical app:** no visible app journey ran for this batch. The live harness used the production player without a window.
+- **Chromium profiles:** after four probe runs, the owned data root holds only 40 KB of browser profiles. These normal, uncancelled resolves left nothing behind; the cancellation path was not exercised.
+- **Disk:** about 2.6 MB of private WAVs remain. All TS samples and private resolver files were removed.
+
+### Prepared human listening check
+
+Each file is a mono 16 kHz WAV of the stated media window, in the worktree's ignored folder `.artifacts/implementation/anime-sub-dub-20261023/live-private/`:
+
+| File | Media window | Question |
+|---|---|---|
+| `154587-ep5-dub.wav` | Frieren ep 5 **Dub**, 10:06.6–10:31.2 | Are the voices speaking English? |
+| `140960-ep2-dub.wav` | Spy x Family ep 2 **Dub**, 10:00.4–10:30.4 | Are the voices speaking English? |
+| `140960-ep2-sub.wav` | Spy x Family ep 2 **Sub**, 10:02.9–10:30.9 | Are the voices speaking Japanese? |
