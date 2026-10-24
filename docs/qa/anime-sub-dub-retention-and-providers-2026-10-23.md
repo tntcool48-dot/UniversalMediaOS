@@ -45,3 +45,14 @@ Observations:
 - Even the successful resolves reached Anikoto's third server after two "file unavailable" hosts. In each failed request the first server took about 20 seconds, so the per-site budget ended after one server. Deadlines were not changed; the unavailable outcomes stayed honest (no wrong unit or website fallback).
 
 Receipts and sanitized logs: `live-run1/*.json|.log` in the evidence folder. The 30-second mono WAVs stay private (`live-private/`) only until a human check finishes.
+
+### Second run (October 24, 00:25–00:29)
+
+| Request | Outcome | Whisper | Captions |
+|---|---|---|---|
+| Spy x Family ep 2 **Sub** (native in the first run) | **Unavailable** after 3 sites, 66.4 s: Anikoto's selected host reported the file unavailable at 22.8 s, the site budget ended, and the other sites did not match | — | — |
+| Spy x Family ep 3 **Sub** | Native, Anikoto, 18.7 s; title + MAL + episode 3 consistent; Sub server | **Japanese 0.986**, 12 speech segments (from 604.9 s of 1450 s) | 12 label-only files; English 373 cues (116 multiline), Arabic 410 (81 multiline) |
+| Spy x Family ep 3 **Dub** | Unavailable after 3 sites, 65.8 s | — | — |
+| Frieren ep 6 **Dub** | Unavailable after 3 sites, 66.4 s | — | — |
+
+The same unit and audio can be served in one run and unavailable in the next. Availability is a live provider state, not a property of the title, and the app reported each miss as unavailable. Receipts: `live-run2/`.
