@@ -2,6 +2,7 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:helpers="clr-namespace:UniversalMediaOS.WPF.Helpers"
+             xmlns:controls="clr-namespace:UniversalMediaOS.WPF.Controls"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:vlc="clr-namespace:LibVLCSharp.WPF;assembly=LibVLCSharp.WPF"
@@ -10,6 +11,8 @@
              d:DesignHeight="720" d:DesignWidth="1080"
              Background="#050507"
              Focusable="True"
+             IsTabStop="True"
+             GotKeyboardFocus="PlaybackView_GotKeyboardFocus"
              PreviewKeyDown="PlaybackRoot_PreviewKeyDown">
 
     <UserControl.Resources>
@@ -183,12 +186,22 @@
               Background="Black"
               ClipToBounds="True"
               MouseLeftButtonDown="VideoSurface_MouseLeftButtonDown">
+            <!-- The view itself is the owner window's Tab stop for the player;
+                 its native host would otherwise take that focus and its keys. -->
             <vlc:VideoView x:Name="VlcPlayer"
                            HorizontalAlignment="Stretch"
-                           VerticalAlignment="Stretch">
+                           VerticalAlignment="Stretch"
+                           Focusable="False"
+                           KeyboardNavigation.TabNavigation="None">
                 <!-- VideoView places this content above its native HWND. Keep
-                     transport controls here so video bounds never depend on them. -->
-                <Grid x:Name="NativeOverlay" Background="Transparent" Focusable="True" ClipToBounds="True"
+                     transport controls here so video bounds never depend on them.
+                     That HWND is a separate window, so Tab is contained here and
+                     the view moves it to and from the owner at either end.
+                     Its window is layered: fully transparent pixels pass the
+                     pointer to VLC's video window, so the background keeps an
+                     invisible alpha for pointer reveal, cursor hiding and clicks. -->
+                <Grid x:Name="NativeOverlay" Background="#01000000" Focusable="True" ClipToBounds="True"
+                      KeyboardNavigation.TabNavigation="Contained" KeyboardNavigation.IsTabStop="False"
                       FlowDirection="{Binding FlowDirection, Source={x:Static helpers:LocalizationBindingSource.Instance}}"
                       SizeChanged="PlaybackOverlay_SizeChanged"
                       MouseMove="PlaybackRoot_MouseMove"
@@ -210,12 +223,12 @@
                             </Style.Triggers>
                         </Style>
                     </Grid.Style>
-                    <ContentControl Content="{Binding}"
+                    <ContentControl Content="{Binding}" Focusable="False"
                                     ContentTemplate="{StaticResource PlaybackStateOverlayTemplate}"/>
                     <!-- Keep options above the transport and leave native captions
                          their own space. All three panels still overlay the video. -->
                     <Border x:Name="ControlsLayer" Padding="14,10"
-                            MouseLeave="ControlsLayer_MouseLeave" Opacity="1">
+                            MouseLeave="ControlsLayer_MouseLeave" GotKeyboardFocus="ControlsLayer_GotKeyboardFocus" Opacity="1">
                         <Border.Style>
                             <Style TargetType="Border">
                                 <Style.Triggers>
@@ -342,7 +355,13 @@
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Text="{Binding CurrentTimeText}" Foreground="#CBD5E1" FontSize="12"
                                            VerticalAlignment="Center" Width="48"/>
-                                <Slider x:Name="PlaybackSlider" Grid.Column="1" Maximum="{Binding PlaybackDuration}"
+                                <!-- Milliseconds: Left/Right use the player's -10/+30 s
+                                     seeks; the slider's own keys step 10 s and 60 s.
+                                     Screen readers read the displayed clock instead. -->
+                                <controls:PlaybackSeekSlider x:Name="PlaybackSlider" Grid.Column="1" Maximum="{Binding PlaybackDuration}"
+                                        Style="{DynamicResource {x:Type Slider}}"
+                                        SmallChange="10000" LargeChange="60000"
+                                        PositionText="{Binding CurrentTimeText}" DurationText="{Binding DurationText}"
                                         Value="{Binding PlaybackTime, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                         IsMoveToPointEnabled="True" Foreground="#14B8A6" Height="22" Margin="8,0"
                                         PreviewMouseLeftButtonDown="PlaybackSlider_PreviewMouseLeftButtonDown"
@@ -352,8 +371,19 @@
                                 <TextBlock Grid.Column="2" Text="{Binding DurationText}" Foreground="#CBD5E1" FontSize="12"
                                            VerticalAlignment="Center" TextAlignment="Right" Width="48"/>
                             </Grid>
+                            <!-- Declared in reading order, so Tab and screen readers
+                                 reach Play before the window and volume controls. -->
                             <DockPanel Grid.Row="1">
-                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
+                                    <Button Content="{Binding PlayPauseText}" Command="{Binding TogglePlayPauseCommand}"
+                                            Style="{StaticResource PrimaryControlButtonStyle}"
+                                            AutomationProperties.Name="{helpers:Loc Play or pause}" ToolTip="{helpers:Loc Play or pause (Space or K)}"/>
+                                    <Button Content="-10s" Command="{Binding SkipBackwardCommand}" Style="{StaticResource ControlButtonStyle}"
+                                            AutomationProperties.Name="{helpers:Loc Skip backward 10 seconds}" ToolTip="{helpers:Loc Back 10 seconds (Left arrow)}"/>
+                                    <Button Content="+30s" Command="{Binding SkipForwardCommand}" Style="{StaticResource ControlButtonStyle}"
+                                            AutomationProperties.Name="{helpers:Loc Skip forward 30 seconds}" ToolTip="{helpers:Loc Forward 30 seconds (Right arrow)}"/>
+                                </StackPanel>
+                                <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
                                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0">
                                         <StackPanel.Style>
                                             <Style TargetType="StackPanel">
@@ -374,15 +404,6 @@
                                             AutomationProperties.Name="{helpers:Loc Toggle picture in picture}" ToolTip="{helpers:Loc Picture in picture (P)}"/>
                                     <Button Content="{helpers:Loc Full}" Click="FullscreenButton_Click" Style="{StaticResource ControlButtonStyle}"
                                             AutomationProperties.Name="{helpers:Loc Toggle fullscreen}" ToolTip="{helpers:Loc Fullscreen (F); Escape to return.}"/>
-                                </StackPanel>
-                                <StackPanel Orientation="Horizontal">
-                                    <Button Content="{Binding PlayPauseText}" Command="{Binding TogglePlayPauseCommand}"
-                                            Style="{StaticResource PrimaryControlButtonStyle}"
-                                            AutomationProperties.Name="{helpers:Loc Play or pause}" ToolTip="{helpers:Loc Play or pause (Space or K)}"/>
-                                    <Button Content="-10s" Command="{Binding SkipBackwardCommand}" Style="{StaticResource ControlButtonStyle}"
-                                            AutomationProperties.Name="{helpers:Loc Skip backward 10 seconds}" ToolTip="{helpers:Loc Back 10 seconds (Left arrow)}"/>
-                                    <Button Content="+30s" Command="{Binding SkipForwardCommand}" Style="{StaticResource ControlButtonStyle}"
-                                            AutomationProperties.Name="{helpers:Loc Skip forward 30 seconds}" ToolTip="{helpers:Loc Forward 30 seconds (Right arrow)}"/>
                                 </StackPanel>
                             </DockPanel>
                                 </Grid>
