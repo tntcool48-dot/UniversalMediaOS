@@ -233,6 +233,156 @@ namespace UniversalMediaOS.Tests.E2E.Tests
                 "Keyboard focus after Save: " + Describe(fixture.Automation.FocusedElement()));
         }
 
+        [Fact]
+        public void Settings_AddedDubProviderRowsAreNamedAndDeleteKeepsKeyboardPlace()
+        {
+            // Add Dub Provider reveals a row per provider. Each row's controls must say which provider they act on,
+            // and deleting one from the keyboard must leave focus on the next row, or the add form when none is left.
+            using var fixture = new AppFixture();
+            OpenSection(fixture, "Providers & Scrapers");
+            foreach (string provider in new[] { "Alpha Dubs", "Beta Dubs" })
+            {
+                Field(fixture, "Dub provider name").Patterns.Value.Pattern.SetValue(provider);
+                Field(fixture, "Dub provider URL").Patterns.Value.Pattern.SetValue($"https://{provider[..4].ToLowerInvariant()}.example.test/search?q={{query}}");
+                FocusWithKeyboard(fixture, SettingsButton(fixture, "Add Dub Provider"));
+                FlaUI.Core.Input.Keyboard.Type(FlaUI.Core.WindowsAPI.VirtualKeyShort.ENTER);
+                Assert.True(SpinWait.SpinUntil(() => RowControl(fixture, ControlType.Slider, provider + " timeout") != null,
+                    TimeSpan.FromSeconds(5)), $"No row appeared for {provider}. " + AddDiagnostics(fixture));
+                Assert.True(RowControl(fixture, ControlType.CheckBox, provider + " enabled") != null,
+                    $"{provider}'s Enabled check box does not name its provider: " + RowNames(fixture));
+                Assert.True(RowControl(fixture, ControlType.Button, "Delete " + provider) != null,
+                    $"{provider}'s Delete button does not name its provider: " + RowNames(fixture));
+            }
+
+            // Moving through the list, a screen reader announces each row by its list item's name.
+            var walker = fixture.Automation.TreeWalkerFactory.GetControlViewWalker();
+            foreach (string provider in new[] { "Alpha Dubs", "Beta Dubs" })
+            {
+                var item = walker.GetParent(RowControl(fixture, ControlType.Slider, provider + " timeout")!);
+                Assert.True(item?.ControlType == ControlType.DataItem && item.Name == provider,
+                    $"{provider}'s row is announced as {Describe(item)}.");
+            }
+
+            FocusWithKeyboard(fixture, RowControl(fixture, ControlType.Button, "Delete Alpha Dubs")!);
+            FlaUI.Core.Input.Keyboard.Type(FlaUI.Core.WindowsAPI.VirtualKeyShort.ENTER);
+            Assert.True(SpinWait.SpinUntil(() => RowControl(fixture, ControlType.Button, "Delete Alpha Dubs") == null, TimeSpan.FromSeconds(5)));
+            Assert.True(SpinWait.SpinUntil(() => fixture.Automation.FocusedElement()?.Name == "Beta Dubs enabled", TimeSpan.FromSeconds(5)),
+                "Focus after deleting Alpha Dubs: " + Describe(fixture.Automation.FocusedElement()));
+
+            FocusWithKeyboard(fixture, RowControl(fixture, ControlType.Button, "Delete Beta Dubs")!);
+            FlaUI.Core.Input.Keyboard.Type(FlaUI.Core.WindowsAPI.VirtualKeyShort.ENTER);
+            Assert.True(SpinWait.SpinUntil(() => fixture.Automation.FocusedElement()?.Name == "Dub provider name", TimeSpan.FromSeconds(5)),
+                "Focus after deleting the last provider: " + Describe(fixture.Automation.FocusedElement()));
+        }
+
+        [Fact]
+        public void ServicesOn_MissingToolsAndAStalledExtensionDownloadAreReportedWithoutBlockingTheApp()
+        {
+            // Services start with the window. PATH holds only Windows' own folders, so FFmpeg and ffprobe are missing,
+            // and a loopback proxy accepts the uBlock download's connection but never answers. Each service must
+            // settle on its own honest state, the app must stay usable meanwhile, and Repair must not claim success.
+            using var proxy = new SilentProxy();
+            string system = Environment.GetFolderPath(Environment.SpecialFolder.System);
+            string windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+            using var fixture = new AppFixture(mangaPagePng: null, initializeProfile: EnableServices,
+                environment: new System.Collections.Generic.Dictionary<string, string?>
+                {
+                    ["PATH"] = system + ";" + windows,
+                    ["HTTPS_PROXY"] = proxy.Address, ["HTTP_PROXY"] = proxy.Address, ["ALL_PROXY"] = null,
+                    ["NO_PROXY"] = "127.0.0.1,localhost"
+                });
+            var started = System.Diagnostics.Stopwatch.StartNew();
+            OpenSection(fixture, "Services");
+
+            // While the download hangs, FFmpeg's result is already published and Settings still navigates.
+            Assert.True(SpinWait.SpinUntil(() => HealthText(fixture).Contains("FFmpeg: ffmpeg missing; ffprobe missing.", StringComparison.Ordinal),
+                TimeSpan.FromSeconds(15)), HealthText(fixture));
+            Assert.True(proxy.Connections > 0 || SpinWait.SpinUntil(() => proxy.Connections > 0, TimeSpan.FromSeconds(10)),
+                "The uBlock download never reached the stalled proxy.");
+            Assert.True(started.Elapsed < TimeSpan.FromSeconds(18), $"The stall was already over after {started.Elapsed}.");
+            OpenSection(fixture, "Appearance");
+            OpenSection(fixture, "Services");
+            Assert.Equal("Preparing services...", ServiceSummary(fixture));
+
+            const string timedOut = "uBlock Origin: Timed out after 20 seconds during uBlock Origin download.";
+            Assert.True(SpinWait.SpinUntil(() => HealthText(fixture).Contains(timedOut, StringComparison.Ordinal),
+                TimeSpan.FromSeconds(40)), HealthText(fixture));
+            Assert.True(SpinWait.SpinUntil(() => ServiceSummary(fixture) == "Service attention needed", TimeSpan.FromSeconds(130)),
+                ServiceSummary(fixture) + Environment.NewLine + HealthText(fixture));
+            // Python: without a launcher in Windows' own folders there is no interpreter to find.
+            bool launcherInWindows = System.IO.File.Exists(System.IO.Path.Combine(windows, "py.exe")) ||
+                                     System.IO.File.Exists(System.IO.Path.Combine(system, "py.exe"));
+            if (!launcherInWindows)
+                Assert.Contains("Python scraper: Failed (python_missing)", HealthText(fixture), StringComparison.Ordinal);
+            Assert.DoesNotContain("Python scraper: Ready", HealthText(fixture), StringComparison.Ordinal);
+
+            // Repair retries every service; with nothing changed it ends in the same honest states.
+            int before = proxy.Connections;
+            var repair = SettingsButton(fixture, "Repair services");
+            repair.Invoke();
+            Assert.True(SpinWait.SpinUntil(() => !repair.IsEnabled, TimeSpan.FromSeconds(5)), "Repair services showed no busy state.");
+            Assert.True(SpinWait.SpinUntil(() => repair.IsEnabled, TimeSpan.FromSeconds(150)), "Repair services did not finish.");
+            Assert.True(proxy.Connections > before, "Repair did not retry the uBlock download.");
+            Assert.Contains(timedOut, HealthText(fixture), StringComparison.Ordinal);
+            Assert.Contains("FFmpeg: ffmpeg missing; ffprobe missing.", HealthText(fixture), StringComparison.Ordinal);
+            Assert.Equal("Service attention needed", ServiceSummary(fixture));
+            Assert.False(System.IO.Directory.Exists(System.IO.Path.Combine(fixture.SandboxPath, "Local", "UniversalMediaOS", "Extensions", "ublock-origin")),
+                "A failed download left an extension folder behind.");
+        }
+
+        private static void EnableServices(string root)
+        {
+            string path = System.IO.Path.Combine(root, "Roaming", "UniversalMediaOS", "config.json");
+            var settings = System.Text.Json.JsonSerializer.Deserialize<System.Collections.Generic.Dictionary<string, string>>(
+                System.IO.File.ReadAllText(path))!;
+            settings["AutoManageServices"] = "true";
+            System.IO.File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(settings));
+        }
+
+        private static string ServiceSummary(AppFixture fixture) => System.Linq.Enumerable.FirstOrDefault(
+            MainWindowOf(fixture).FindAllDescendants(cf => cf.ByControlType(ControlType.Text)),
+            text => text.Name is "Service checks passed" or "Service attention needed" or "Preparing services..." or "Service checks pending")?.Name ?? string.Empty;
+
+        /// <summary>A loopback HTTP proxy that accepts connections and never answers, like a stalled network.</summary>
+        private sealed class SilentProxy : IDisposable
+        {
+            private readonly System.Net.Sockets.TcpListener _listener = new(System.Net.IPAddress.Loopback, 0);
+            private readonly System.Collections.Concurrent.ConcurrentBag<System.Net.Sockets.TcpClient> _held = new();
+            private int _connections;
+            public SilentProxy()
+            {
+                _listener.Start();
+                _ = System.Threading.Tasks.Task.Run(async () =>
+                {
+                    try { while (true) { _held.Add(await _listener.AcceptTcpClientAsync()); Interlocked.Increment(ref _connections); } }
+                    catch (Exception) { /* Stopped. */ }
+                });
+            }
+            public string Address => "http://" + _listener.LocalEndpoint;
+            public int Connections => Volatile.Read(ref _connections);
+            public void Dispose()
+            {
+                _listener.Stop();
+                foreach (var client in _held) client.Dispose();
+            }
+        }
+
+        private static AutomationElement? RowControl(AutomationElement list, ControlType type, string name) =>
+            list.FindFirstDescendant(cf => cf.ByName(name).And(cf.ByControlType(type)));
+
+        private static AutomationElement? RowControl(AppFixture fixture, ControlType type, string name) =>
+            RowControl(SettingsRoot(fixture), type, name);
+
+        private static string AddDiagnostics(AppFixture fixture) =>
+            "Rows: " + RowNames(fixture) + "; dialogs: " + string.Join(", ", System.Linq.Enumerable.Select(MainWindowOf(fixture).ModalWindows, w => w.Title)) +
+            "; log: " + string.Join(" | ", System.Linq.Enumerable.Where(ReadShared(System.IO.Path.Combine(fixture.SandboxPath, "Roaming", "UniversalMediaOS", "app.log"))
+                .Split('\n'), line => line.Contains("DubAvailabilityProvider", StringComparison.Ordinal)));
+
+        private static string RowNames(AppFixture fixture) => string.Join(", ", System.Linq.Enumerable.Select(
+            System.Linq.Enumerable.Where(SettingsRoot(fixture).FindAllDescendants(), e => e.Properties.IsKeyboardFocusable.ValueOrDefault &&
+                (e.Name.Contains("Dubs", StringComparison.Ordinal) || e.Name is "Enabled" or "Delete")),
+            e => $"{e.ControlType} '{e.Name}'"));
+
         /// <summary>Installs the pinned uBlock manifest in the profile, so Repair verifies it instead of downloading.</summary>
         private static void SeedPinnedUBlock(string root)
         {
@@ -392,7 +542,8 @@ namespace UniversalMediaOS.Tests.E2E.Tests
             Assert.False(System.IO.File.Exists(config + ".tmp"), "A temporary settings file was left behind.");
         }
 
-        [Fact(Skip = "Requires an injectable resource monitor; the previous check did not create a low-memory condition.")]
+        [Fact(Skip = "Proposed exclusion: the app has no low-memory behavior left to test. 182da1b removed the startup RAM check " +
+                     "and Settings' resource line; SystemResourceCheck is unused. See docs/qa/packaged-runtime-services-settings-2026-10-23.md.")]
         public void T2_Settings_04_Low_Memory_Resource_Boundary()
         {
             NavigateTo("Settings");

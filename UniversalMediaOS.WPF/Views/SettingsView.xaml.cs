@@ -94,6 +94,22 @@ namespace UniversalMediaOS.WPF.Views
             }
         }
 
+        /// <summary>Delete removes its own focused row. Runs before the command; afterwards focus moves to the row that
+        /// takes its place (or the last one), or to the add form when none is left, instead of falling to the pane.</summary>
+        private void DubProviderDelete_Click(object sender, System.Windows.RoutedEventArgs e)
+        {
+            if (sender is not Button { IsKeyboardFocused: true } button) return;
+            int index = DubProvidersList.Items.IndexOf(button.DataContext);
+            Dispatcher.BeginInvoke(new System.Action(() =>
+            {
+                int remaining = DubProvidersList.Items.Count;
+                if (remaining == 0) { NewDubProviderNameBox.Focus(); return; }
+                if (DubProvidersList.ItemContainerGenerator.ContainerFromIndex(System.Math.Clamp(index, 0, remaining - 1))
+                    is System.Windows.UIElement row)
+                    row.MoveFocus(new System.Windows.Input.TraversalRequest(System.Windows.Input.FocusNavigationDirection.First));
+            }), System.Windows.Threading.DispatcherPriority.Input);
+        }
+
         private void QbitPasswordBox_PasswordChanged(object sender, System.Windows.RoutedEventArgs e)
         {
             if (_syncingPassword || _currentViewModel == null)
