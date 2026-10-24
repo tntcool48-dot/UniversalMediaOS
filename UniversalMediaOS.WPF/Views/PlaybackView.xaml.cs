@@ -32,6 +32,7 @@ namespace UniversalMediaOS.WPF.Views
         private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
 
         private const int MONITOR_DEFAULTTONEAREST = 2;
+        private const int WM_MOVE = 0x0003;
 
         [StructLayout(LayoutKind.Sequential)]
         private struct RECT
@@ -357,9 +358,11 @@ namespace UniversalMediaOS.WPF.Views
         private int _volumeBeforeMute = 100;
         private int _controlsRevealVersion;
         private IntPtr _surfaceMonitor;
+        private HwndSource? _surfaceSource;
         private DpiScale _surfaceDpi;
         private bool _displayRefreshQueued;
         private bool _controlsKeyboardInteraction;
+        private FocusNavigationDirection? _ownerTabNavigation;
         private readonly DispatcherTimer _controlsHideTimer = new() { Interval = TimeSpan.FromSeconds(3) };
 
         private sealed record InjectedCookieState(
@@ -392,6 +395,8 @@ namespace UniversalMediaOS.WPF.Views
                 _surfaceWindow.PreviewKeyDown += SurfaceWindow_PreviewKeyDown;
                 _surfaceWindow.LocationChanged += SurfaceWindow_DisplayChanged;
                 _surfaceWindow.SizeChanged += SurfaceWindow_DisplayChanged;
+                _surfaceSource = PresentationSource.FromVisual(_surfaceWindow) as HwndSource;
+                _surfaceSource?.AddHook(SurfaceWindowHook);
                 RememberSurfaceDisplay();
             }
             _controlsHideTimer.Tick -= ControlsHideTimer_Tick;
@@ -470,6 +475,16 @@ namespace UniversalMediaOS.WPF.Views
             _surfaceDpi = VisualTreeHelper.GetDpi(_surfaceWindow);
         }
 
+        private IntPtr SurfaceWindowHook(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
+        {
+            // WPF raises LocationChanged only for a restored window. A maximized
+            // window moved to a same-size display (Win+Shift+arrow) has no move
+            // or layout event, and VLC's overlay window stayed on the old display.
+            if (message == WM_MOVE && _surfaceWindow?.WindowState == WindowState.Maximized)
+                SurfaceWindow_DisplayChanged(_surfaceWindow, EventArgs.Empty);
+            return IntPtr.Zero;
+        }
+
         private void SurfaceWindow_DisplayChanged(object? sender, EventArgs e)
         {
             if (_displayRefreshQueued || _surfaceWindow?.WindowState == WindowState.Minimized) return;
@@ -479,6 +494,8 @@ namespace UniversalMediaOS.WPF.Views
                 _displayRefreshQueued = false;
                 if (_closedForTab || _webViewDisposed || _surfaceWindow == null ||
                     _surfaceWindow.WindowState == WindowState.Minimized) return;
+                // LibVLCSharp realigns its overlay window after a layout pass.
+                VlcPlayer.InvalidateArrange();
                 IntPtr previousMonitor = _surfaceMonitor;
                 DpiScale previousDpi = _surfaceDpi;
                 RememberSurfaceDisplay();
@@ -497,6 +514,14 @@ namespace UniversalMediaOS.WPF.Views
 
         private void SurfaceWindow_PreviewKeyDown(object sender, KeyEventArgs e)
         {
+            // Tab navigation runs after this preview, in the same input. Note it
+            // so a Tab that lands on this view can continue into the overlay.
+            if (e.Key == Key.Tab && (Keyboard.Modifiers & ~ModifierKeys.Shift) == 0)
+            {
+                _ownerTabNavigation = (Keyboard.Modifiers & ModifierKeys.Shift) != 0
+                    ? FocusNavigationDirection.Previous : FocusNavigationDirection.Next;
+                Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() => _ownerTabNavigation = null));
+            }
             // Activating the owner can restore its previous keyboard focus,
             // outside VLC's foreground overlay. Only the visible tab handles
             // shortcuts. Site playback accepts app presentation keys when
@@ -528,6 +553,8 @@ namespace UniversalMediaOS.WPF.Views
                 _surfaceWindow.LocationChanged -= SurfaceWindow_DisplayChanged;
                 _surfaceWindow.SizeChanged -= SurfaceWindow_DisplayChanged;
             }
+            _surfaceSource?.RemoveHook(SurfaceWindowHook);
+            _surfaceSource = null;
             _surfaceWindow = null;
             _surfaceMonitor = IntPtr.Zero;
             Interlocked.Increment(ref _webNavigationGeneration);
@@ -679,6 +706,72 @@ namespace UniversalMediaOS.WPF.Views
             Focus();
         }
 
+        private void PlaybackView_GotKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+        {
+            // Only Tab continues into the controls; a click on the video keeps
+            // this owner focus target, as before.
+            if (!ReferenceEquals(e.NewFocus, this) || _ownerTabNavigation is not { } direction) return;
+            _ownerTabNavigation = null;
+            Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() =>
+                MoveKeyboardIntoNativeControls(direction == FocusNavigationDirection.Previous)));
+        }
+
+        private void MoveKeyboardIntoNativeControls(bool fromEnd)
+        {
+            if (_closedForTab || !IsKeyboardFocused ||
+                DataContext is not ViewModels.PlaybackViewModel { IsTabActive: true, IsWebViewActive: false } ||
+                Window.GetWindow(NativeOverlay) is not Window overlay || ReferenceEquals(overlay, _surfaceWindow)) return;
+            _controlsKeyboardInteraction = true;
+            ShowControlsTemporarily();
+            NativeOverlay.UpdateLayout();
+            overlay.Activate();
+            if (NativeOverlay.MoveFocus(new TraversalRequest(
+                    fromEnd ? FocusNavigationDirection.Last : FocusNavigationDirection.First))) return;
+            // Nothing in the overlay can take focus (for example while saving).
+            _surfaceWindow?.Activate();
+            Focus();
+        }
+
+        private bool MoveKeyboardOutOfNativeControls(bool backwards)
+        {
+            if (_surfaceWindow == null) return false;
+            _surfaceWindow.Activate();
+            Focus();
+            return MoveFocus(new TraversalRequest(
+                backwards ? FocusNavigationDirection.Previous : FocusNavigationDirection.Next));
+        }
+
+        private bool IsInOpenSelector(object? focused) =>
+            focused is ComboBox { IsDropDownOpen: true } ||
+            (focused is ComboBoxItem item && ItemsControl.ItemsControlFromItemContainer(item) is ComboBox { IsDropDownOpen: true });
+
+        private void HandleNativeControlsTab(KeyEventArgs e)
+        {
+            // An open menu commits or closes on Tab itself.
+            if (IsInOpenSelector(Keyboard.FocusedElement) || Keyboard.FocusedElement is not UIElement focused) return;
+            bool backwards = (Keyboard.Modifiers & ModifierKeys.Shift) != 0;
+            // Wrapped: at either end WPF would otherwise restart from the
+            // overlay window's first control and report success.
+            if (focused.MoveFocus(new TraversalRequest(
+                    backwards ? FocusNavigationDirection.Previous : FocusNavigationDirection.Next) { Wrapped = true }) &&
+                !ReferenceEquals(Keyboard.FocusedElement, focused) && !ReferenceEquals(Keyboard.FocusedElement, NativeOverlay) &&
+                NativeOverlay.IsKeyboardFocusWithin)
+            {
+                e.Handled = true;
+                return;
+            }
+            // The overlay contains Tab; past either end, continue in the owner.
+            e.Handled = MoveKeyboardOutOfNativeControls(backwards);
+        }
+
+        private void FocusPlaybackOptionsHeader()
+        {
+            // The options' content is hidden when they close; keep the keyboard
+            // in the player on their header instead of losing it to the window.
+            if (PlaybackOptions.Template?.FindName("HeaderSite", PlaybackOptions) is UIElement header && header.Focus()) return;
+            NativeOverlay.MoveFocus(new TraversalRequest(FocusNavigationDirection.First));
+        }
+
         private bool IsControlsInput(DependencyObject? source)
         {
             while (source != null)
@@ -770,6 +863,13 @@ namespace UniversalMediaOS.WPF.Views
             return Math.Min(viewportHeight * 0.55, (viewportHeight - pictureHeight) / 2 + captionHeight);
         }
 
+        private void ControlsLayer_GotKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+        {
+            if (ControlsLayer.IsHitTestVisible && ControlsLayer.Opacity >= 1) return;
+            _controlsKeyboardInteraction = true;
+            ShowControlsTemporarily();
+        }
+
         private void ControlsLayer_MouseLeave(object sender, MouseEventArgs e)
         {
             if (ControlsLayer.Visibility == Visibility.Visible) ShowControlsTemporarily();
@@ -799,8 +899,9 @@ namespace UniversalMediaOS.WPF.Views
             animation.Completed += (_, _) =>
             {
                 if (revealVersion != _controlsRevealVersion || !ShouldAutoHideControls() || IsInteractingWithControls()) return;
+                // Hidden from sight only: screen readers keep the controls,
+                // and focus arriving in them shows them again.
                 ControlsLayer.IsHitTestVisible = false;
-                ControlsLayer.Visibility = Visibility.Collapsed;
                 NativeOverlay.Cursor = Cursors.None;
             };
             ControlsLayer.BeginAnimation(OpacityProperty, animation);
@@ -828,18 +929,32 @@ namespace UniversalMediaOS.WPF.Views
 
             _controlsKeyboardInteraction = true;
             ShowControlsTemporarily();
+            object? focused = Keyboard.FocusedElement;
+            if (e.Key == Key.Tab && (Keyboard.Modifiers & ~ModifierKeys.Shift) == 0)
+            {
+                if (NativeOverlay.IsKeyboardFocusWithin) HandleNativeControlsTab(e);
+                return;
+            }
+            // An open menu keeps its own keys: Escape closes only the menu and
+            // leaves its selector focused, and letters/arrows choose in it.
+            if (IsInOpenSelector(focused)) return;
             // Escape must always restore the app, including while editing the
-            // source or using a selector. Other keys retain those controls' use.
+            // source or on a closed selector. Other keys retain those controls' use.
             if (e.Key == Key.Escape)
             {
+                bool optionsHadFocus = PlaybackOptions.IsKeyboardFocusWithin;
                 PlaybackOptions.IsExpanded = false;
+                if (optionsHadFocus) FocusPlaybackOptionsHeader();
                 if (_isFullscreen || _isPictureInPicture)
                     RestorePresentationMode("[PlaybackView] Exited the special playback window with Escape.");
                 e.Handled = true;
                 return;
             }
-            if (Keyboard.FocusedElement is TextBox or ComboBox or Slider ||
-                (Keyboard.FocusedElement is System.Windows.Controls.Primitives.ButtonBase && e.Key is Key.Space or Key.Enter)) return;
+            // The seek bar's own arrow step is one millisecond; Left/Right use
+            // the player's seeks there, as their tooltips say.
+            bool seekBarArrow = ReferenceEquals(focused, PlaybackSlider) && e.Key is Key.Left or Key.Right;
+            if (!seekBarArrow && (focused is TextBox or ComboBox or Slider ||
+                (focused is System.Windows.Controls.Primitives.ButtonBase && e.Key is Key.Space or Key.Enter))) return;
 
             if (vm.IsPersistenceWaiting && e.Key is Key.Space or Key.K or Key.Left or Key.Right or Key.M or Key.F or Key.P)
             {
@@ -982,6 +1097,9 @@ namespace UniversalMediaOS.WPF.Views
 
         private void UpdatePlayerVisibility(ViewModels.PlaybackViewModel vm)
         {
+            // Site playback is tabbed into directly; native playback through
+            // this view, which hands the keyboard to the overlay's controls.
+            IsTabStop = !vm.IsWebViewActive;
             if (vm.IsWebViewActive)
             {
                 VlcPlayer.Visibility = System.Windows.Visibility.Collapsed;
