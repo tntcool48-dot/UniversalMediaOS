@@ -79,6 +79,47 @@ Offering them needs a decision on machine captions, plus language and cut-timing
 
 *House on Haunted Hill* has four normal-rank Wikidata release dates (1958-12-17 to 1959-10-27). The catalog uses the earliest (1958), while Archive dates its uploads 1959, so the film still shows no Archive source. *Plan 9 from Outer Space* has a preferred-rank 1959 date, but the catalog shows 1957. Changing the catalog-year rule affects identity display and other providers; it is recorded here, not repaired.
 
-## Limits
+## Built-in scraper (Vidsrc) through the production provider
 
-This is one provider (Archive) against a finite public-domain sample. The Vidsrc probe, physical native playback, spoken audio, configured providers and catalog DASH follow below or remain open.
+A second temporary test ran production `ScraperAudiovisualSourceProvider` and the real `audiovisual_scraper.py` (off-screen Chromium, isolated data root, desktop lock held). It covered six public-domain films by IMDb ID, plus the 2018 remake. Result file: `scraper-probe/scraper-probe.json`.
+
+| Film | First source | Verification | Captions | Audio |
+| --- | --- | --- | --- | --- |
+| *Nosferatu* (1922) tt0013442 | native HLS, 20.4 s | verified by the provider item (title, year, IMDb) | English, 19 KB loaded cues | unknown |
+| *Night of the Living Dead* (1968) tt0063350 | native HLS, 20.4 s | verified | English, 76 KB | unknown |
+| *A Star Is Born* (1937) tt0029606 | native HLS, 21.3 s | verified, 1937 item | English (URL only) | unknown |
+| *A Star Is Born* (2018) tt1517451 | native HLS, 22.3 s | verified, 2018 item | English, 135 KB | unknown |
+| *His Girl Friday* (1940) tt0032599 | native HLS, 24.1 s, then three website pages | **unverified**: no item evidence | none | unknown |
+| *Charade* (1963) tt0056923 | native HLS, 19.3 s | verified | English, 107 KB | unknown |
+
+The remake pair stays apart: each item carries its own IMDb ID and year. Audio is never declared by this provider, so spoken language stays unknown, as the rules require. The caption sizes are consistent with full-length subtitle files, but cue coverage against the runtime was not measured.
+
+### 3. A cancelled lookup left its browser profile behind
+
+After the probe, the isolated data root held **five** Chromium profiles of 70–97 MB, one per verified film. When a verified native source arrives, the provider cancels the parallel lookup, and cancellation kills the scraper's process tree before `close_browser` removes the profile. *His Girl Friday*, where nothing was cancelled, left none. No Chromium process survived; only the folders did. In the normal app (no data root), they collect in `%TEMP%`; engine timeouts leak the same way.
+
+**Repair.** `AudiovisualScraperEngine` gives each run its own `umos_av_run_*` folder and passes it to the script as `UMOS_AV_PROFILE_ROOT`. After the process ends (finished, timed out, cancelled or crashed), it waits up to 5 s for the tree to exit and deletes the folder. The script creates its profile inside that folder and keeps the old placement when run on its own.
+
+| Run | Result | TRX |
+| --- | --- | --- |
+| New `ScraperBrowserProfileCleanupTests` against the pre-repair engine | **0 / 2**: the cancelled extraction's `umos_av_*` profile was left behind | `trx/scraper-profile-cleanup-before-20261024.trx` |
+| After the repair, with the scraper, Unicode transport and Python-preparation classes | **47 / 47** | `trx/scraper-profile-cleanup-related-20261024.trx` |
+| Python audiovisual suites (item evidence, native frames, DASH), with 3 new placement checks | **51 / 51** | — |
+
+The second regression is the cross-tab guard: cancelling one lookup keeps another tab's running profile until that lookup ends. The anime scraper (`scraper.py`) has its own age-based sweep of `umos_scraper_*` profiles and is unchanged.
+
+## Physical native playback
+
+A temporary FlaUI journey drove the real Release app on the second monitor, in an isolated AppFixture profile, under the desktop lock:
+
+> Movies → search *The Last Man on Earth* → the 1964 card → Find sources → play.
+
+Screenshots and samples are in `native-journey/`.
+
+**Vidsrc (verified) native stream:**
+- Sources arrived in 21 s: Vidsrc "MATCH VERIFIED" first, then several Internet Archive "Try stream" rows.
+- Duration **5223.26 s (1:27:03)**, against the catalog's 86 min.
+- **Sustained:** 311 s of continuous playback in 20 samples, each advancing 15–16 s per 15.5 s, with 19 of 19 frame changes.
+- **Full duration:** a real slider click seeked to 5138 s (the last scene). Playback continued to 5218 s and ended; the player then reset to 0.
+- Only the "Audio language unverified" notice is shown.
+
