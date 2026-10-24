@@ -266,6 +266,35 @@ public sealed class PlaylistMediaDownloadTests
     }
 
     [Fact]
+    public async Task SavedRightToLeftCaptionsKeepTheirPunctuationOnTheirSide()
+    {
+        // LibVLC lays caption lines out left to right: Sintel's Arabic "هذا النصل له ماض مظلم." showed its period at the
+        // right end. A right-to-left mark at both ends of each text line keeps edge punctuation on the reader's side.
+        using var fixture = new Fixture();
+        fixture.Handler.Text("video.m3u8", Leaf());
+        fixture.Handler.Bytes("one.ts", new byte[1000]);
+        fixture.Handler.Bytes("two.ts", new byte[1000]);
+        fixture.Handler.Text("hebrew.srt", "1\r\n00:00:01,000 --> 00:00:02,000\r\n- שלום.\r\n- מה שלומך?\r\n");
+        const string english = "WEBVTT\n\n00:00:00.000 --> 00:00:03.000\nThis blade has a dark past.\n";
+        var source = Source() with { Subtitles = [
+            new MediaSubtitleTrack("https://93.184.216.34/arabic", "Arabic", "ar")
+                { InlineVtt = "WEBVTT\n\nNOTE provider note\n\n1\n00:01:47.250 --> 00:01:50.500\nهذا النصل له ماض مظلم.\n\n00:01:51.799 --> 00:01:55.799\nلقد اسال الكثير\nمن دماء الابرياء.\n" },
+            new MediaSubtitleTrack("https://93.184.216.34/hebrew.srt", "עברית", "heb"),
+            new MediaSubtitleTrack("https://93.184.216.34/english", "English", "en") { InlineVtt = english }] };
+        var result = await fixture.Service.DownloadTemporaryAsync(source, Context(source));
+        const string mark = "‏";
+        Assert.Equal("WEBVTT\n\nNOTE provider note\n\n1\n00:01:47.250 --> 00:01:50.500\n" + mark + "هذا النصل له ماض مظلم." + mark +
+            "\n\n00:01:51.799 --> 00:01:55.799\n" + mark + "لقد اسال الكثير" + mark + "\n" + mark + "من دماء الابرياء." + mark + "\n",
+            File.ReadAllText(result.CaptionPaths[0]));
+        Assert.Equal("1\r\n00:00:01,000 --> 00:00:02,000\r\n" + mark + "- שלום." + mark + "\r\n" + mark + "- מה שלומך?" + mark + "\r\n",
+            File.ReadAllText(result.CaptionPaths[1]));
+        Assert.Equal(english, File.ReadAllText(result.CaptionPaths[2]));
+        Assert.Equal(new[] { "caption-01.ar.vtt", "caption-02.he.srt", "caption-03.en.vtt" },
+            result.CaptionPaths.Select(path => Path.GetFileName(path)).ToArray());
+        result.Lease.Dispose();
+    }
+
+    [Fact]
     public async Task CheckedRenditionRetainsBothAudioLanguagesAndDoesNotFetchOtherVideo()
     {
         using var fixture = new Fixture();

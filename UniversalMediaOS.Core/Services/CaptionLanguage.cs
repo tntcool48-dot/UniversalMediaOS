@@ -66,6 +66,13 @@ public static class CaptionLanguage
             culture.NativeName.Equals(name, StringComparison.OrdinalIgnoreCase)) ? Normalize(name) : string.Empty;
     }
 
+    public static bool IsRightToLeft(string code)
+    {
+        if (!IsKnown(code)) return false;
+        try { return CultureInfo.GetCultureInfo(code).TextInfo.IsRightToLeft; }
+        catch (CultureNotFoundException) { return false; }
+    }
+
     /// <summary>The name segment that keeps a saved caption's declared language, such as ".fr";
     /// empty when the declaration names no known language.</summary>
     public static string FileSuffix(string? value)
