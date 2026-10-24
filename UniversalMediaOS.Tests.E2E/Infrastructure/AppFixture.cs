@@ -137,6 +137,9 @@ namespace UniversalMediaOS.Tests.E2E.Infrastructure
                 UseShellExecute = false
             };
             psi.Environment["UNIVERSAL_MEDIA_OS_DATA_ROOT"] = SandboxPath;
+            // Runs the app under test on a newer .NET major (for example LatestMajor) without moving the test host.
+            string? appRollForward = Environment.GetEnvironmentVariable("UNIVERSAL_MEDIA_OS_APP_ROLL_FORWARD");
+            if (!string.IsNullOrWhiteSpace(appRollForward)) psi.Environment["DOTNET_ROLL_FORWARD"] = appRollForward;
             // Only the launched app sees these (PATH, proxies); null removes an inherited variable.
             foreach (var variable in environment ?? new Dictionary<string, string?>())
             {
