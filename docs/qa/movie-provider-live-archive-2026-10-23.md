@@ -75,6 +75,20 @@ Many matched items carry sidecar subtitles that the Archive provider never passe
 
 Offering them needs a decision on machine captions, plus language and cut-timing checks. Embedded tracks in the selected file are unaffected.
 
+## Remaining for this gate
+
+- **Spoken audio:** no provider declares it; everything above shows "Audio language unverified". A listener is needed.
+- **Cuts:** runtime is not evidence, and no cut label exists. See the *Hunchback* and *Lost World* figures above.
+- **Captions:**
+  - Archive sidecar captions: a product decision on machine `.asr.srt`, plus cut-timing checks.
+  - Cue coverage of Vidsrc captions against the runtime was not measured.
+- **Catalog year** versus a later release year (below).
+- **Live configured providers:** none is configured, and the JSON index format is the app's own.
+- **Catalog DASH:** catalog-dash-tv found no real provider serving it.
+- **Archive TV episodes:** not sampled here.
+
+The temporary probe and journey sources are kept beside the evidence (`probe-sources/`), not in the suite.
+
 ## Catalog year (observed)
 
 *House on Haunted Hill* has four normal-rank Wikidata release dates (1958-12-17 to 1959-10-27). The catalog uses the earliest (1958), while Archive dates its uploads 1959, so the film still shows no Archive source. *Plan 9 from Outer Space* has a preferred-rank 1959 date, but the catalog shows 1957. Changing the catalog-year rule affects identity display and other providers; it is recorded here, not repaired.
@@ -122,4 +136,14 @@ Screenshots and samples are in `native-journey/`.
 - **Sustained:** 311 s of continuous playback in 20 samples, each advancing 15–16 s per 15.5 s, with 19 of 19 frame changes.
 - **Full duration:** a real slider click seeked to 5138 s (the last scene). Playback continued to 5218 s and ended; the player then reset to 0.
 - Only the "Audio language unverified" notice is shown.
+
+**Internet Archive "Try stream" (unverified upload, newly available after repair 1).** Same journey, after the profile repair; screenshots in `native-journey-archive/`:
+- The Archive row appeared at 20.7 s; before repair 1 this film had no Archive source.
+- Duration **5203.6 s (1:26:43)**, against the catalog's 86 min, consistent with the 86.7-min `TheLastManOnEarth1964_201808` upload.
+- **Sustained:** 311 s in 20 samples, 15.2–15.8 s per 15.5 s, with 19 of 19 frame changes.
+- **Full duration:** a slider click seeked to 5118.6 s (the closing scene). Playback continued to 5199.6 s and ended.
+
+**Scraper re-run after the profile repair:** all six films verified in 19.5–21.4 s and **no profile remained** (five before).
+- *His Girl Friday* was verified this time. Whether Vidsrc returns its provider item varies between runs, so its first-run "unverified" was honest.
+- The fixture closed both test apps. Each used its own temporary AppFixture profile; no user profile, download or protected row was touched.
 
