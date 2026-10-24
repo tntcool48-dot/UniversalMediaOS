@@ -113,3 +113,44 @@ Re:Anime's parent page was still being *tried*. Its live search HTML for the Sta
 ## Live cancellation and provider failure
 
 The production `ScraperEngine` (with `PythonBootstrapper`) resolved the Stairway special episode 1 in an owned data root, and its token was cancelled at **20.409 s**. At that moment Anikoto's identity was consistent and its host had just reported the file unavailable, so the live provider failure and the cancellation overlapped. The engine threw `OperationCanceledException` at **20.533 s**. Owned processes (those whose command line names the owned data root: the Python scraper plus its Chromium tree) went from **11 → 0** within 3 seconds. Only a 12 KB browser-profile folder remained; the existing 12-hour stale-profile cleanup covers it. Download-side live failures were also seen: AnimeTosho's DNS failure and a Nyaa `502`. Both ended as typed incomplete discovery, never as a reported absence.
+
+## Unlabelled specials proven unique by AniList (October 24, user decision)
+
+Releases such as `[SubsPlease] Kaguya-sama wa Kokurasetai - Otona e no Kaidan - 01 (1080p)` name the whole SPECIAL with one explicit unit but carry no OVA/Special label. The label rule exists because the 1993 *JoJo's Bizarre Adventure* OVA shares its English title with the 2012 TV series. The user decided: **"Yes, if AniList-unique."**
+
+**Implementation (numbered multi-episode SPECIAL/OVA downloads only).**
+- An unlabelled release is considered only if, after its single unit and leading group tag are removed, its whole title equals one catalog title plus known decorations.
+- That title then needs **one AniList search** (5 seconds, 256 KiB, `perPage: 50`). The page must be complete (`hasNextPage: false`), and exactly one entry, the requested catalog ID, may carry that whole title in its romaji, English, native or synonym fields.
+- Catalog qualifiers such as `(TV)` or `(2011)` are removed before comparing, because releases omit them, so the qualified entry still makes the bare title ambiguous.
+- Non-success statuses (including 429), timeouts, HTTP errors, malformed JSON, `errors` responses and incomplete pages all leave the release unmatched. Caller cancellation stays cancellation.
+- At most two distinct titles are checked per discovery. The proven titles are passed to the metadata and sole-video stages; nothing is assumed there.
+- Everything else is unchanged:
+  - catalog form, known count and in-range unit
+  - one explicit unit, with no `#`, season, decimal or range
+  - batch, `TV`/`ONA`/movie and ordinal exclusions
+  - extra words naming another work
+  - parent-series names, which never reach the AniList check because they don't equal the whole title
+- TV entries keep their existing matching and never ask AniList.
+- The internal test constructor has no checker, so existing tests stay offline. The production DI constructor uses the configured `AniListUrl`.
+
+**Verification.**
+- The new `SpecialEpisodeTitleUniquenessTests` failed **5 of 21** with stub signatures: exactly the accept-when-unique, proven-title metadata/video, valid-page and caller-cancellation cases. The non-unique and guard cases already held.
+- After implementation: **21 / 21**.
+- The first live run then accepted `[DeadFish] JoJo no Kimyou na Bouken - 01`, the 2012 TV series, for the 1993 OVA (666). AniList had given the bare romaji to 666 alone, because the TV entry's romaji is `JoJo no Kimyou na Bouken (TV)`. Two new qualifier cases reproduced this (**2 / 23** failing) before the qualifier repair.
+- The final affected and related download scope passes **196 / 196**.
+
+**Live discovery with the production AniList check:**
+
+| Request | Proven unique | Accepted releases |
+| --- | --- | --- |
+| Stairway special (194884) ep 1 | `Kaguya-sama wa Kokurasetai: Otona e no Kaidan` | `[SubsPlease]` 1080p/720p/480p, `[ASW]`, `[Erai-raws]` |
+| Coleus OVA (161802) ep 1 | `Tensei Shitara Slime Datta Ken: Coleus no Yume` | unlabelled `[ASW]`, `[New-raws]`, plus the labelled `[DKB]` |
+| 1993 JoJo OVA (666) ep 1 | **not proven** | none: the TV release stays unmatched |
+
+**Bounded live transfer (Stairway special ep 1, production pipeline with the AniList check, 25-minute cap, owned scratch root): honestly unavailable.** AniList proved the romaji title at 11:04:01 UTC.
+- `[SubsPlease] ... (1080p)` (147 listed seeders): metadata timed out at the existing 60-second limit.
+- `[ASW] ... - 01` (368 MiB) and `[Erai-raws] ... - 01` (615 MiB) both passed the metadata and sole-video checks with the proven unlabelled title. Their payloads then made no progress and each ended at the existing 8-minute stall limit.
+- `[SubsPlease] ... (720p)` (758 MiB) was still at zero progress when the cap cancelled the request (1,502 s, `TaskCanceledException`).
+- The owned `TemporaryWatch` folder was empty afterwards, and no media remained.
+
+This qualifies the proven title through live feed, metadata and sole-video selection, not a completed unlabelled transfer. The earlier KONOSUBA run remains the completed numbered-OVA transfer.
