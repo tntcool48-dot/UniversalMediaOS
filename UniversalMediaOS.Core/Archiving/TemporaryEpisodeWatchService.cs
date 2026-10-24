@@ -26,13 +26,18 @@ public sealed class TemporaryEpisodeWatchService
     private readonly string _root;
     private readonly Func<string, long> _availableSpace;
     private readonly Func<EngineSettings, ClientEngine> _createEngine;
+    private readonly Func<int, string, CancellationToken, Task<bool>>? _catalogTitleIsUnique;
+    private static readonly HttpClient AniListClient = CreateAniListClient();
     private readonly SemaphoreSlim _transferGate = new(1, 1);
     private readonly object _sync = new();
     private readonly Dictionary<string, CacheEntry> _completed = new(StringComparer.Ordinal);
 
     public TemporaryEpisodeWatchService(DomainHotSwapper config)
-        : this(new DualTrackerRssParser(config),
-            Path.Combine(AppDataPaths.LocalBaseDirectory, "UniversalMediaOS", "TemporaryWatch"))
+        : this(new DualTrackerRssParser(config).SearchAsync,
+            Path.Combine(AppDataPaths.LocalBaseDirectory, "UniversalMediaOS", "TemporaryWatch"),
+            catalogTitleIsUnique: (catalogId, title, token) => AniListTitleIsUniqueAsync(AniListClient,
+                string.IsNullOrWhiteSpace(config.GetSetting("AniListUrl")) ? "https://graphql.anilist.co" : config.GetSetting("AniListUrl"),
+                catalogId, title, token))
     {
     }
 
@@ -44,11 +49,13 @@ public sealed class TemporaryEpisodeWatchService
     internal TemporaryEpisodeWatchService(
         Func<string, Action<string>?, CancellationToken, Task<List<TorrentResult>>> search, string root,
         Func<string, long>? availableSpace = null,
-        Func<EngineSettings, ClientEngine>? createEngine = null)
+        Func<EngineSettings, ClientEngine>? createEngine = null,
+        Func<int, string, CancellationToken, Task<bool>>? catalogTitleIsUnique = null)
     {
         _search = search;
         _availableSpace = availableSpace ?? (directory => new DriveInfo(Path.GetPathRoot(directory)!).AvailableFreeSpace);
         _createEngine = createEngine ?? (settings => new ClientEngine(settings));
+        _catalogTitleIsUnique = catalogTitleIsUnique;
         _root = Path.GetFullPath(root);
         Directory.CreateDirectory(_root);
         CleanupOrphans();
@@ -94,8 +101,9 @@ public sealed class TemporaryEpisodeWatchService
                 }
             }
 
+            var provenUnlabelledTitles = new HashSet<string>(StringComparer.Ordinal);
             var candidates = await FindCandidatesAsync(title, aliases, episode, audio, log, token,
-                catalogFormat, catalogEpisodeCount);
+                catalogFormat, catalogEpisodeCount, catalogId, provenUnlabelledTitles);
             if (candidates.Count == 0)
                 throw new InvalidOperationException("No matching episode torrent was found. Try Stream or another episode.");
 
@@ -111,7 +119,7 @@ public sealed class TemporaryEpisodeWatchService
                 {
                     lockHandle = new FileStream(Path.Combine(directory, ".active"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
                     var selection = await TransferCandidateAsync(candidate, title, episode, audio, directory, log, token,
-                        specialTitles, numberedSpecialTitles);
+                        specialTitles, numberedSpecialTitles, provenUnlabelledTitles);
                     if (selection == null) continue;
                     token.ThrowIfCancellationRequested();
                     var entry = new CacheEntry(directory, selection.Value.Path, selection.Value.AudioNotice,
@@ -146,7 +154,7 @@ public sealed class TemporaryEpisodeWatchService
 
     internal async Task<List<TorrentResult>> FindCandidatesAsync(
         string title, IEnumerable<string> aliases, int episode, string audio, Action<string> log, CancellationToken token,
-        string catalogFormat = "", int catalogEpisodeCount = 0)
+        string catalogFormat = "", int catalogEpisodeCount = 0, int catalogId = 0, HashSet<string>? provenUnlabelledTitles = null)
     {
         string[] titles = new[] { title }.Concat(aliases ?? []).Where(t => !string.IsNullOrWhiteSpace(t))
             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
@@ -154,6 +162,7 @@ public sealed class TemporaryEpisodeWatchService
         bool numberedSpecial = IsNumberedMultiSpecial(catalogFormat, catalogEpisodeCount, episode);
         if (IsRestrictedSpecialFormat(catalogFormat) && !singleSpecial && !numberedSpecial) return [];
         var results = new List<TorrentResult>();
+        var proven = provenUnlabelledTitles ?? new HashSet<string>(StringComparer.Ordinal);
         bool incompleteSearch = false;
         async Task Search(string query)
         {
@@ -167,7 +176,7 @@ public sealed class TemporaryEpisodeWatchService
         List<TorrentResult> Matches() => results.Where(result => !string.IsNullOrWhiteSpace(result.MagnetLink) &&
                 (singleSpecial
                     ? FileMatchesCatalogEpisode(result.Title, episode, titles) || TryMapSingleSpecialRelease(result.Title, titles) != null
-                    : numberedSpecial ? FileMatchesNumberedSpecial(result.Title, episode, titles)
+                    : numberedSpecial ? FileMatchesNumberedSpecial(result.Title, episode, titles, proven)
                     : !SeasonConflicts(title, result.Title) &&
                       titles.Any(t => SeasonDownloader.TitleLooksLikeMatch(result.Title, StripSeasonMarker(t))) &&
                       !Regex.IsMatch(result.Title, @"\b(movies?|ovas?|onas?|oads?|specials?)\b", RegexOptions.IgnoreCase) &&
@@ -205,6 +214,26 @@ public sealed class TemporaryEpisodeWatchService
             if (Matches().Count >= 20) break;
         }
 
+        if (numberedSpecial && catalogId > 0 && _catalogTitleIsUnique != null)
+        {
+            // A release without an OVA/Special label may name a TV work with the same title.
+            // Only a whole title that AniList gives to this catalog entry alone can stand in.
+            var unlabelled = results.Where(result => !string.IsNullOrWhiteSpace(result.MagnetLink) &&
+                    NumberedSpecialTitle(result.Title, episode, titles, requireLabel: true) == null)
+                .Select(result => NumberedSpecialTitle(result.Title, episode, titles, requireLabel: false))
+                .OfType<string>().Distinct(StringComparer.Ordinal).Take(2).ToArray();
+            foreach (string candidateTitle in unlabelled.Where(t => !proven.Contains(t)))
+            {
+                if (await _catalogTitleIsUnique(catalogId, candidateTitle, token))
+                {
+                    proven.Add(candidateTitle);
+                    log($"AniList gives the unlabelled release title '{candidateTitle}' to this catalog entry alone.");
+                }
+                else
+                    log($"The unlabelled release title '{candidateTitle}' was not proven unique to this catalog entry; it stays unmatched.");
+            }
+        }
+
         var matches = Matches();
         if (matches.Count == 0 && incompleteSearch)
             throw new TorrentSearchIncompleteException("No verified episode was found; torrent discovery is incomplete because a source could not be checked. Retry or repair the download sources.");
@@ -216,7 +245,8 @@ public sealed class TemporaryEpisodeWatchService
 
     private async Task<(string Path, string AudioNotice, IReadOnlyList<string> CaptionPaths)?> TransferCandidateAsync(
         TorrentResult candidate, string title, int episode, string audio, string directory,
-        Action<string> log, CancellationToken token, string[]? specialTitles, string[]? numberedSpecialTitles)
+        Action<string> log, CancellationToken token, string[]? specialTitles, string[]? numberedSpecialTitles,
+        IReadOnlyCollection<string>? unlabelledNumberedTitles = null)
     {
         var settings = new EngineSettingsBuilder
         {
@@ -254,7 +284,8 @@ public sealed class TemporaryEpisodeWatchService
                     return null;
                 }
                 string torrentName = manager.Torrent?.Name ?? string.Empty;
-                if (numberedSpecialTitles != null && !FileMatchesNumberedSpecial(torrentName, episode, numberedSpecialTitles))
+                if (numberedSpecialTitles != null &&
+                    !FileMatchesNumberedSpecial(torrentName, episode, numberedSpecialTitles, unlabelledNumberedTitles))
                 {
                     log("Torrent metadata does not identify the selected numbered catalog special.");
                     return null;
@@ -266,7 +297,8 @@ public sealed class TemporaryEpisodeWatchService
                     log("Torrent metadata does not identify the selected catalog special.");
                     return null;
                 }
-                ITorrentManagerFile? video = SelectEpisodeFile(manager.Files, episode, specialTitles, mapping, numberedSpecialTitles);
+                ITorrentManagerFile? video = SelectEpisodeFile(manager.Files, episode, specialTitles, mapping, numberedSpecialTitles,
+                    unlabelledNumberedTitles);
                 if (video == null)
                 {
                     log("Torrent did not contain one unambiguous file for this episode.");
@@ -424,12 +456,12 @@ public sealed class TemporaryEpisodeWatchService
     }
 
     internal static ITorrentManagerFile? SelectEpisodeFile(IEnumerable<ITorrentManagerFile> files, int episode, string[]? specialTitles = null,
-        SpecialEpisodeMapping? mapping = null, string[]? numberedSpecialTitles = null)
+        SpecialEpisodeMapping? mapping = null, string[]? numberedSpecialTitles = null, IReadOnlyCollection<string>? unlabelledNumberedTitles = null)
     {
         var videos = files.Where(file => VideoExtensions.Contains(Path.GetExtension(file.FullPath), StringComparer.OrdinalIgnoreCase)).ToArray();
         if ((mapping != null || numberedSpecialTitles != null) && videos.Length != 1) return null;
         var matches = videos.Where(file => numberedSpecialTitles != null
-            ? FileMatchesNumberedSpecial(Path.GetFileName(file.FullPath), episode, numberedSpecialTitles)
+            ? FileMatchesNumberedSpecial(Path.GetFileName(file.FullPath), episode, numberedSpecialTitles, unlabelledNumberedTitles)
             : mapping != null
             ? FileMatchesSpecialMapping(Path.GetFileName(file.FullPath), mapping)
             : FileMatchesCatalogEpisode(Path.GetFileName(file.FullPath), episode, specialTitles)).ToArray();
@@ -501,28 +533,103 @@ public sealed class TemporaryEpisodeWatchService
         string.Equals(format, "SPECIAL", StringComparison.OrdinalIgnoreCase) ||
         string.Equals(format, "OVA", StringComparison.OrdinalIgnoreCase);
 
-    internal static bool FileMatchesNumberedSpecial(string name, int episode, string[] titles)
+    private static HttpClient CreateAniListClient()
+    {
+        var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+        client.DefaultRequestHeaders.Add("Accept", "application/json");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("UniversalMediaOS/1.0");
+        return client;
+    }
+
+    /// <summary>One bounded AniList search; any failure or ambiguity leaves the title unproven.</summary>
+    internal static async Task<bool> AniListTitleIsUniqueAsync(HttpClient client, string endpoint, int catalogId, string title,
+        CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        const string query = "query($search:String){Page(page:1,perPage:50){pageInfo{hasNextPage}" +
+            "media(search:$search,type:ANIME){id title{romaji english native} synonyms}}}";
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(token);
+        limit.CancelAfter(TimeSpan.FromSeconds(5));
+        try
+        {
+            using var content = new StringContent(JsonSerializer.Serialize(new { query, variables = new { search = title } }),
+                System.Text.Encoding.UTF8, "application/json");
+            using var response = await client.PostAsync(endpoint, content, limit.Token);
+            if (!response.IsSuccessStatusCode) return false;
+            byte[] body = await response.Content.ReadAsByteArrayAsync(limit.Token);
+            return body.Length <= 256 * 1024 && AniListTitleBelongsOnlyTo(System.Text.Encoding.UTF8.GetString(body), catalogId, title);
+        }
+        catch (OperationCanceledException) when (!token.IsCancellationRequested) { return false; }
+        catch (HttpRequestException) { return false; }
+    }
+
+    /// <summary>True only for a complete page where exactly one entry, the requested one, carries the whole title.</summary>
+    internal static bool AniListTitleBelongsOnlyTo(string json, int catalogId, string title)
+    {
+        string wanted = TitleKey(title);
+        if (catalogId <= 0 || wanted.Length == 0) return false;
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            if (!document.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object ||
+                !data.TryGetProperty("Page", out var page) || page.ValueKind != JsonValueKind.Object ||
+                !page.TryGetProperty("pageInfo", out var info) || !info.TryGetProperty("hasNextPage", out var next) ||
+                next.ValueKind != JsonValueKind.False ||
+                !page.TryGetProperty("media", out var media) || media.ValueKind != JsonValueKind.Array) return false;
+            var owners = new List<int>();
+            foreach (var entry in media.EnumerateArray())
+            {
+                if (!entry.TryGetProperty("id", out var id) || !id.TryGetInt32(out int entryId)) return false;
+                var names = new List<string>();
+                if (entry.TryGetProperty("title", out var titles) && titles.ValueKind == JsonValueKind.Object)
+                    names.AddRange(titles.EnumerateObject().Where(name => name.Value.ValueKind == JsonValueKind.String)
+                        .Select(name => name.Value.GetString()!));
+                if (entry.TryGetProperty("synonyms", out var synonyms) && synonyms.ValueKind == JsonValueKind.Array)
+                    names.AddRange(synonyms.EnumerateArray().Where(name => name.ValueKind == JsonValueKind.String)
+                        .Select(name => name.GetString()!));
+                // Catalog qualifiers such as "(TV)" or "(2011)" are absent from release names,
+                // so a qualified title still makes the bare title ambiguous.
+                if (names.Any(name => TitleKey(name) == wanted ||
+                    TitleKey(Regex.Replace(name, @"(?:\s*[(\[][^()\[\]]{1,40}[)\]])+\s*$", "")) == wanted))
+                    owners.Add(entryId);
+            }
+            return owners.Count == 1 && owners[0] == catalogId;
+        }
+        catch (JsonException) { return false; }
+    }
+
+    private static string TitleWords(string value) => string.Join(' ', Regex.Matches(value, @"[\p{L}\p{N}]+")
+        .Select(match => match.Value.ToLowerInvariant()));
+
+    private static string TitleKey(string value) => TitleWords((value ?? string.Empty).Normalize());
+
+    internal static bool FileMatchesNumberedSpecial(string name, int episode, string[] titles, IReadOnlyCollection<string>? unlabelledTitles = null) =>
+        NumberedSpecialTitle(name, episode, titles, requireLabel: true) != null ||
+        (unlabelledTitles is { Count: > 0 } &&
+         NumberedSpecialTitle(name, episode, unlabelledTitles.ToArray(), requireLabel: false) != null);
+
+    /// <summary>The catalog title a numbered-special release names, or null. Without the label requirement the
+    /// caller must separately prove that title belongs to this catalog entry alone.</summary>
+    internal static string? NumberedSpecialTitle(string name, int episode, string[] titles, bool requireLabel)
     {
         string file = Path.GetFileName(name);
         if (VideoExtensions.Contains(Path.GetExtension(file), StringComparer.OrdinalIgnoreCase))
             file = Path.GetFileNameWithoutExtension(file);
         file = file.Replace('_', ' '); // Older releases separate every word with underscores.
-        if (!Regex.IsMatch(file, @"\b(?:ova|specials?)\b", RegexOptions.IgnoreCase) ||
+        if ((requireLabel && !Regex.IsMatch(file, @"\b(?:ova|specials?)\b", RegexOptions.IgnoreCase)) ||
             Regex.IsMatch(file, @"\b(?:batch|complete|movie|ona|tv)\b|\b(?:ova|specials?)\s*\d|" +
                 @"\b(?:season\s*\d+|s\d{1,2}(?:e\d+)?|\d+(?:st|nd|rd|th)\s+season)\b", RegexOptions.IgnoreCase))
-            return false;
+            return null;
         // Release groups write one explicit unit as Episode/Ep/E N or " - N".
         // Season-qualified and "#" units still need a mapping, not a guess.
         var units = Regex.Matches(file, EpisodeMarkerPattern, RegexOptions.IgnoreCase);
         if (units.Count != 1 || !Regex.IsMatch(units[0].Value, @"^(?:(?:episode|ep|e)\s*\d|\s[-–—])", RegexOptions.IgnoreCase) ||
-            !EpisodeMatches(file, episode)) return false;
+            !EpisodeMatches(file, episode)) return null;
         string withoutUnit = file.Remove(units[0].Index, units[0].Length);
         // A leading release-group label is not a work title. Everything else
         // must be the whole catalog title or a known release decoration.
         withoutUnit = Regex.Replace(withoutUnit, @"^\s*\[[^\]\r\n]{1,80}\]\s*", "");
-        static string Words(string value) => string.Join(' ', Regex.Matches(value, @"[\p{L}\p{N}]+")
-            .Select(match => match.Value.ToLowerInvariant()));
-        string observed = Words(withoutUnit);
+        string observed = TitleWords(withoutUnit);
         const string decoration = @"ova|specials?|sub|subbed|dub|dubbed|dual audio|english audio|english dub|" +
             @"eng|jpn|japanese|[0-9]{3,4}p|[0-9]{3,4}x[0-9]{3,4}|4k|8bit|10bit|hevc|x264|x265|h264|h265|aac|eac3|flac|opus|[a-f0-9]{8}|" +
             // Source and subtitle tags describe the file, never another work.
@@ -536,23 +643,23 @@ public sealed class TemporaryEpisodeWatchService
                 // whole titles and ASCII release decorations may match it.
                 string literalObserved = withoutUnit.Normalize().Trim();
                 foreach (string candidate in new[] { literalObserved,
-                    Regex.Replace(literalObserved, @"^(?:ova|special)\s+", "", RegexOptions.IgnoreCase) })
+                    Regex.Replace(literalObserved, @"^(?:ova|specials?)\s+", "", RegexOptions.IgnoreCase) })
                 {
                     if (!candidate.StartsWith(literalTitle, StringComparison.OrdinalIgnoreCase)) continue;
                     string suffix = candidate[literalTitle.Length..];
                     if (suffix.Length > 0 && !char.IsWhiteSpace(suffix[0]) && !"-:|[(".Contains(suffix[0])) continue;
                     if (suffix.Any(character => !char.IsAscii(character)) ||
                         Regex.IsMatch(suffix, @"[^A-Za-z0-9\s\[\]()|:._-]")) continue;
-                    string releaseWords = Words(suffix);
+                    string releaseWords = TitleWords(suffix);
                     if (releaseWords.Length == 0 || Regex.IsMatch(releaseWords,
-                        @"^(?:" + decoration + @")(?: (?:" + decoration + @"))*$")) return true;
+                        @"^(?:" + decoration + @")(?: (?:" + decoration + @"))*$")) return title;
                 }
             }
             else if (Regex.IsMatch(observed,
-                @"^(?:(?:ova|specials?) )?" + Regex.Escape(Words(title)) + @"(?: (?:" + decoration + @"))*$"))
-                return true;
+                @"^(?:(?:ova|specials?) )?" + Regex.Escape(TitleWords(title)) + @"(?: (?:" + decoration + @"))*$"))
+                return title;
         }
-        return false;
+        return null;
     }
 
     internal static bool FileMatchesCatalogEpisode(string name, int episode, string[]? specialTitles = null)
