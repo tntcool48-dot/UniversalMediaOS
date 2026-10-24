@@ -74,3 +74,44 @@ On the 2d926ec build, at the 1:48 cue, the menu showed "Arabic (downloaded)" and
 The October 5 report was that choosing **CC Off** in the menu "immediately returned to English" on the saved Pilot. The October 22 investigation explained a different symptom: the menu closing by itself, or a click on a choice not taking, in about 1 in 30–60 automated runs, when another window takes the foreground. The October 5 investigation already found the same mechanism for its own tool-driven attempts: the desktop tool's clicks dismissed the popup before Off reached the player.
 
 **Decision: the menu-closing explanation does not close the original manual cause.** It covers the automated failures and the tool-driven dismissals. It would match the user's report only if the menu closed before the click, so that English simply stayed selected; nothing records whether that happened, and the report describes Off being chosen and then reverting. No app path that reverts a committed Off was found: Off reloads the input without a caption, and the reload is the only thing that attaches one. In this session all nine real-mouse choices (German and Russian twice; Vietnamese, Swedish, Finnish and Japanese; and re-picking the already chosen Arabic) were logged as the person's input and stayed selected. The only other closes were five Escapes and one deactivation, both sent by my own driver. This session also saw the shared desktop interfere twice (outside Ctrl+Shift+Left presses and a focus change), which supports the outside-activation explanation for automated runs but says nothing about the user's own session. The cause of the manual report stays **unexplained**; the direct CC button, human-confirmed on October 5, remains the dependable path. One question for the user would settle it: when it happened, did the menu close before you clicked CC Off, or did CC Off show as selected and then change back to English?
+
+## Arabic and Japanese rendering after 71d20c1
+
+On the 71d20c1 build, at the 1:48 cue, **Arabic (downloaded)** rendered the Commons Arabic line with joined letterforms and right-to-left word order, and **Japanese (downloaded)** rendered "この剣には暗い過去が" correctly. Both choices reloaded the input and kept the paused position within 0.31 s.
+
+**Fault 6: edge punctuation on the wrong side.** The Arabic line "هذا النصل له ماض مظلم." showed its period at the **right** end, beside the first word, instead of the left end where the sentence finishes. LibVLC lays each caption line out with a left-to-right base direction, so neutral characters at the ends of a right-to-left line (periods, question marks, ellipses, leading dialogue dashes) land on the wrong side. A copy of the same file with U+200F (right-to-left mark) at each line end showed the period on the left, in the same paused frame.
+
+**Repair (3659de1).** When a saved provider caption's language is right-to-left (from the culture's own text direction: Arabic, Hebrew, Persian, Urdu and others), the saver writes a right-to-left mark at both ends of each cue text line of SubRip and WebVTT files. Headers, notes, cue numbers, timings and other languages are written unchanged; ASS files are left to libass. `PlaylistMediaDownloadTests.SavedRightToLeftCaptionsKeepTheirPunctuationOnTheirSide` (an Arabic VTT with a note and a two-line cue, a Hebrew SRT with leading dashes and CRLF, and English) failed before the repair (`rtl-marks-before-repair-20261024.trx`); the 149-case download/caption scope passes after it (`rtl-marks-after-repair-20261024.trx`).
+
+This covers captions the app saves from a provider (Watch via download, Download to library, Download season). It does not change right-to-left captions that are streamed, embedded in a container, or shipped beside a torrent's video; those still show edge punctuation on the left-to-right side. No catalog provider in this session offered Arabic captions (Vidsrc's eleven for Sintel were European languages), so the repaired saver's Arabic output was checked on screen with the Commons text written by the same function.
+
+## Visible TV journey in the Downloads UI (tv-profile)
+
+The profile's download folder held Breaking Bad Season 1 as saved by the October 9 season QA (seven episodes, each with an English VTT), shared by hardlink the way the earlier QA profiles already share it.
+
+1. **TV Shows → "Breaking Bad" → Search** listed Breaking Bad first among six TVmaze results. Its details offered Season 1 with episodes "1. Pilot" to "7. A No-Rough-Stuff-Type Deal".
+2. **Download season** recognized all seven saved episodes without a transfer and reported, 6 s later, "Saved 7 episodes from Season 1, including available captions."
+3. **Downloads** listed seven rows, "Breaking Bad · S01E01 · Pilot" to "Breaking Bad · S01E07 · A No-Rough-Stuff-Type Deal", each with Delete and Play.
+4. **Play** on S01E03 opened the native player; the menu listed **CC Off, English (downloaded)**. At 5:07.9 the two-line cue "Do you remember it / having an effect on your mood?" showed while paused; it was still there after Downloads → episode tab return; **CC** off removed it (5:08.29) and **CC** on restored it (5:08.70).
+5. With the episode tab closed, **Delete → Yes** ("Are you sure you want to permanently delete 'Breaking Bad · S01E03 · …and the Bag's in the River'?") removed the profile's copy; Downloads then listed six episodes. The shared original stayed (its link count returned to 3).
+
+The ten real-app caption variants and four menu diagnostics passed **14 / 14** on 71d20c1 under the lock (`live-caption-selection-71d20c1-20261024.trx`).
+
+**Second tab-order change.** During step 4 the app again lost the foreground, and a click on the Downloads tab left the order "TV Shows, Breaking Bad, Downloads" with Downloads active. That matches a tab drag-and-drop of Downloads onto the episode tab, which the driver never performs. The tab header keeps its drag source after a click, so a stray pressed-button move could start such a drag; whether that or outside input caused it is not established. Noted for the tab-strip owner, not changed here.
+
+## Delete leaves saved captions and metadata behind
+
+Downloads → Delete removes only the video file. For both the Movie and the TV item, `library-item.json` (and, for the episode, `caption-01.en.vtt`) stayed in the item's folder. Downloads hides the item because its video is gone, and a later save creates a new revision folder, so nothing visible breaks; the leftover files only take space. Not changed here.
+
+## Cleanup and preservation
+
+- The 1,172,428,172-byte Sintel download was deleted through the app; the 58 MB Vidsrc copy and its eleven captions were removed by their final player close. The Commons Arabic/Japanese files (3.4 KB) remain as evidence in the ignored QA folder.
+- The hardlinked originals (Breaking Bad S1 from `catalog-season-20261009`, Sintel from `package-smoke-20261009`) kept their sizes and times; see the before/after snapshots in the QA folder.
+
+## What remains open in this item
+
+- **Spoken Dub and full caption selection for the anime episode-1 dual-audio download.** That sample was a temporary watch removed at its final close; repeating it needs a 3.5 GB torrent, and spoken language needs a listener (or the anime session's speech check). Full caption selection across many embedded tracks is now qualified on Sintel instead.
+- **Right-to-left captions that the app does not save**: streamed provider captions, embedded right-to-left tracks, torrent sidecars. They keep left-to-right edge punctuation.
+- **Two saved captions in the same language** share one label ("Arabic (downloaded)" twice), because a saved file keeps only its language, not the provider's label.
+- **Archive items' own caption files** (for example Cosmos Laundromat's en/es/fr/it SRTs) are never offered; that is the movie-tv-providers session's finding and area.
+- **The original manual CC Off report** stays unexplained (see the decision above).
