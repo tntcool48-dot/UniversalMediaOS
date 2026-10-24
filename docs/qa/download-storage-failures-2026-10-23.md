@@ -28,7 +28,7 @@ Each repair started from a regression that failed on the unchanged source.
 | `T2_Downloads_01_Output_Path_Traversal_Attempt` | The seeder's torrent names a file outside every download folder. The row fails with "The torrent lists a file outside the download folder; it was not started.". Nothing appears outside or in the library, and Remove is offered. | Pass |
 | `T2_Downloads_04_Malformed_Info_Hash_Magnet_Link` | Magnets reach the queue only through the feeds. The feed first lists only a malformed magnet: the row fails with the hash message and nothing is transferred. Then the usable release is listed below the better-seeded malformed one, and Retry downloads it. | Pass |
 | `T1_Downloads_05_Audio_Language_Preference_Selection` | A Dub job whose only release is labelled `[Sub]` fails with "No Dub release found" and transfers nothing. Once that release is relabelled `[Dual Audio]`, Retry downloads it and the queue pins that title. | Pass |
-| `T2_Downloads_02_Torrent_Client_Offline_on_Connect` | The season starts in a loopback qBittorrent stand-in and is paused there. With qBittorrent offline (connections refused), Resume fails with "qBittorrent may still own downloads in this folder. Restore its connection before retrying; … a second torrent engine was not started." The seeder sends nothing and no native partial appears. Once qBittorrent is back, Retry completes the season through it. | Pending: the first run failed on a test bug (the stand-in reported an empty save path, and the app correctly refused it as another folder); rerun pending |
+| `T2_Downloads_02_Torrent_Client_Offline_on_Connect` | The season starts in a loopback qBittorrent stand-in and is paused there. With qBittorrent offline (connections refused), Resume fails with "qBittorrent may still own downloads in this folder. Restore its connection before retrying; … a second torrent engine was not started." The seeder sends nothing and no native partial appears. Once qBittorrent is back, Retry completes the season through it. | Pass. The first run failed on a test bug: the stand-in reported an empty save path, and the app correctly refused it as another folder. The stand-in now reports the save path the app posted, as qBittorrent does. |
 
 ## Proposed exclusions, for the user to approve
 
@@ -49,7 +49,7 @@ Each repair started from a regression that failed on the unchanged source.
 
 ## Runs
 
-TRX files are in `.artifacts/qa-evidence` in the worktree.
+TRX files are kept in `C:/Users/user/animeapp/.artifacts/implementation/download-storage-20261023`.
 
 | Run | Result | TRX |
 | --- | --- | --- |
@@ -64,6 +64,7 @@ TRX files are in `.artifacts/qa-evidence` in the worktree.
 | Alias transfers and retargeting | 4 / 4 in 1 min 31 s | `alias-transfer-first-20261023.trx` |
 | qBittorrent transfer in another folder, before / after | 0 / 2, then 2 / 2 | `qbit-foreign-folder-before-20261023.trx`, `qbit-foreign-folder-after-20261023.trx` |
 | qBit, pinning, validation and feed classes after that | 59 / 59 | `qbit-foreign-folder-related-20261023.trx` |
-| Real-app qBittorrent offline journey | First run 0 / 1 (test bug above); rerun pending | `qbit-offline-first-20261023.trx` |
+| Real-app qBittorrent offline journey | First run 0 / 1 (test bug above), then 1 / 1 in 28 s | `qbit-offline-first-20261023.trx`, `qbit-offline-second-20261024.trx` |
+| Whole Downloads class, after the shared fixture changes | 9 / 9 passed, 1 skipped (`T2_Downloads_03`, the proposed exclusion), in 2 min 15 s | `downloads-class-20261024.trx` |
 
 All runs used one Debug build at `.artifacts/implementation/build`, with zero warnings and SDK 9.0.310. The hosted run remains the full checkpoint. Skipped Downloads methods drop from **five to one** (`T2_Downloads_03`, the proposed exclusion).
