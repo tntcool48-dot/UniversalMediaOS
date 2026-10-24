@@ -786,9 +786,10 @@ public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
     }
 
     [Theory]
-    [InlineData("ass")]
-    [InlineData("srt")]
-    public Task PausedEmbeddedCaptionRestorationRepaintsWithoutStartingPlayback(string subtitleCodec)
+    [InlineData("ass", "eng", "English")]
+    [InlineData("srt", "eng", "English")]
+    [InlineData("srt", "ger", "German")]
+    public Task PausedEmbeddedCaptionRestorationRepaintsWithoutStartingPlayback(string subtitleCodec, string language, string title)
         => OnDispatcher(async () =>
         {
             string? previous = Environment.GetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable);
@@ -807,7 +808,7 @@ public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
                     "-f", "lavfi", "-i", "color=c=black:size=160x90:rate=24", "-i", caption,
                     "-map", "0:v", "-map", "1:s", "-t", "15", "-c:v", subtitleCodec == "srt" ? "libx264" : "mpeg4",
                     "-g", "60", "-c:s", subtitleCodec,
-                    "-metadata:s:s:0", "language=eng", "-metadata:s:s:0", "title=English", "-y", video], deadline.Token);
+                    "-metadata:s:s:0", "language=" + language, "-metadata:s:s:0", "title=" + title, "-y", video], deadline.Token);
                 Assert.Equal(0, encoded.ExitCode);
                 File.Delete(caption); // The player must use the embedded track, not a discovered sidecar.
                 using (var seed = new DatabaseContext())
@@ -822,6 +823,15 @@ public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
                 player.Volume = 0;
                 player.LoadMedia(video, "Embedded caption fixture");
                 player.PlayPending();
+                if (language != "eng")
+                {
+                    // LibVLC enables an English-tagged track by itself but not a German one.
+                    // Enable it in the decoder the same way, and rewind so the first cue is demuxed
+                    // again, so the user's toggles below start alike.
+                    await Wait(() => player.IsPlaying && player.MediaPlayer.SpuDescription.Any(track => track.Id >= 0), player);
+                    player.MediaPlayer.SetSpu(player.MediaPlayer.SpuDescription.First(track => track.Id >= 0).Id);
+                    player.MediaPlayer.Time = 0;
+                }
                 await Wait(() => player.IsPlaying && player.MediaPlayer.Time >= 1_000 &&
                     player.SelectedCaption is { Key: not "off" } && memory.BrightPixels > 5, player);
                 player.TogglePlayPauseCommand.Execute(null);
@@ -894,6 +904,139 @@ public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
                 Assert.StartsWith(Path.GetFullPath(Path.Combine(Path.GetTempPath(), "UniversalMediaOS.Tests")) + Path.DirectorySeparatorChar,
                     Path.GetFullPath(root), StringComparison.OrdinalIgnoreCase);
                 Assert.Null(new DirectoryInfo(root).LinkTarget);
+                if (Directory.Exists(root)) Directory.Delete(root, true);
+            }
+        });
+
+    [Fact]
+    public Task PreparedEmbeddedCaptionsKeepTheirPlaceInTheMenu()
+        => OnDispatcher(async () =>
+        {
+            // Sintel's ten embedded tracks reordered themselves: each language whose seek-safe copy was
+            // prepared moved to the end of the menu, because the copy is registered as the newest track.
+            string? previous = Environment.GetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable);
+            string root = Path.Combine(Path.GetTempPath(), "UniversalMediaOS.Tests", "CaptionOrder-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, root);
+            string? connectionString = null;
+            try
+            {
+                string video = Path.Combine(root, "tracks.mkv");
+                string german = Path.Combine(root, "german.srt"), english = Path.Combine(root, "english.srt");
+                File.WriteAllText(german, "1\n00:00:00,000 --> 00:00:08,000\nDeutsch\n");
+                File.WriteAllText(english, "1\n00:00:00,000 --> 00:00:08,000\nEnglish\n");
+                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                var encoded = await new PreparationProcessRunner().RunAsync("ffmpeg", ["-nostdin", "-hide_banner", "-v", "error",
+                    "-f", "lavfi", "-i", "color=c=black:size=160x90:rate=24", "-i", german, "-i", english,
+                    "-map", "0:v", "-map", "1:s", "-map", "2:s", "-t", "10", "-c:v", "libx264", "-c:s", "srt",
+                    "-metadata:s:s:0", "language=ger", "-metadata:s:s:1", "language=eng", "-y", video], deadline.Token);
+                Assert.Equal(0, encoded.ExitCode);
+                File.Delete(german);
+                File.Delete(english);
+                using (var seed = new DatabaseContext())
+                {
+                    seed.Database.EnsureCreated();
+                    connectionString = seed.Database.GetConnectionString();
+                }
+                using var memory = new MemoryVideo();
+                using var player = new PlaybackViewModel(new DatabaseContext());
+                memory.Attach(player.MediaPlayer);
+                player.Volume = 0;
+                player.LoadMedia(video, "Caption order fixture");
+                player.PlayPending();
+                await Wait(() => player.IsPlaying && player.CaptionOptions.Count == 3, player);
+                player.TogglePlayPauseCommand.Execute(null);
+                await Wait(() => !player.IsPlaying && player.MediaPlayer.State == VLCState.Paused, player);
+                string[] order = ["CC Off", "German", "English"];
+                Assert.Equal(order, player.CaptionOptions.Select(option => option.Label).ToArray());
+                foreach (string label in new[] { "German", "English" })
+                {
+                    var original = player.CaptionOptions.Single(option => option.Label == label);
+                    player.SelectedCaption = original;
+                    await player.EmbeddedCaptionPreparation;
+                    await Wait(() => player.SelectedCaption?.Label == label && player.SelectedCaption.NativeId != original.NativeId, player,
+                        () => $"menu={string.Join(", ", player.CaptionOptions.Select(option => $"{option.Label}#{option.NativeId}"))}");
+                    Assert.Equal(order, player.CaptionOptions.Select(option => option.Label).ToArray());
+                }
+                player.Dispose();
+                await player.EmbeddedCaptionPreparation;
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, previous);
+                if (connectionString != null)
+                {
+                    using var connection = new Microsoft.Data.Sqlite.SqliteConnection(connectionString);
+                    Microsoft.Data.Sqlite.SqliteConnection.ClearPool(connection);
+                }
+                Assert.StartsWith(Path.GetFullPath(Path.Combine(Path.GetTempPath(), "UniversalMediaOS.Tests")) + Path.DirectorySeparatorChar,
+                    Path.GetFullPath(root), StringComparison.OrdinalIgnoreCase);
+                if (Directory.Exists(root)) Directory.Delete(root, true);
+            }
+        });
+
+    [Fact]
+    public Task SavedCaptionChoiceShowsInsteadOfAnEmbeddedTrack()
+        => OnDispatcher(async () =>
+        {
+            // Sintel with saved Arabic and Japanese files showed its embedded English cue under either choice.
+            string? previous = Environment.GetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable);
+            string root = Path.Combine(Path.GetTempPath(), "UniversalMediaOS.Tests", "SavedOverEmbedded-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, root);
+            string? connectionString = null;
+            try
+            {
+                string video = Path.Combine(root, "film.mkv"), embedded = Path.Combine(root, "embedded.srt");
+                string saved = Path.Combine(root, "caption-01.fr.srt");
+                File.WriteAllText(embedded, "1\n00:00:00,000 --> 00:00:03,000\nEmbedded English cue\n");
+                File.WriteAllText(saved, "1\n00:00:04,000 --> 00:00:08,000\nSaved French cue\n");
+                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                var encoded = await new PreparationProcessRunner().RunAsync("ffmpeg", ["-nostdin", "-hide_banner", "-v", "error",
+                    "-f", "lavfi", "-i", "color=c=black:size=160x90:rate=24", "-i", embedded,
+                    "-map", "0:v", "-map", "1:s", "-t", "10", "-c:v", "libx264", "-g", "24", "-c:s", "srt",
+                    "-metadata:s:s:0", "language=eng", "-disposition:s:0", "default", "-y", video], deadline.Token);
+                Assert.Equal(0, encoded.ExitCode);
+                File.Delete(embedded);
+                using (var seed = new DatabaseContext())
+                {
+                    seed.Database.EnsureCreated();
+                    connectionString = seed.Database.GetConnectionString();
+                }
+                using var memory = new MemoryVideo(capturePixels: true);
+                using var player = new PlaybackViewModel(new DatabaseContext());
+                memory.Attach(player.MediaPlayer);
+                player.Volume = 0;
+                var added = new System.Collections.Concurrent.ConcurrentQueue<string>();
+                player.MediaPlayer.ESAdded += (_, e) => added.Enqueue($"{e.Type}{e.Id}@{player.MediaPlayer.State}");
+                player.LoadMedia(video, "Saved caption fixture", localCaptionPaths: [saved]);
+                string Tracks() => $"spu={player.MediaPlayer.Spu}; spus={string.Join(", ", player.MediaPlayer.SpuDescription.Select(track => $"{track.Id}:{track.Name}"))}; " +
+                    $"caption={player.SelectedCaption?.Label}; bright={memory.BrightPixels}; time={player.MediaPlayer.Time}; " +
+                    $"media={string.Join(", ", (player.MediaPlayer.Media?.Tracks ?? []).Select(track => $"{track.TrackType}{track.Id}:{track.Language}:{track.Description}:{track.Codec}"))}; added={string.Join(",", added)}";
+                Assert.Equal(["CC Off", "French (downloaded)"], player.CaptionOptions.Select(option => option.Label).ToArray());
+                player.PlayPending();
+                await Wait(() => player.IsPlaying && player.MediaPlayer.Time >= 1_000 && memory.Frames > 10, player, Tracks);
+                player.TogglePlayPauseCommand.Execute(null);
+                await Wait(() => !player.IsPlaying && player.MediaPlayer.State == VLCState.Paused, player, Tracks);
+                Assert.Equal("French (downloaded)", player.SelectedCaption!.Label);
+                await Task.Delay(300);
+                Assert.True(memory.BrightPixels == 0, "The embedded cue showed under the saved French choice: " + Tracks());
+                int beforeSeek = memory.Frames;
+                player.BeginUserSeek();
+                player.CommitUserSeek(5_000);
+                await Wait(() => memory.Frames > beforeSeek && player.MediaPlayer.Time >= 4_900 && memory.BrightPixels > 5, player, Tracks);
+                player.Dispose();
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, previous);
+                if (connectionString != null)
+                {
+                    using var connection = new Microsoft.Data.Sqlite.SqliteConnection(connectionString);
+                    Microsoft.Data.Sqlite.SqliteConnection.ClearPool(connection);
+                }
+                Assert.StartsWith(Path.GetFullPath(Path.Combine(Path.GetTempPath(), "UniversalMediaOS.Tests")) + Path.DirectorySeparatorChar,
+                    Path.GetFullPath(root), StringComparison.OrdinalIgnoreCase);
                 if (Directory.Exists(root)) Directory.Delete(root, true);
             }
         });

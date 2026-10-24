@@ -44,6 +44,24 @@ public sealed class LocalEmbeddedCaptionPreparationTests
         Assert.Empty(PlaybackTrackOption.Native(3, "English", "", "", "Subtitle").NativeLanguage);
     }
 
+    [Theory]
+    [InlineData("ger", "de", "German")]
+    [InlineData("fre", "fr", "French")]
+    [InlineData("dut", "nl", "Dutch")]
+    [InlineData("chi", "zh", "Chinese")]
+    [InlineData("cze", "cs", "Czech")]
+    [InlineData("gre", "el", "Greek")]
+    [InlineData("per", "fa", "Persian")]
+    [InlineData("rum", "ro", "Romanian")]
+    public void BibliographicTrackTagsKeepTheirLanguage(string tag, string code, string name)
+    {
+        // Sintel's MKV tags its German, French and Dutch captions ger/fre/dut (ISO 639-2/B).
+        var tagged = PlaybackTrackOption.Native(2, "Track 1", tag, "", "Subtitle");
+        Assert.Equal(code, tagged.NativeLanguage);
+        Assert.Equal(PlaybackTrackOption.Native(5, "Track 4", code, "", "Subtitle").Key, tagged.Key);
+        Assert.Equal(name, tagged.Label);
+    }
+
     [Fact]
     public void ImageCaptionsAndMissingLanguageStayNative()
     {

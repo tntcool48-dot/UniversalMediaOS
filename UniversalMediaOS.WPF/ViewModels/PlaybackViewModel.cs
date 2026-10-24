@@ -979,14 +979,10 @@ namespace UniversalMediaOS.WPF.ViewModels
             _lastMediaSubtitles = MediaSubtitleTrack.Copy(subtitles)
                 .Concat(_lastLocalCaptionPaths.Where(path => Helpers.NativeLocalPath.ToLocation(path) != null).Select(path =>
                 {
-                    string fileName = Path.GetFileNameWithoutExtension(path);
-                    string language = fileName.EndsWith(".en", StringComparison.OrdinalIgnoreCase) ||
-                        fileName.EndsWith(".eng", StringComparison.OrdinalIgnoreCase) ? "en" :
-                        fileName.EndsWith(".ar", StringComparison.OrdinalIgnoreCase) ||
-                        fileName.EndsWith(".ara", StringComparison.OrdinalIgnoreCase) ? "ar" : string.Empty;
+                    string language = CaptionLanguage.FromFileName(path);
                     return new MediaSubtitleTrack(Helpers.NativeLocalPath.ToLocation(path)!,
                         string.IsNullOrEmpty(language) ? "Downloaded subtitles" :
-                        language == "en" ? "English (downloaded)" : "Arabic (downloaded)", language);
+                        $"{CaptionLanguage.EnglishName(language)} (downloaded)", language);
                 })).ToArray();
             AudioNotice = audioNotice ?? string.Empty;
             _restoreCaptionSelection = true;
@@ -1100,8 +1096,10 @@ namespace UniversalMediaOS.WPF.ViewModels
                     _currentMedia.AddOption(":audio-language=eng,en");
                 else if (_episodeContext?.AudioPreference == "sub")
                     _currentMedia.AddOption(":audio-language=jpn,ja");
-                _currentMedia.AddOption(":sub-language=eng,en");
                 AttachExternalSubtitles(_currentMedia);
+                // An English preference would make LibVLC show an embedded English
+                // track instead of the attached caption the menu names.
+                if (_attachedCaption == null) _currentMedia.AddOption(":sub-language=eng,en");
                 RefreshCaptionState();
                 _pendingMedia = _currentMedia;
                 PendingMediaPath = urlOrPath;
@@ -2565,12 +2563,15 @@ namespace UniversalMediaOS.WPF.ViewModels
                     native?.Description ?? "", type == TrackType.Text ? "Subtitle" : "Audio");
             }).ToArray();
             if (type != TrackType.Text || _preparedEmbeddedCaptions.Count == 0) return options;
-            return options.Where(option => !_preparedEmbeddedCaptions.Values.Any(p =>
-                p.NativeId >= 0 && p.Original.NativeId == option.NativeId)).Select(option =>
+            // A prepared copy registers as the newest track; show it in its original track's place.
+            var copies = _preparedEmbeddedCaptions.Values
+                .Where(p => p.NativeId >= 0 && options.Any(option => option.NativeId == p.NativeId)).ToArray();
+            return options.Where(option => copies.All(copy => copy.NativeId != option.NativeId)).Select(option =>
             {
-                var prepared = _preparedEmbeddedCaptions.Values.FirstOrDefault(p => p.NativeId == option.NativeId);
-                return prepared.Lease == null ? option : prepared.Original with { NativeId = option.NativeId };
-            }).ToArray();
+                var copy = copies.FirstOrDefault(p => p.Original.NativeId == option.NativeId);
+                return copy.Lease == null ? option : copy.Original with { NativeId = copy.NativeId };
+            }).Concat(copies.Where(copy => options.All(option => option.NativeId != copy.Original.NativeId))
+                .Select(copy => copy.Original with { NativeId = copy.NativeId })).ToArray();
         }
 
         private void RefreshCaptionState()

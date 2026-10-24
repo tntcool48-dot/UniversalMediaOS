@@ -256,6 +256,43 @@ public sealed class SubtitleHandoffTests
     }
 
     [Fact]
+    public void SavedCaptionFilesShowTheirDeclaredLanguagesAndKeepTheChoiceAcrossEpisodes()
+    {
+        using var profile = new CaptionTestDataScope();
+        string directory = Path.Combine(Path.GetTempPath(), "UniversalMediaOS.Tests", "CaptionLanguages-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            string Write(string name)
+            {
+                string path = Path.Combine(directory, name);
+                File.WriteAllText(path, "1\n00:00:00,000 --> 00:00:10,000\nCue\n");
+                return path;
+            }
+            string first = Path.Combine(directory, "episode-1.mp4"), second = Path.Combine(directory, "episode-2.mp4");
+            File.WriteAllBytes(first, []);
+            File.WriteAllBytes(second, []);
+            string[] captions = [Write("caption-01.en.vtt"), Write("caption-02.fr.vtt"), Write("caption-03.es.srt"),
+                Write("caption-04.pt-br.vtt"), Write("caption-05.ar.vtt"), Write("Show - 01.ger.ass"),
+                Write("caption-07.vtt"), Write("Show - 01.final.srt")];
+            using var player = new PlaybackViewModel(new DatabaseContext());
+            player.SetTabActive(false);
+            player.LoadMedia(first, "Episode 1", localCaptionPaths: captions);
+            Assert.Equal(["CC Off", "English (downloaded)", "French (downloaded)", "Spanish (downloaded)",
+                "Portuguese (Brazil) (downloaded)", "Arabic (downloaded)", "German (downloaded)",
+                "Downloaded subtitles", "Downloaded subtitles"], player.CaptionOptions.Select(option => option.Label).ToArray());
+            player.SelectedCaption = player.CaptionOptions.Single(option => option.Label == "French (downloaded)");
+            Assert.EndsWith("caption-02.fr.vtt", Assert.Single(CurrentMedia(player).Slaves).Uri);
+
+            // The next episode's files are saved in another order; the choice follows its language.
+            player.LoadMedia(second, "Episode 2", localCaptionPaths: [Write("caption-01.fre.srt"), Write("caption-02.eng.srt")]);
+            Assert.Equal("French (downloaded)", player.SelectedCaption!.Label);
+            Assert.EndsWith("caption-01.fre.srt", Assert.Single(CurrentMedia(player).Slaves).Uri);
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
+    [Fact]
     public void AmbiguousAndUnlabelledCaptionsUseFileIdentityInsteadOfGuessingByOrder()
     {
         var first = PlaybackTrackOption.ExternalCaptions([

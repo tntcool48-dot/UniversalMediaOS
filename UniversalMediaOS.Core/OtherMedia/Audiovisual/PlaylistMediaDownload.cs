@@ -166,8 +166,14 @@ internal sealed partial class PlaylistMediaDownload
                 string text = Encoding.UTF8.GetString(bytes).TrimStart('\ufeff', ' ', '\r', '\n', '\t');
                 string extension = text.StartsWith("WEBVTT", StringComparison.Ordinal) ? ".vtt"
                     : text.StartsWith("[Script Info]", StringComparison.OrdinalIgnoreCase) ? ".ass" : ".srt";
-                string language = track.Language.ToLowerInvariant() switch
-                { "en" or "eng" => ".en", "ar" or "ara" => ".ar", _ => "" };
+                // The player reads the language back from this name segment.
+                string code = CaptionLanguage.FromDeclaration(track.Language) is { Length: > 0 } declared
+                    ? declared : CaptionLanguage.FromDeclaration(track.Label);
+                string language = CaptionLanguage.FileSuffix(code);
+                // LibVLC lays each caption line out left to right, which moves edge punctuation of a
+                // right-to-left line to the wrong end. Marks at both ends keep it on the reader's side.
+                if (extension != ".ass" && CaptionLanguage.IsRightToLeft(code))
+                    bytes = Encoding.UTF8.GetBytes(MarkRightToLeftLines(text));
                 string path = Path.Combine(directory, $"caption-{paths.Count + 1:00}{language}{extension}");
                 _checkSpace(directory, bytes.Length);
                 await File.WriteAllBytesAsync(path, bytes, token).ConfigureAwait(false);
@@ -181,6 +187,23 @@ internal sealed partial class PlaylistMediaDownload
             }
         }
         return paths.ToArray();
+    }
+
+    // Marks only cue text: the lines after a timing line, up to the blank line ending the cue.
+    internal static string MarkRightToLeftLines(string text)
+    {
+        const char mark = '‏';
+        string[] lines = text.Split('\n');
+        bool cueText = false;
+        for (int index = 0; index < lines.Length; index++)
+        {
+            string line = lines[index].TrimEnd('\r');
+            if (line.Trim().Length == 0) cueText = false;
+            else if (line.Contains("-->", StringComparison.Ordinal)) cueText = true;
+            else if (cueText)
+                lines[index] = mark + line.Trim(mark) + mark + lines[index][line.Length..];
+        }
+        return string.Join('\n', lines);
     }
 
     private async Task<HttpResponseMessage> SendAsync(Uri uri, ProxySession context, CancellationToken token)
