@@ -25,6 +25,17 @@ class SpecialParentTitleTests(unittest.TestCase):
         self.assertEqual(0, scraper.score_candidate_url(
             'https://provider.example/watch/attack-on-titan-112', 'Attack on Titan', NO_REGRETS, '1'))
 
+    def test_parent_series_slug_is_not_synthesized_into_a_watch_candidate(self):
+        # Live Re:Anime search HTML for the special listed only the parent TV card.
+        card = ('<a href="/anime/{slug}"><span>{title}</span> <span>TV</span></a>')
+        parent = card.format(slug='kaguya-sama-love-is-war-5d97k2', title='Kaguya-sama: Love is War')
+        own = card.format(slug='kaguya-sama-love-is-war-stairway-to-adulthood-9lwzq', title=STAIRWAY)
+        base = 'https://reanime.to/search?keyword=kaguya'
+        self.assertEqual([], scraper.extract_candidate_links(parent, base, STAIRWAY, '1'))
+        found = scraper.extract_candidate_links(parent + own, base, STAIRWAY, '1')
+        self.assertTrue(found)
+        self.assertTrue(all('stairway-to-adulthood' in url for url in found), found)
+
     def test_parent_series_page_conflicts_with_the_requested_special(self):
         for query, heading, url in (
                 (STAIRWAY, 'Kaguya-sama: Love is War', PARENT_URL),

@@ -1978,6 +1978,9 @@ def extract_candidate_links(html, base_url, query, episode_id, title_aliases=Non
             keywords = query_keywords(title)
             if not keywords or variant_conflicts(slug_text, title):
                 continue
+            subtitle = subtitle_keywords(title)
+            if subtitle and not subtitle & slug_tokens:
+                continue  # A parent series slug cannot become this subtitled work.
             matched = sum(1 for word in keywords if word in slug_tokens)
             if matched >= min(2, len(keywords)):
                 score = max(score, matched * 4 + (6 if all(word in slug_tokens for word in keywords) else 0) - 4)
