@@ -1089,8 +1089,10 @@ namespace UniversalMediaOS.WPF.ViewModels
                     _currentMedia.AddOption(":audio-language=eng,en");
                 else if (_episodeContext?.AudioPreference == "sub")
                     _currentMedia.AddOption(":audio-language=jpn,ja");
-                _currentMedia.AddOption(":sub-language=eng,en");
                 AttachExternalSubtitles(_currentMedia);
+                // An English preference would make LibVLC show an embedded English
+                // track instead of the attached caption the menu names.
+                if (_attachedCaption == null) _currentMedia.AddOption(":sub-language=eng,en");
                 RefreshCaptionState();
                 _pendingMedia = _currentMedia;
                 PendingMediaPath = urlOrPath;

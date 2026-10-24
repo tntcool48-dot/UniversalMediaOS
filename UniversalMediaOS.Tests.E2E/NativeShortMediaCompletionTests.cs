@@ -975,6 +975,72 @@ public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
             }
         });
 
+    [Fact]
+    public Task SavedCaptionChoiceShowsInsteadOfAnEmbeddedTrack()
+        => OnDispatcher(async () =>
+        {
+            // Sintel with saved Arabic and Japanese files showed its embedded English cue under either choice.
+            string? previous = Environment.GetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable);
+            string root = Path.Combine(Path.GetTempPath(), "UniversalMediaOS.Tests", "SavedOverEmbedded-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, root);
+            string? connectionString = null;
+            try
+            {
+                string video = Path.Combine(root, "film.mkv"), embedded = Path.Combine(root, "embedded.srt");
+                string saved = Path.Combine(root, "caption-01.fr.srt");
+                File.WriteAllText(embedded, "1\n00:00:00,000 --> 00:00:03,000\nEmbedded English cue\n");
+                File.WriteAllText(saved, "1\n00:00:04,000 --> 00:00:08,000\nSaved French cue\n");
+                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                var encoded = await new PreparationProcessRunner().RunAsync("ffmpeg", ["-nostdin", "-hide_banner", "-v", "error",
+                    "-f", "lavfi", "-i", "color=c=black:size=160x90:rate=24", "-i", embedded,
+                    "-map", "0:v", "-map", "1:s", "-t", "10", "-c:v", "libx264", "-g", "24", "-c:s", "srt",
+                    "-metadata:s:s:0", "language=eng", "-disposition:s:0", "default", "-y", video], deadline.Token);
+                Assert.Equal(0, encoded.ExitCode);
+                File.Delete(embedded);
+                using (var seed = new DatabaseContext())
+                {
+                    seed.Database.EnsureCreated();
+                    connectionString = seed.Database.GetConnectionString();
+                }
+                using var memory = new MemoryVideo(capturePixels: true);
+                using var player = new PlaybackViewModel(new DatabaseContext());
+                memory.Attach(player.MediaPlayer);
+                player.Volume = 0;
+                var added = new System.Collections.Concurrent.ConcurrentQueue<string>();
+                player.MediaPlayer.ESAdded += (_, e) => added.Enqueue($"{e.Type}{e.Id}@{player.MediaPlayer.State}");
+                player.LoadMedia(video, "Saved caption fixture", localCaptionPaths: [saved]);
+                string Tracks() => $"spu={player.MediaPlayer.Spu}; spus={string.Join(", ", player.MediaPlayer.SpuDescription.Select(track => $"{track.Id}:{track.Name}"))}; " +
+                    $"caption={player.SelectedCaption?.Label}; bright={memory.BrightPixels}; time={player.MediaPlayer.Time}; " +
+                    $"media={string.Join(", ", (player.MediaPlayer.Media?.Tracks ?? []).Select(track => $"{track.TrackType}{track.Id}:{track.Language}:{track.Description}:{track.Codec}"))}; added={string.Join(",", added)}";
+                Assert.Equal(["CC Off", "French (downloaded)"], player.CaptionOptions.Select(option => option.Label).ToArray());
+                player.PlayPending();
+                await Wait(() => player.IsPlaying && player.MediaPlayer.Time >= 1_000 && memory.Frames > 10, player, Tracks);
+                player.TogglePlayPauseCommand.Execute(null);
+                await Wait(() => !player.IsPlaying && player.MediaPlayer.State == VLCState.Paused, player, Tracks);
+                Assert.Equal("French (downloaded)", player.SelectedCaption!.Label);
+                await Task.Delay(300);
+                Assert.True(memory.BrightPixels == 0, "The embedded cue showed under the saved French choice: " + Tracks());
+                int beforeSeek = memory.Frames;
+                player.BeginUserSeek();
+                player.CommitUserSeek(5_000);
+                await Wait(() => memory.Frames > beforeSeek && player.MediaPlayer.Time >= 4_900 && memory.BrightPixels > 5, player, Tracks);
+                player.Dispose();
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, previous);
+                if (connectionString != null)
+                {
+                    using var connection = new Microsoft.Data.Sqlite.SqliteConnection(connectionString);
+                    Microsoft.Data.Sqlite.SqliteConnection.ClearPool(connection);
+                }
+                Assert.StartsWith(Path.GetFullPath(Path.Combine(Path.GetTempPath(), "UniversalMediaOS.Tests")) + Path.DirectorySeparatorChar,
+                    Path.GetFullPath(root), StringComparison.OrdinalIgnoreCase);
+                if (Directory.Exists(root)) Directory.Delete(root, true);
+            }
+        });
+
     [Theory]
     [InlineData("sub", "japanese")]
     [InlineData("dub", "english")]
