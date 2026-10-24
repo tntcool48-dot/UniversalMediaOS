@@ -687,6 +687,8 @@ public sealed class NativeTemporaryDownloadBoundaryTests
         /// <summary>A sibling of every download folder, inside this fixture's root.</summary>
         public string Outside => Path.Combine(Root, "outside");
         public long VideoBytes { get; private set; }
+        /// <summary>The seeded episode, as the torrent names it below its "source" folder.</summary>
+        public string VideoPath => Path.Combine(Root, "source", Title + " - S01E01.mkv");
         public long UploadedBytes => _manager!.Monitor.DataBytesSent;
         public string SeedState => $"seed state={_manager?.State}, running={_engine?.IsRunning}, disposed={_engine?.Disposed}, sent={UploadedBytes}, peers={_manager?.Peers.Leechs}";
         public List<string> Logs { get; } = [];
