@@ -152,6 +152,98 @@ public sealed class DownloadReleasePinningTests
         Assert.False(Directory.Exists(Path.Combine(fixture.DownloadDirectory, "missing")));
     }
 
+    /// <summary>One bad feed entry with more seeders than the usable release used to fail the season before any
+    /// transfer, and every Retry searched again and failed the same way.</summary>
+    [Theory]
+    [InlineData("<link>magnet:?xt=urn:btih:ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ</link>")]
+    [InlineData("<link>magnet:?xt=urn:btih:0123456789ABCDEF</link>")]
+    [InlineData("<link>magnet:?dn=Pinning+Show</link>")]
+    [InlineData("<nyaa:infoHash>not-a-hash</nyaa:infoHash>")]
+    [InlineData("<link>magnet:?xt=urn:btih:" + PinningFixture.HashB + "</link><nyaa:infoHash>" + PinningFixture.HashA + "</nyaa:infoHash>")]
+    public async Task MalformedMagnetInTheFeedDoesNotBlockAUsableRelease(string malformedItem)
+    {
+        await using var fixture = new PinningFixture { MalformedItem = malformedItem };
+        using var queue = fixture.Queue();
+        var job = queue.Enqueue("Pinning Show", "Sub");
+        await WaitForFailure(queue, job.Id);
+
+        Assert.True(fixture.AddedHashes.SequenceEqual(new[] { PinningFixture.HashA }),
+            $"Added [{string.Join(", ", fixture.AddedHashes)}]; job: {job.StatusMessage}");
+        Assert.Equal(PinningFixture.HashA, job.ReleaseSelection?.InfoHash);
+    }
+
+    [Fact]
+    public async Task OnlyMalformedMagnetsFailVisiblyWithoutATransferAndRetrySearchesAgain()
+    {
+        await using var fixture = new PinningFixture
+        {
+            MalformedItem = "<link>magnet:?xt=urn:btih:0123456789ABCDEF</link>", OfferValidRelease = false
+        };
+        using var queue = fixture.Queue();
+        var job = queue.Enqueue("Pinning Show", "Sub");
+        await WaitForFailure(queue, job.Id);
+
+        Assert.Contains("valid transfer hash", job.StatusMessage, StringComparison.Ordinal);
+        Assert.Null(job.ReleaseSelection);
+        Assert.Empty(fixture.AddedHashes);
+        Assert.DoesNotContain(fixture.Requests, path => path.StartsWith("/api/v2/torrents/", StringComparison.Ordinal));
+
+        fixture.OfferValidRelease = true;
+        Assert.True(queue.Retry(job.Id));
+        await WaitForFailure(queue, job.Id);
+        Assert.Equal(new[] { PinningFixture.HashA }, fixture.AddedHashes.ToArray());
+    }
+
+    /// <summary>A permanent season must not substitute another audio track for the one requested: Dub needs a Dub or
+    /// dual-audio label, and Sub excludes Dub-only releases, as the temporary watch already requires.</summary>
+    [Theory]
+    [InlineData("Dub", "Pinning Show Season 1 [Batch]")]
+    [InlineData("Dub", "Pinning Show Season 1 [Batch] [Sub]")]
+    [InlineData("Sub", "Pinning Show Season 1 [Batch] [English Dub]")]
+    public async Task SeasonWithoutTheRequestedAudioLabelIsNotDownloaded(string audio, string onlyRelease)
+    {
+        await using var fixture = new PinningFixture { FeedTitle = onlyRelease };
+        using var queue = fixture.Queue();
+        var job = queue.Enqueue("Pinning Show", audio);
+        await WaitForFailure(queue, job.Id);
+
+        Assert.True(fixture.AddedHashes.IsEmpty, $"Downloaded \"{job.ReleaseSelection?.Title}\" for {audio}; job: {job.StatusMessage}");
+        Assert.Null(job.ReleaseSelection);
+        Assert.Contains(audio == "Dub" ? "Dub" : "Sub", job.StatusMessage, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("Dub", "Pinning Show Season 1 [Batch] [Dual Audio]")]
+    [InlineData("Sub", "Pinning Show Season 1 [Batch] [Dual Audio]")]
+    [InlineData("Sub", "Pinning Show Season 1 [Batch]")]
+    public async Task SeasonWithTheRequestedAudioLabelIsStillDownloaded(string audio, string release)
+    {
+        await using var fixture = new PinningFixture { FeedTitle = release };
+        using var queue = fixture.Queue();
+        var job = queue.Enqueue("Pinning Show", audio);
+        await WaitForFailure(queue, job.Id);
+        Assert.Equal(new[] { PinningFixture.HashA }, fixture.AddedHashes.ToArray());
+        Assert.Equal(release, job.ReleaseSelection?.Title);
+    }
+
+    /// <summary>An older or manually added qBittorrent transfer of the same release in another folder is left
+    /// untouched; the row must say so instead of a generic failure that Retry repeats.</summary>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public async Task QBitTransferInAnotherFolderShowsWhyTheJobStopped(int lookupsBeforeMove)
+    {
+        await using var fixture = new PinningFixture { ForeignAfterLookups = lookupsBeforeMove };
+        fixture.MarkPresent(PinningFixture.HashA);
+        using var queue = fixture.Queue();
+        var job = queue.Enqueue("Pinning Show", "Sub");
+        await WaitForFailure(queue, job.Id);
+
+        Assert.Contains("belongs to a different download folder", job.StatusMessage, StringComparison.Ordinal);
+        Assert.Empty(fixture.AddedHashes);
+        Assert.DoesNotContain(fixture.Messages, message => message.Contains("Booting built-in", StringComparison.Ordinal));
+    }
+
     private static async Task WaitForFailure(DownloadQueueService queue, Guid id)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -174,6 +266,14 @@ public sealed class DownloadReleasePinningTests
         public string ForeignDirectory => Path.Combine(_root, "foreign");
         public string QueuePath => Path.Combine(_root, "download-queue.json");
         public string FeedHash { get; set; } = HashA;
+        /// <summary>The body of an extra, better-seeded feed result for the same season.</summary>
+        public string? MalformedItem { get; set; }
+        public bool OfferValidRelease { get; set; } = true;
+        public string FeedTitle { get; set; } = "Pinning Show Season 1 [Batch]";
+        /// <summary>After this many transfer lookups, qBittorrent reports present transfers in the foreign folder.</summary>
+        public int ForeignAfterLookups { get; set; } = int.MaxValue;
+        private int _lookups;
+        public void MarkPresent(string hash) => _present.Add(hash);
         public ConcurrentQueue<string> AddedHashes { get; } = new();
         public ConcurrentQueue<string> ResumedHashes { get; } = new();
         public ConcurrentQueue<string> QueueSnapshotsAtAdd { get; } = new();
@@ -229,7 +329,11 @@ public sealed class DownloadReleasePinningTests
                     if (path == "/rss")
                     {
                         OnFeed?.Invoke();
-                        body = $"<rss version=\"2.0\" xmlns:nyaa=\"https://nyaa.si/xmlns/nyaa\"><channel><item><title>Pinning Show Season 1 [Batch]</title><link>magnet:?xt=urn:btih:{FeedHash}</link><nyaa:seeders>20</nyaa:seeders><nyaa:infoHash>{FeedHash}</nyaa:infoHash></item></channel></rss>";
+                        string malformed = MalformedItem == null ? "" :
+                            $"<item><title>Pinning Show Season 1 [Batch] (mirror)</title>{MalformedItem}<nyaa:seeders>50</nyaa:seeders></item>";
+                        string valid = !OfferValidRelease ? "" :
+                            $"<item><title>{FeedTitle}</title><link>magnet:?xt=urn:btih:{FeedHash}</link><nyaa:seeders>20</nyaa:seeders><nyaa:infoHash>{FeedHash}</nyaa:infoHash></item>";
+                        body = $"<rss version=\"2.0\" xmlns:nyaa=\"https://nyaa.si/xmlns/nyaa\"><channel>{malformed}{valid}</channel></rss>";
                     }
                     else if (path == "/api/v2/auth/login")
                     {
@@ -239,9 +343,10 @@ public sealed class DownloadReleasePinningTests
                     else if (path == "/api/v2/torrents/info")
                     {
                         string hash = context.Request.QueryString["hashes"] ?? "";
+                        string savePath = Interlocked.Increment(ref _lookups) > ForeignAfterLookups ? ForeignDirectory : DownloadDirectory;
                         body = _present.Contains(hash) ? JsonSerializer.Serialize(new[] { new
                         {
-                            hash, save_path = DownloadDirectory, progress = 1, state = "stoppedUP"
+                            hash, save_path = savePath, progress = 1, state = "stoppedUP"
                         } }) : "[]";
                     }
                     else if (path == "/api/v2/torrents/add")

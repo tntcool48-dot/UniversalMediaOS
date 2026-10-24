@@ -72,7 +72,7 @@ public sealed class TorrentDosDriveAliasTests
         Assert.Equal(originalMarker, File.ReadAllBytes(marker));
     }
 
-    private sealed class OwnedSubstFolder : IDisposable
+    internal sealed class OwnedSubstFolder : IDisposable
     {
         private readonly string _physicalTemp = PhysicalDirectory(Path.GetTempPath());
         private readonly byte[] _bytes = Encoding.UTF8.GetBytes("Retain payload bytes through owned DOS drive alias checks.");

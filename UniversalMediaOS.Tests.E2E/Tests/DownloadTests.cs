@@ -105,44 +105,107 @@ namespace UniversalMediaOS.Tests.E2E.Tests
             Assert.False(season.Button("Pause").IsEnabled);
         }
 
-        [Fact(Skip = "Requires a source-selection fixture; the previous check only opened the Downloads view.")]
-        public void T1_Downloads_05_Audio_Language_Preference_Selection()
+        [Fact]
+        public async System.Threading.Tasks.Task T1_Downloads_05_Audio_Language_Preference_Selection()
         {
-            NavigateTo("Downloads");
-            var refreshBtn = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByName("Refresh"))?.AsButton();
-            Assert.NotNull(refreshBtn);
+            // A Dub season whose only release is labelled Sub must not download it: the row fails and says why, and
+            // nothing is transferred. Once that release is listed as Dual Audio, Retry downloads and pins it.
+            // Labels select releases; they do not prove the spoken language, which stays a player check.
+            await using var season = await QueuedSeason.StartAsync(64 * 1024, seeder =>
+                seeder.ReleaseTitle = $"[Fixture] {NativeTemporaryDownloadBoundaryTests.LocalSeeder.Title} Season 1 [Batch] [Sub]", audio: "Dub");
+            Assert.True(SpinWait.SpinUntil(() => season.Status() == "Failed", TimeSpan.FromSeconds(60)), season.State());
+            Assert.Contains("No Dub release found", season.State(), StringComparison.Ordinal);
+            Assert.Equal(0, season.Seeder.UploadedBytes);
+
+            string dualAudio = $"[Fixture] {NativeTemporaryDownloadBoundaryTests.LocalSeeder.Title} Season 1 [Batch] [Dual Audio]";
+            season.Seeder.ReleaseTitle = dualAudio;
+            season.Press("Retry");
+            season.WaitForProgress(above: 0);
+            Assert.Contains(System.Text.Json.JsonSerializer.Serialize(dualAudio), season.QueueFile(), StringComparison.Ordinal);
         }
 
-        [Fact(Skip = "Requires a sandboxed output-path injection point; the previous check did not attempt traversal.")]
-        public void T2_Downloads_01_Output_Path_Traversal_Attempt()
+        [Fact]
+        public async System.Threading.Tasks.Task T2_Downloads_01_Output_Path_Traversal_Attempt()
         {
-            NavigateTo("Downloads");
-            var refreshBtn = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByName("Refresh"))?.AsButton();
-            Assert.NotNull(refreshBtn);
+            // The seeder's torrent names a file outside every download folder. The engine must refuse it before
+            // starting, and the row must say why instead of a generic failure that suggests retrying.
+            await using var season = await QueuedSeason.StartAsync(128 * 1024, outsideEntry: true);
+            Assert.True(SpinWait.SpinUntil(() => season.Status() == "Failed", TimeSpan.FromSeconds(60)), season.State());
+            Assert.Contains("The torrent lists a file outside the download folder; it was not started.", season.State(), StringComparison.Ordinal);
+            Assert.False(System.IO.Directory.Exists(season.Seeder.Outside), "The refused torrent created its outside entry.");
+            Assert.Empty(System.IO.Directory.GetFiles(season.Library, "*" + NativeTemporaryDownloadBoundaryTests.LocalSeeder.Title + "*",
+                System.IO.SearchOption.AllDirectories));
+            Assert.True(season.Button("Remove").IsEnabled, season.State());
         }
 
-        [Fact(Skip = "Requires an isolated torrent-client endpoint; the previous check did not simulate an outage.")]
-        public void T2_Downloads_02_Torrent_Client_Offline_on_Connect()
+        [Fact]
+        public async System.Threading.Tasks.Task T2_Downloads_02_Torrent_Client_Offline_on_Connect()
         {
-            NavigateTo("Downloads");
-            var refreshBtn = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByName("Refresh"))?.AsButton();
-            Assert.NotNull(refreshBtn);
+            // The season starts in qBittorrent (a loopback stand-in for its WebUI) and is paused there. With
+            // qBittorrent offline, Resume must fail visibly and must not start the built-in engine on the files
+            // qBittorrent owns. Once qBittorrent is back, Retry continues in it and the season completes.
+            await using var qbit = new FakeQBit();
+            await using var season = await QueuedSeason.StartAsync(64 * 1024, configure: settings =>
+            {
+                settings["QBitPort"] = qbit.Port.ToString();
+                settings["QBitUsername"] = "isolated-fixture";
+                settings["QBitPassword"] = "isolated-fixture";
+            });
+            Assert.True(SpinWait.SpinUntil(() => season.Status() == "Downloading" && season.Progress() > 20,
+                TimeSpan.FromSeconds(60)), "The season did not start in qBittorrent. " + season.State());
+            season.Press("Pause");
+            Assert.True(SpinWait.SpinUntil(() => season.Status() == "Paused", TimeSpan.FromSeconds(30)), season.State());
+
+            qbit.Stop();
+            season.Press("Resume");
+            Assert.True(SpinWait.SpinUntil(() => season.Status() == "Failed", TimeSpan.FromSeconds(60)), season.State());
+            Assert.Contains("Restore its connection before retrying", season.State(), StringComparison.Ordinal);
+            Assert.Contains("a second torrent engine was not started", season.State(), StringComparison.Ordinal);
+            Assert.True(season.Button("Retry").IsEnabled, season.State());
+
+            qbit.Complete(season.Seeder.VideoPath);
+            qbit.Start();
+            season.Press("Retry");
+            string episode = NativeTemporaryDownloadBoundaryTests.LocalSeeder.Title + " - Episode 1";
+            Assert.True(SpinWait.SpinUntil(() => season.Status() == "Completed" || season.PlayerTitle() == episode,
+                TimeSpan.FromSeconds(60)), "The season did not complete in qBittorrent. " + season.State());
+            season.OpenDownloads();
+            Assert.True(SpinWait.SpinUntil(() => season.Status() == "Completed", TimeSpan.FromSeconds(15)), season.State());
+
+            Assert.Equal(1, qbit.Adds);
+            Assert.Equal(0, season.Seeder.UploadedBytes);
+            Assert.Empty(System.IO.Directory.GetFiles(season.Library, "*.!mt", System.IO.SearchOption.AllDirectories));
         }
 
-        [Fact(Skip = "Requires an injectable disk-capacity boundary; the previous check did not exhaust disk space.")]
+        // Proposed exclusion, pending the user's approval (docs/qa/download-storage-failures-2026-10-23.md): a real
+        // full disk needs an administrator-mounted small volume, which the user declined; the shared system drive is
+        // never filled. Simulated reserve/capacity failures and real ACL and file-sharing write failures are covered
+        // by NativeTemporaryDownloadBoundaryTests. This placeholder never ran a check and is never counted as a pass.
+        [Fact(Skip = "Proposed exclusion: physical disk-full needs an administrator-mounted volume; see download-storage-failures-2026-10-23.md.")]
         public void T2_Downloads_03_Disk_Space_Exhaustion()
         {
-            NavigateTo("Downloads");
-            var refreshBtn = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByName("Refresh"))?.AsButton();
-            Assert.NotNull(refreshBtn);
         }
 
-        [Fact(Skip = "Requires direct malformed-magnet submission; the previous check did not submit a magnet URI.")]
-        public void T2_Downloads_04_Malformed_Info_Hash_Magnet_Link()
+        [Fact]
+        public async System.Threading.Tasks.Task T2_Downloads_04_Malformed_Info_Hash_Magnet_Link()
         {
-            NavigateTo("Downloads");
-            var refreshBtn = _fixture.MainWindow.FindFirstDescendant(cf => cf.ByName("Refresh"))?.AsButton();
-            Assert.NotNull(refreshBtn);
+            // Magnets reach the queue only through the feeds. First the feed lists only a release whose magnet has no
+            // valid hash: the row fails and says so, and nothing is transferred. Once the usable release is listed
+            // below the better-seeded malformed one, Retry searches again and downloads the usable release.
+            await using var season = await QueuedSeason.StartAsync(64 * 1024, seeder =>
+            {
+                seeder.MalformedMagnet = "magnet:?xt=urn:btih:0123456789ABCDEF&dn=Queue+Space+Fixture";
+                seeder.OfferRelease = false;
+            });
+            Assert.True(SpinWait.SpinUntil(() => season.Status() == "Failed", TimeSpan.FromSeconds(60)), season.State());
+            Assert.Contains("No release found has a magnet link with a valid transfer hash", season.State(), StringComparison.Ordinal);
+            Assert.Equal(0, season.Seeder.UploadedBytes);
+            Assert.Equal(0, season.PartialBytes());
+
+            season.Seeder.OfferRelease = true;
+            season.Press("Retry");
+            season.WaitForProgress(above: 0);
+            Assert.True(season.PartialBytes() > 0, season.State());
         }
 
         [Fact]
@@ -164,6 +227,109 @@ namespace UniversalMediaOS.Tests.E2E.Tests
                 TimeSpan.FromSeconds(60)), "The resumed job did not continue from its partial. " + season.State());
         }
 
+        /// <summary>A loopback stand-in for qBittorrent's WebUI: it accepts one magnet, reports it at 30% until told the
+        /// transfer is complete, and can go offline (connections refused) and come back on the same port.</summary>
+        private sealed class FakeQBit : IAsyncDisposable
+        {
+            private readonly System.Net.HttpListener _listener = new();
+            private System.Threading.CancellationTokenSource _lifetime = new();
+            private System.Threading.Tasks.Task _server = System.Threading.Tasks.Task.CompletedTask;
+            private string? _hash;
+            private string? _completedName;
+            private long _completedSize;
+            public int Port { get; }
+            /// <summary>The save path the app posted with its add, which qBittorrent then reports.</summary>
+            public string SavePath { get; private set; } = string.Empty;
+            public int Adds;
+
+            public FakeQBit()
+            {
+                var probe = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+                probe.Start();
+                Port = ((System.Net.IPEndPoint)probe.LocalEndpoint).Port;
+                probe.Stop();
+                _listener.Prefixes.Add($"http://127.0.0.1:{Port}/");
+                Start();
+            }
+
+            public void Start()
+            {
+                _lifetime = new System.Threading.CancellationTokenSource();
+                _listener.Start();
+                _server = ServeAsync(_lifetime.Token);
+            }
+
+            public void Stop()
+            {
+                _lifetime.Cancel();
+                _listener.Stop();
+                _server.Wait(TimeSpan.FromSeconds(5));
+                using var client = new System.Net.Sockets.TcpClient();
+                Assert.ThrowsAny<System.Net.Sockets.SocketException>(() => client.Connect(System.Net.IPAddress.Loopback, Port));
+            }
+
+            /// <summary>Puts the finished episode where qBittorrent would have written it and reports 100%.</summary>
+            public void Complete(string video)
+            {
+                _completedName = System.IO.Path.GetFileName(video);
+                System.IO.File.Copy(video, System.IO.Path.Combine(SavePath, _completedName));
+                _completedSize = new System.IO.FileInfo(video).Length;
+            }
+
+            private async System.Threading.Tasks.Task ServeAsync(System.Threading.CancellationToken token)
+            {
+                try
+                {
+                    while (!token.IsCancellationRequested)
+                    {
+                        var context = await _listener.GetContextAsync().WaitAsync(token);
+                        string path = context.Request.Url!.AbsolutePath;
+                        string body = "";
+                        if (path == "/api/v2/auth/login")
+                        {
+                            context.Response.Headers.Add("Set-Cookie", "SID=isolated-offline-fixture; HttpOnly");
+                            body = "Ok.";
+                        }
+                        else if (path == "/api/v2/torrents/add")
+                        {
+                            string form = await new System.IO.StreamReader(context.Request.InputStream).ReadToEndAsync(token);
+                            _hash = System.Text.RegularExpressions.Regex.Match(form, "btih:([0-9A-Fa-f]{40})").Groups[1].Value;
+                            SavePath = System.Text.RegularExpressions.Regex.Match(form, @"name=""?savepath""?\r?\n\r?\n([^\r\n]+)").Groups[1].Value;
+                            System.Threading.Interlocked.Increment(ref Adds);
+                            body = "Ok.";
+                        }
+                        else if (path == "/api/v2/torrents/info")
+                        {
+                            string hash = context.Request.QueryString["hashes"] ?? "";
+                            body = _hash == null || !hash.Equals(_hash, StringComparison.OrdinalIgnoreCase) ? "[]" :
+                                System.Text.Json.JsonSerializer.Serialize(new[] { new
+                                {
+                                    hash, save_path = SavePath, progress = _completedName == null ? 0.3 : 1.0,
+                                    state = _completedName == null ? "downloading" : "stoppedUP", dlspeed = 0
+                                } });
+                        }
+                        else if (path == "/api/v2/torrents/files")
+                            body = System.Text.Json.JsonSerializer.Serialize(new[] { new { name = _completedName ?? "", size = _completedSize } });
+                        else if (path is not ("/api/v2/torrents/stop" or "/api/v2/torrents/pause" or
+                            "/api/v2/torrents/start" or "/api/v2/torrents/resume"))
+                            context.Response.StatusCode = 404;
+                        byte[] bytes = System.Text.Encoding.UTF8.GetBytes(body);
+                        context.Response.ContentLength64 = bytes.Length;
+                        await context.Response.OutputStream.WriteAsync(bytes, token);
+                        context.Response.Close();
+                    }
+                }
+                catch (Exception) when (token.IsCancellationRequested || !_listener.IsListening) { }
+            }
+
+            public async System.Threading.Tasks.ValueTask DisposeAsync()
+            {
+                _lifetime.Cancel();
+                _listener.Close();
+                await _server;
+            }
+        }
+
         /// <summary>One season job in its own profile, fed by a local seeder through the app's own feed and tracker
         /// settings; qBittorrent answers 503, so the native engine runs it.</summary>
         private sealed class QueuedSeason : IAsyncDisposable
@@ -178,12 +344,16 @@ namespace UniversalMediaOS.Tests.E2E.Tests
             public AppFixture App { get; }
             public string Library => System.IO.Path.Combine(App.SandboxPath, "library");
 
-            public static async System.Threading.Tasks.Task<QueuedSeason> StartAsync(int rate)
+            /// <summary>Starts the seeder, lets <paramref name="prepare"/> change its feed, then starts the app.</summary>
+            public static async System.Threading.Tasks.Task<QueuedSeason> StartAsync(int rate,
+                Action<NativeTemporaryDownloadBoundaryTests.LocalSeeder>? prepare = null, bool outsideEntry = false, string audio = "Sub",
+                Action<System.Collections.Generic.Dictionary<string, string>>? configure = null)
             {
-                var seeder = await NativeTemporaryDownloadBoundaryTests.LocalSeeder.StartAsync(rate);
+                var seeder = await NativeTemporaryDownloadBoundaryTests.LocalSeeder.StartAsync(rate, outsideEntry: outsideEntry);
                 try
                 {
-                    var app = new AppFixture(mangaPagePng: null, initializeProfile: root => Seed(root, seeder));
+                    prepare?.Invoke(seeder);
+                    var app = new AppFixture(mangaPagePng: null, initializeProfile: root => Seed(root, seeder, audio, configure));
                     var season = new QueuedSeason(seeder, app);
                     season.OpenDownloads();
                     return season;
@@ -195,7 +365,8 @@ namespace UniversalMediaOS.Tests.E2E.Tests
                 }
             }
 
-            private static void Seed(string root, NativeTemporaryDownloadBoundaryTests.LocalSeeder seeder)
+            private static void Seed(string root, NativeTemporaryDownloadBoundaryTests.LocalSeeder seeder, string audio,
+                Action<System.Collections.Generic.Dictionary<string, string>>? configure)
             {
                 string profile = System.IO.Path.Combine(root, "Roaming", "UniversalMediaOS");
                 string configPath = System.IO.Path.Combine(profile, "config.json");
@@ -206,11 +377,12 @@ namespace UniversalMediaOS.Tests.E2E.Tests
                 settings["QBitHost"] = "127.0.0.1";
                 settings["QBitPort"] = new Uri(seeder.Origin).Port.ToString();
                 settings["DownloadDirectory"] = System.IO.Path.Combine(root, "library");
+                configure?.Invoke(settings);
                 System.IO.File.WriteAllText(configPath, System.Text.Json.JsonSerializer.Serialize(settings));
                 var job = new UniversalMediaOS.Core.Archiving.DownloadQueueJob
                 {
                     Title = NativeTemporaryDownloadBoundaryTests.LocalSeeder.Title,
-                    AudioPreference = "Sub",
+                    AudioPreference = audio,
                     TotalEpisodes = 1,
                     ReleaseSelectionProtocol = 1
                 };
@@ -260,6 +432,9 @@ namespace UniversalMediaOS.Tests.E2E.Tests
                 Dialog()!.FindFirstDescendant(cf => cf.ByAutomationId("6").And(cf.ByControlType(ControlType.Button)))!.AsButton().Invoke();
                 Assert.True(SpinWait.SpinUntil(() => Dialog() == null, TimeSpan.FromSeconds(5)), $"'{title}' did not close.");
             }
+
+            public string QueueFile() => System.IO.File.ReadAllText(
+                System.IO.Path.Combine(App.SandboxPath, "Roaming", "UniversalMediaOS", "download-queue.json"));
 
             public string PlayerTitle() =>
                 MainWindow().FindFirstDescendant(cf => cf.ByAutomationId("MediaTitleText"))?.Name ?? string.Empty;

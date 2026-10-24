@@ -585,7 +585,7 @@ public sealed class TemporaryEpisodeWatchService
         Path.GetFullPath(path).StartsWith(Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar) +
             Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
 
-    private static bool HasDubLabel(string title) =>
+    internal static bool HasDubLabel(string title) =>
         Regex.IsMatch(title, @"\b(dub(?:bed)?|dual[\s._-]*audio|english[\s._-]*audio)\b", RegexOptions.IgnoreCase);
 
     internal static bool TorrentMatchesSeries(string torrentTitle, string requestedTitle)

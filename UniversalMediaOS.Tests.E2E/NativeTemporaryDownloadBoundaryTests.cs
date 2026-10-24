@@ -645,6 +645,30 @@ public sealed class NativeTemporaryDownloadBoundaryTests
         finally { Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, previousRoot); }
     }
 
+    [Fact]
+    public async Task QueuedSeasonShowsWhyATorrentWithAFileOutsideTheFolderWasRefused()
+    {
+        // The Downloads row shows the job's message; a generic "Download failed" hides that retrying cannot help.
+        await using var fixture = await LocalSeeder.StartAsync(128 * 1024, outsideEntry: true);
+        string library = Path.Combine(fixture.Root, "library");
+        string? previousRoot = Environment.GetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable);
+        Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, fixture.Root);
+        try
+        {
+            using var queue = new DownloadQueueService(Path.Combine(fixture.Root, "download-queue.json"),
+                new SeasonDownloadJobExecutor(fixture.SeasonConfig(library)));
+            var job = queue.Enqueue(LocalSeeder.Title, "Sub", null, 1);
+            await Eventually(() => job.Status is DownloadJobStatus.Failed or DownloadJobStatus.Completed,
+                () => $"{job.Status}: {job.StatusMessage}");
+
+            Assert.Equal(DownloadJobStatus.Failed, job.Status);
+            Assert.Equal("The torrent lists a file outside the download folder; it was not started.", job.StatusMessage);
+            Assert.False(Directory.Exists(fixture.Outside));
+            Assert.Equal("permanent retained sentinel", File.ReadAllText(Path.Combine(fixture.Root, "permanent.mkv")));
+        }
+        finally { Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, previousRoot); }
+    }
+
     private static string NativeState(TorrentManager? manager) => manager == null ? "manager absent" :
         $"state={manager.State}, progress={manager.Progress}, received={manager.Monitor.DataBytesReceived}, trackerTiers={manager.TrackerManager.Tiers.Count}, seeds={manager.Peers.Seeds}, leechs={manager.Peers.Leechs}, available={manager.Peers.Available}";
 
@@ -663,10 +687,18 @@ public sealed class NativeTemporaryDownloadBoundaryTests
         /// <summary>A sibling of every download folder, inside this fixture's root.</summary>
         public string Outside => Path.Combine(Root, "outside");
         public long VideoBytes { get; private set; }
+        /// <summary>The seeded episode, as the torrent names it below its "source" folder.</summary>
+        public string VideoPath => Path.Combine(Root, "source", Title + " - S01E01.mkv");
         public long UploadedBytes => _manager!.Monitor.DataBytesSent;
         public string SeedState => $"seed state={_manager?.State}, running={_engine?.IsRunning}, disposed={_engine?.Disposed}, sent={UploadedBytes}, peers={_manager?.Peers.Leechs}";
         public List<string> Logs { get; } = [];
         public string Origin { get; private set; } = "";
+        /// <summary>An extra, better-seeded feed result for the same season whose magnet link has no valid hash.</summary>
+        public string? MalformedMagnet { get; set; }
+        /// <summary>Whether the feed lists the seeded release.</summary>
+        public bool OfferRelease { get; set; } = true;
+        /// <summary>The feed title of the seeded release.</summary>
+        public string ReleaseTitle { get; set; } = $"[Fixture] {Title} Season 1 [Batch]";
         private readonly CancellationTokenSource _lifetime = new();
         private readonly HttpListener _listener = new();
         private ClientEngine? _engine;
@@ -776,7 +808,11 @@ public sealed class NativeTemporaryDownloadBoundaryTests
                     byte[] body;
                     if (context.Request.Url!.AbsolutePath == "/rss")
                     {
-                        body = Encoding.UTF8.GetBytes($"<rss version=\"2.0\" xmlns:nyaa=\"https://nyaa.si/xmlns/nyaa\"><channel><item><title>[Fixture] {Title} Season 1 [Batch]</title><link>{SecurityElement.Escape(_magnet)}</link><nyaa:seeders>1</nyaa:seeders><nyaa:infoHash>{_hash}</nyaa:infoHash></item></channel></rss>");
+                        string malformed = MalformedMagnet == null ? "" :
+                            $"<item><title>[Mirror] {Title} Season 1 [Batch]</title><link>{SecurityElement.Escape(MalformedMagnet)}</link><nyaa:seeders>50</nyaa:seeders></item>";
+                        string release = !OfferRelease ? "" :
+                            $"<item><title>{SecurityElement.Escape(ReleaseTitle)}</title><link>{SecurityElement.Escape(_magnet)}</link><nyaa:seeders>1</nyaa:seeders><nyaa:infoHash>{_hash}</nyaa:infoHash></item>";
+                        body = Encoding.UTF8.GetBytes($"<rss version=\"2.0\" xmlns:nyaa=\"https://nyaa.si/xmlns/nyaa\"><channel>{malformed}{release}</channel></rss>");
                         context.Response.ContentType = "application/xml";
                     }
                     else if (context.Request.Url.AbsolutePath.StartsWith("/api/v2/auth/"))

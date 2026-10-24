@@ -109,18 +109,25 @@ namespace UniversalMediaOS.Core.Archiving
                         return false;
                     }
                     token.ThrowIfCancellationRequested();
-                    var bestTorrent = SelectBestBatchTorrent(torrents, animeTitle, log, audioPreference);
+                    // A feed entry without a valid hash, or whose hash conflicts with its magnet, cannot be pinned
+                    // or transferred. Skip it rather than let a better-seeded bad entry fail every attempt.
+                    var releaseHashes = new Dictionary<TorrentResult, string>(ReferenceEqualityComparer.Instance);
+                    foreach (var torrent in torrents)
+                    {
+                        string? hash = TryGetConsistentReleaseHash(torrent);
+                        if (hash != null) releaseHashes.Add(torrent, hash);
+                        else log($"[P2P Season Downloader] Skipped \"{torrent.Title}\": its magnet link has no valid transfer hash or conflicts with the feed's hash.");
+                    }
+                    if (releaseHashes.Count == 0)
+                        throw new TorrentDownloadOwnershipException("No release found has a magnet link with a valid transfer hash. No torrent transfer was started; existing files were retained.");
+                    var bestTorrent = SelectBestBatchTorrent(releaseHashes.Keys.ToList(), animeTitle, log, audioPreference);
                     if (bestTorrent == null)
                     {
                         log("[P2P Season Downloader] ERROR: Could not identify a valid healthy batch torrent matching parameters.");
                         return false;
                     }
                     log($"[P2P Season Downloader] SELECTED BATCH: \"{bestTorrent.Title}\" ({bestTorrent.Seeders} seeders) from {bestTorrent.Source}");
-                    string selectedHash = GetReleaseHash(bestTorrent.MagnetLink);
-                    string feedHash = bestTorrent.InfoHash?.Trim() ?? "";
-                    if (feedHash.Length == 32) feedHash = Base32ToHex(feedHash.ToUpperInvariant());
-                    if (feedHash.Length != 0 && !selectedHash.Equals(feedHash, StringComparison.OrdinalIgnoreCase))
-                        throw new TorrentDownloadOwnershipException("The selected release's hash conflicts with its magnet link. No torrent transfer was started; existing files were retained.");
+                    string selectedHash = releaseHashes[bestTorrent];
                     selection = new DownloadReleaseSelection(selectedHash, bestTorrent.MagnetLink, bestTorrent.Title,
                         animeTitle, NormalizeAudioPreference(audioPreference), _downloadDir);
                 }
@@ -208,6 +215,8 @@ namespace UniversalMediaOS.Core.Archiving
                         if (success)
                         {
                             var relativePaths = await _qbit.GetTorrentFilesAsync(infoHash, token);
+                            if (TorrentFileContainment.FindOutside(relativePaths.Select(file => file.Name), _downloadDir) != null)
+                                throw new TorrentContentOutsideFolderException("qBittorrent reports a file outside the download folder; it was not checked or played. Its files were left in place.");
                             foreach (var p in relativePaths)
                             {
                                 string fullPath = Path.Combine(_downloadDir, p.Name);
@@ -322,6 +331,15 @@ namespace UniversalMediaOS.Core.Archiving
             catch (InsufficientDownloadSpaceException) { throw; }
             catch (NativeTorrentStorageException) { throw; }
             catch (TorrentDownloadOwnershipException) { throw; }
+            catch (TorrentContentOutsideFolderException) { throw; }
+            catch (ReleaseAudioUnavailableException) { throw; }
+            catch (InvalidDataException ex)
+            {
+                // Only qBittorrent's lookup and monitor raise this here: its transfer of this release belongs to
+                // another folder or hash. Retrying cannot change that, so the job shows the reason.
+                log($"[P2P Season Downloader] {ex.Message}");
+                throw new TorrentDownloadOwnershipException(ex.Message + " Existing files were retained.", ex);
+            }
             catch (Exception ex)
             {
                 log($"[P2P Season Downloader] CRITICAL ERROR during batch process: {ex.Message}");
@@ -348,6 +366,16 @@ namespace UniversalMediaOS.Core.Archiving
             if (string.IsNullOrWhiteSpace(selection.DownloadDirectory) || !Path.IsPathFullyQualified(selection.DownloadDirectory) ||
                 !string.Equals(TorrentDownloadOwnership.NormalizePath(selection.DownloadDirectory), selection.DownloadDirectory, StringComparison.OrdinalIgnoreCase))
                 throw new TorrentDownloadOwnershipException("The original release's physical download folder could not be verified. Existing files were retained; restore its folder before retrying.");
+        }
+
+        private static string? TryGetConsistentReleaseHash(TorrentResult result)
+        {
+            string hash;
+            try { hash = GetReleaseHash(result.MagnetLink); }
+            catch (TorrentDownloadOwnershipException) { return null; }
+            string feedHash = result.InfoHash?.Trim() ?? "";
+            if (feedHash.Length == 32) feedHash = Base32ToHex(feedHash.ToUpperInvariant());
+            return feedHash.Length == 0 || hash.Equals(feedHash, StringComparison.OrdinalIgnoreCase) ? hash : null;
         }
 
         private static string GetReleaseHash(string magnetLink)
@@ -520,7 +548,9 @@ namespace UniversalMediaOS.Core.Archiving
                         ? result.MagnetLink
                         : result.Title,
                     StringComparer.OrdinalIgnoreCase)
-                .Select(group => group.OrderByDescending(item => item.Seeders).First())
+                // A duplicate whose magnet conflicts with the claimed hash must not displace a consistent one.
+                .Select(group => group.OrderByDescending(item => TryGetConsistentReleaseHash(item) != null)
+                    .ThenByDescending(item => item.Seeders).First())
                 .ToList();
         }
 
@@ -546,17 +576,19 @@ namespace UniversalMediaOS.Core.Archiving
 
             if (seasonMatched.Count == 0) return null;
 
-            // 3. Filter by User Audio Preference
-            string pref = NormalizeAudioPreference(audioPreference);
-            var candidates = seasonMatched;
-            if (pref.StartsWith("Dub", StringComparison.OrdinalIgnoreCase))
+            // 3. Keep only releases labelled with the requested audio, as the temporary watch does: Dub needs a Dub
+            // or dual-audio label, and Sub excludes Dub-only releases. Never substitute the other audio.
+            bool dub = NormalizeAudioPreference(audioPreference).StartsWith("Dub", StringComparison.OrdinalIgnoreCase);
+            var candidates = seasonMatched.Where(t => dub
+                ? TemporaryEpisodeWatchService.HasDubLabel(t.Title)
+                : !TemporaryEpisodeWatchService.HasDubLabel(t.Title) || Regex.IsMatch(t.Title, @"\bdual[\s._-]*audio\b", RegexOptions.IgnoreCase)).ToList();
+            if (candidates.Count == 0)
+                throw new ReleaseAudioUnavailableException(dub
+                    ? "No Dub release found: no matching release is labelled Dub or Dual Audio. Nothing was downloaded; retry later or choose Sub."
+                    : "No Sub release found: every matching release is labelled Dub only. Nothing was downloaded; retry later or choose Dub.");
+            if (!dub)
             {
-                var dubs = seasonMatched.Where(t => t.Title.IndexOf("Dub", StringComparison.OrdinalIgnoreCase) >= 0 || t.Title.IndexOf("Dual Audio", StringComparison.OrdinalIgnoreCase) >= 0).ToList();
-                if (dubs.Count > 0) candidates = dubs;
-            }
-            else // Subbed preference
-            {
-                var subs = seasonMatched.Where(t => t.Title.IndexOf("Sub", StringComparison.OrdinalIgnoreCase) >= 0).ToList();
+                var subs = candidates.Where(t => t.Title.IndexOf("Sub", StringComparison.OrdinalIgnoreCase) >= 0).ToList();
                 if (subs.Count > 0) candidates = subs;
             }
 
@@ -881,6 +913,11 @@ namespace UniversalMediaOS.Core.Archiving
             }
             catch (InsufficientDownloadSpaceException) { throw; }
             catch (NativeTorrentStorageException) { throw; }
+            catch (TorrentContentOutsideFolderException ex)
+            {
+                log($"[MonoTorrent] Error: {ex.Message}");
+                throw;
+            }
             catch (Exception ex)
             {
                 log($"[MonoTorrent] Error: {ex.Message}");
@@ -898,7 +935,7 @@ namespace UniversalMediaOS.Core.Archiving
         private void ThrowIfOutsideDownloadDirectory(TorrentManager manager)
         {
             if (TorrentFileContainment.FindOutside(manager.Files, _downloadDir) != null)
-                throw new InvalidDataException("The torrent lists a file outside the download folder; it was not started.");
+                throw new TorrentContentOutsideFolderException("The torrent lists a file outside the download folder; it was not started.");
         }
 
         private static bool MatchesRequestedHashes(Torrent torrent, MagnetLink magnet) =>
