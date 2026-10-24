@@ -1075,7 +1075,12 @@ def launch_browser():
     data_root = os.environ.get("UNIVERSAL_MEDIA_OS_DATA_ROOT", "").strip()
     if data_root and not os.path.isabs(data_root):
         raise ValueError("UNIVERSAL_MEDIA_OS_DATA_ROOT must be an absolute path")
-    profile_root = os.path.join(data_root, "Local", "UniversalMediaOS", "BrowserProfiles") if data_root else tempfile.gettempdir()
+    # The app passes a folder it owns for this run and removes it even when it kills the run.
+    owned_root = os.environ.get("UMOS_AV_PROFILE_ROOT", "").strip()
+    if owned_root and not os.path.isabs(owned_root):
+        raise ValueError("UMOS_AV_PROFILE_ROOT must be an absolute path")
+    profile_root = owned_root or (os.path.join(data_root, "Local", "UniversalMediaOS", "BrowserProfiles")
+                                  if data_root else tempfile.gettempdir())
     os.makedirs(profile_root, exist_ok=True)
     profile = tempfile.mkdtemp(prefix="umos_av_", dir=profile_root)
     options = ChromiumOptions()

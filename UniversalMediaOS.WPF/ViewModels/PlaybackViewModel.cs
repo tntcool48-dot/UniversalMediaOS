@@ -1145,8 +1145,7 @@ namespace UniversalMediaOS.WPF.ViewModels
         {
             var choices = PlaybackTrackOption.ExternalCaptions(_lastMediaSubtitles);
             PlaybackTrackOption? selected = _preferredCaptionKey == null
-                ? choices.FirstOrDefault(option => option.Subtitle!.IsEnglish) ??
-                  choices.FirstOrDefault(option => option.Subtitle!.IsDefault) ?? choices.FirstOrDefault()
+                ? PlaybackTrackOption.AutomaticExternalCaption(choices)
                 : PlaybackTrackOption.Remembered(choices, _preferredCaptionKey, _preferredCaptionLanguage);
             _attachedCaption = null;
             if (selected == null) return;
