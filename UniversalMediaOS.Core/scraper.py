@@ -349,6 +349,20 @@ def query_keywords(query):
     return useful or [word for word in words if word not in ignored]
 
 
+SUBTITLE_DELIMITER_RE = re.compile(r":\s+|\s+[-\u2013\u2014]+\s*|\s*[-\u2013\u2014]+\s+")
+
+
+def subtitle_keywords(title):
+    """Keywords only a catalog title's final subtitle adds, such as a special's own name."""
+    parts = [part for part in SUBTITLE_DELIMITER_RE.split(title or "") if part.strip()]
+    if len(parts) < 2:
+        return set()
+    claims = variant_claims(parts[-1])
+    if claims["season"] or claims["part"]:
+        return set()  # Season/part evidence rules already govern numbered sequels.
+    return set(query_keywords(parts[-1])) - set(query_keywords(" ".join(parts[:-1])))
+
+
 def safe_title_aliases(query, aliases=None):
     """Use only short, distinct catalog titles for the same requested entry."""
     titles = [query]
@@ -1810,6 +1824,9 @@ def _score_candidate_title(full_url, context, query, episode_id, whole_titles=Fa
     matched_words = {word for word in keywords if word in path_tokens or word in context_tokens}
     if len(matched_words) < required:
         return 0
+    subtitle = subtitle_keywords(query)
+    if subtitle and not subtitle & (path_tokens | context_tokens):
+        return 0  # Only the parent franchise is named, not this subtitled work.
     if path_has_conflicting_title(full_url, keywords):
         return 0
     score = sum(2 for word in keywords if word in path_tokens)
@@ -2139,6 +2156,27 @@ def check_episode_identity(identity, query, episode_id, title_aliases=None, cata
     trusted_titles = safe_title_aliases(query, title_aliases)
     synonym = safe_catalog_synonym(query, trusted_titles, catalog_synonyms, catalog_ids)
     accepted_titles = trusted_titles + ([synonym] if synonym else [])
+    expected_ids = safe_catalog_ids(catalog_ids)
+    observed_ids = {"anilist": set(), "mal": set()}
+    for claims in [identity.get("primary_ids"), *(identity.get("active_id_claims") or [])]:
+        for name, value in safe_catalog_ids(claims).items():
+            observed_ids[name].add(value)
+    # Only canonical/OG URLs from the current document count; arbitrary links
+    # in recommendations or copied request URLs are not provider evidence.
+    for link in identity.get("primary_id_urls") or []:
+        if not isinstance(link, str):
+            continue
+        parsed = urlparse(link)
+        host = (parsed.hostname or "").lower().rstrip(".")
+        kind = "mal" if host in ("myanimelist.net", "www.myanimelist.net") else \
+            "anilist" if host in ("anilist.co", "www.anilist.co") else None
+        found = re.fullmatch(r"/anime/([1-9]\d{0,9})(?:/.*)?", parsed.path or "")
+        if kind and found:
+            observed_ids[kind].add(int(found.group(1)))
+    id_conflict = any(expected_ids.get(name) and any(value != expected_ids[name] for value in values)
+                      for name, values in observed_ids.items())
+    id_match = any(expected_ids.get(name) in values for name, values in observed_ids.items()
+                   if expected_ids.get(name))
     def matches_title(title, accepted):
         if native_title_key(query) or accepted in trusted_titles[1:]:
             # Catalog translation is not provider evidence. Related shorts and
@@ -2149,6 +2187,12 @@ def check_episode_identity(identity, query, episode_id, title_aliases=None, cata
         keywords = query_keywords(accepted)
         tokens = match_tokens(title)
         if not keywords or len(set(keywords) & tokens) < min(2, len(keywords)):
+            return False
+        # A parent page shares every franchise keyword with its specials and
+        # subtitled sequels; it must also name this work's own subtitle.
+        # A matching provider catalog ID still identifies a shortened heading.
+        subtitle = subtitle_keywords(accepted)
+        if subtitle and not subtitle & tokens and not (id_match and not id_conflict):
             return False
         # Shared subtitle words cannot identify a different primary franchise.
         # Apply this only to a clear multiword prefix before the catalog colon;
@@ -2172,27 +2216,6 @@ def check_episode_identity(identity, query, episode_id, title_aliases=None, cata
         elif re.fullmatch(EPISODE_UNIT_PATTERN, first_line, re.I):
             unmapped_units.add(first_line.lower())
     unmapped_units = {unit for unit in unmapped_units if not unit.isdigit()}
-    expected_ids = safe_catalog_ids(catalog_ids)
-    observed_ids = {"anilist": set(), "mal": set()}
-    for claims in [identity.get("primary_ids"), *(identity.get("active_id_claims") or [])]:
-        for name, value in safe_catalog_ids(claims).items():
-            observed_ids[name].add(value)
-    # Only canonical/OG URLs from the current document count; arbitrary links
-    # in recommendations or copied request URLs are not provider evidence.
-    for link in identity.get("primary_id_urls") or []:
-        if not isinstance(link, str):
-            continue
-        parsed = urlparse(link)
-        host = (parsed.hostname or "").lower().rstrip(".")
-        kind = "mal" if host in ("myanimelist.net", "www.myanimelist.net") else \
-            "anilist" if host in ("anilist.co", "www.anilist.co") else None
-        found = re.fullmatch(r"/anime/([1-9]\d{0,9})(?:/.*)?", parsed.path or "")
-        if kind and found:
-            observed_ids[kind].add(int(found.group(1)))
-    id_conflict = any(expected_ids.get(name) and any(value != expected_ids[name] for value in values)
-                      for name, values in observed_ids.items())
-    id_match = any(expected_ids.get(name) in values for name, values in observed_ids.items()
-                   if expected_ids.get(name))
     evidence = {"status": "unknown", "title_match": bool(matching),
                 "alias_match": bool(matching) and not any(matches_title(title, query) for title in matching),
                 "synonym_match": bool(synonym_matching) and not bool(trusted_matching),
