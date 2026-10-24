@@ -542,8 +542,8 @@ namespace UniversalMediaOS.Tests.E2E.Tests
             Assert.False(System.IO.File.Exists(config + ".tmp"), "A temporary settings file was left behind.");
         }
 
-        [Fact(Skip = "Proposed exclusion: the app has no low-memory behavior left to test. 182da1b removed the startup RAM check " +
-                     "and Settings' resource line; SystemResourceCheck is unused. See docs/qa/packaged-runtime-services-settings-2026-10-23.md.")]
+        [Fact(Skip = "Excluded by the user (2026-10-24): the app has no low-memory behavior left to test. 182da1b removed the startup " +
+                     "RAM check and Settings' resource line; SystemResourceCheck is unused. See docs/qa/packaged-runtime-services-settings-2026-10-23.md.")]
         public void T2_Settings_04_Low_Memory_Resource_Boundary()
         {
             NavigateTo("Settings");
