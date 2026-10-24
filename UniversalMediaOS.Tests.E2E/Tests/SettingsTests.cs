@@ -56,6 +56,69 @@ namespace UniversalMediaOS.Tests.E2E.Tests
         }
 
         [Fact]
+        public void Settings_TabReachesEverySectionControlInOrderWithoutUnnamedStops()
+        {
+            // From each section's button, Tab must visit every visible control of that section once, in the order
+            // they are laid out, and never stop on something a screen reader can only call "pane" or "group".
+            using var fixture = new AppFixture();
+            var problems = new System.Collections.Generic.List<string>();
+            foreach (string section in new[] { "Appearance", "Services", "qBittorrent", "MAL", "Providers & Scrapers", "Notifications", "Privacy", "Language" })
+            {
+                OpenSection(fixture, section);
+                var settings = SettingsRoot(fixture);
+                var navigation = settings.FindFirstDescendant(cf => cf.ByName(section).And(cf.ByControlType(ControlType.Button)))!;
+                var expected = System.Linq.Enumerable.ToList(System.Linq.Enumerable.Where(settings.FindAllDescendants(),
+                    control => control.Properties.IsKeyboardFocusable.ValueOrDefault && control.IsEnabled &&
+                               !control.Properties.IsOffscreen.ValueOrDefault && !IsNavigation(settings, control) &&
+                               control.ControlType is not (ControlType.Thumb or ControlType.ScrollBar or ControlType.Pane or ControlType.Group or ControlType.Custom)));
+                FocusWithKeyboard(fixture, navigation);
+
+                var visited = new System.Collections.Generic.List<AutomationElement>();
+                for (int press = 0; press < 80; press++)
+                {
+                    FlaUI.Core.Input.Keyboard.Type(FlaUI.Core.WindowsAPI.VirtualKeyShort.TAB);
+                    Thread.Sleep(60);
+                    var focused = fixture.Automation.FocusedElement();
+                    if (focused == null) { problems.Add($"{section}: focus went nowhere after {visited.Count} stops."); break; }
+                    if (IsNavigation(settings, focused)) continue; // the remaining section buttons come first
+                    if (!IsWithin(settings, focused)) break;       // left Settings: the section is done
+                    if (System.Linq.Enumerable.Any(visited, seen => fixture.Automation.Compare(seen, focused)))
+                    { problems.Add($"{section}: Tab returned to {Describe(focused)} before leaving Settings."); break; }
+                    if (string.IsNullOrWhiteSpace(focused.Name))
+                        problems.Add($"{section}: unnamed Tab stop {Describe(focused)}.");
+                    visited.Add(focused);
+                }
+
+                foreach (var control in expected)
+                    if (!System.Linq.Enumerable.Any(visited, seen => fixture.Automation.Compare(seen, control)))
+                        problems.Add($"{section}: Tab never reached {Describe(control)}.");
+                // Layout order: the reached controls appear in the same order as in the view's own tree.
+                var order = System.Linq.Enumerable.ToList(System.Linq.Enumerable.Select(visited,
+                    seen => expected.FindIndex(control => fixture.Automation.Compare(control, seen))));
+                for (int i = 1; i < order.Count; i++)
+                    if (order[i] >= 0 && order[i - 1] >= 0 && order[i] < order[i - 1])
+                        problems.Add($"{section}: Tab moved back from {Describe(visited[i - 1])} to {Describe(visited[i])}.");
+            }
+            Assert.True(problems.Count == 0, string.Join(Environment.NewLine, problems));
+        }
+
+        /// <summary>The section buttons in the Settings sidebar (188 px wide at 100% scale).</summary>
+        private static bool IsNavigation(AutomationElement settings, AutomationElement element) =>
+            element.ControlType == ControlType.Button && Array.IndexOf(SettingsSections, element.Name) >= 0 &&
+            IsWithin(settings, element) && element.Properties.BoundingRectangle.ValueOrDefault.Left < settings.BoundingRectangle.Left + 200;
+
+        private static readonly string[] SettingsSections =
+            ["Appearance", "Services", "qBittorrent", "MAL", "Providers & Scrapers", "Notifications", "Privacy", "Language"];
+
+        private static bool IsWithin(AutomationElement root, AutomationElement element)
+        {
+            var walker = root.Automation.TreeWalkerFactory.GetControlViewWalker();
+            for (var current = element; current != null; current = walker.GetParent(current))
+                if (root.Automation.Compare(current, root)) return true;
+            return false;
+        }
+
+        [Fact]
         public void Settings_AutoManageCheckbox_CanBeToggledAndRestored()
         {
             try
@@ -124,6 +187,226 @@ namespace UniversalMediaOS.Tests.E2E.Tests
             Assert.True(SpinWait.SpinUntil(() => HealthText(fixture).Contains(listening.Value, StringComparison.Ordinal),
                 TimeSpan.FromSeconds(5)), HealthText(fixture));
         }
+
+        [Fact]
+        public void Settings_RepairServicesKeepsKeyboardFocusThroughItsBusyState()
+        {
+            // Repair services is unavailable while it runs. A keyboard user who pressed it must still be on it
+            // afterwards, so Tab continues to the next control instead of starting over from the window.
+            using var fixture = new AppFixture(mangaPagePng: null, initializeProfile: SeedPinnedUBlock);
+            OpenSection(fixture, "Services");
+            var repair = SettingsButton(fixture, "Repair services");
+            FocusWithKeyboard(fixture, repair);
+
+            FlaUI.Core.Input.Keyboard.Type(FlaUI.Core.WindowsAPI.VirtualKeyShort.ENTER);
+            Assert.True(SpinWait.SpinUntil(() => !repair.IsEnabled, TimeSpan.FromSeconds(10)), "Repair services showed no busy state.");
+            Assert.True(SpinWait.SpinUntil(() => repair.IsEnabled, TimeSpan.FromSeconds(150)), "Repair services did not finish.");
+            Assert.True(SpinWait.SpinUntil(() => repair.Properties.HasKeyboardFocus.ValueOrDefault, TimeSpan.FromSeconds(5)),
+                "Keyboard focus after Repair services: " + Describe(fixture.Automation.FocusedElement()));
+
+            FlaUI.Core.Input.Keyboard.Type(FlaUI.Core.WindowsAPI.VirtualKeyShort.TAB);
+            var focused = fixture.Automation.FocusedElement();
+            Assert.True(focused?.Name == "Save Settings", "Tab after Repair services reached " + Describe(focused));
+        }
+
+        [Fact]
+        public void Settings_SaveKeepsKeyboardFocusAfterItsConfirmation()
+        {
+            // Save is unavailable while it runs, and its confirmation opens meanwhile. Closing the confirmation
+            // with the keyboard must leave focus on Save, not on the section's scroll pane.
+            using var fixture = new AppFixture();
+            OpenSection(fixture, "Services");
+            var save = System.Linq.Enumerable.First(SettingsRoot(fixture).FindAllDescendants(
+                cf => cf.ByName("Save Settings").And(cf.ByControlType(ControlType.Button))), button => !button.IsOffscreen).AsButton();
+            FocusWithKeyboard(fixture, save);
+
+            FlaUI.Core.Input.Keyboard.Type(FlaUI.Core.WindowsAPI.VirtualKeyShort.ENTER);
+            Window? dialog = null;
+            Assert.True(SpinWait.SpinUntil(() => (dialog = System.Linq.Enumerable.FirstOrDefault(MainWindowOf(fixture).ModalWindows,
+                window => window.Title == "Settings Saved")) != null, TimeSpan.FromSeconds(10)), "No 'Settings Saved' confirmation appeared.");
+            dialog!.SetForeground();
+            FlaUI.Core.Input.Keyboard.Type(FlaUI.Core.WindowsAPI.VirtualKeyShort.ENTER);
+            Assert.True(SpinWait.SpinUntil(() => MainWindowOf(fixture).ModalWindows.Length == 0, TimeSpan.FromSeconds(5)),
+                "The confirmation did not close from the keyboard.");
+
+            Assert.True(SpinWait.SpinUntil(() => save.IsEnabled && save.Properties.HasKeyboardFocus.ValueOrDefault, TimeSpan.FromSeconds(5)),
+                "Keyboard focus after Save: " + Describe(fixture.Automation.FocusedElement()));
+        }
+
+        [Fact]
+        public void Settings_AddedDubProviderRowsAreNamedAndDeleteKeepsKeyboardPlace()
+        {
+            // Add Dub Provider reveals a row per provider. Each row's controls must say which provider they act on,
+            // and deleting one from the keyboard must leave focus on the next row, or the add form when none is left.
+            using var fixture = new AppFixture();
+            OpenSection(fixture, "Providers & Scrapers");
+            foreach (string provider in new[] { "Alpha Dubs", "Beta Dubs" })
+            {
+                Field(fixture, "Dub provider name").Patterns.Value.Pattern.SetValue(provider);
+                Field(fixture, "Dub provider URL").Patterns.Value.Pattern.SetValue($"https://{provider[..4].ToLowerInvariant()}.example.test/search?q={{query}}");
+                FocusWithKeyboard(fixture, SettingsButton(fixture, "Add Dub Provider"));
+                FlaUI.Core.Input.Keyboard.Type(FlaUI.Core.WindowsAPI.VirtualKeyShort.ENTER);
+                Assert.True(SpinWait.SpinUntil(() => RowControl(fixture, ControlType.Slider, provider + " timeout") != null,
+                    TimeSpan.FromSeconds(5)), $"No row appeared for {provider}. " + AddDiagnostics(fixture));
+                Assert.True(RowControl(fixture, ControlType.CheckBox, provider + " enabled") != null,
+                    $"{provider}'s Enabled check box does not name its provider: " + RowNames(fixture));
+                Assert.True(RowControl(fixture, ControlType.Button, "Delete " + provider) != null,
+                    $"{provider}'s Delete button does not name its provider: " + RowNames(fixture));
+            }
+
+            // Moving through the list, a screen reader announces each row by its list item's name.
+            var walker = fixture.Automation.TreeWalkerFactory.GetControlViewWalker();
+            foreach (string provider in new[] { "Alpha Dubs", "Beta Dubs" })
+            {
+                var item = walker.GetParent(RowControl(fixture, ControlType.Slider, provider + " timeout")!);
+                Assert.True(item?.ControlType == ControlType.DataItem && item.Name == provider,
+                    $"{provider}'s row is announced as {Describe(item)}.");
+            }
+
+            FocusWithKeyboard(fixture, RowControl(fixture, ControlType.Button, "Delete Alpha Dubs")!);
+            FlaUI.Core.Input.Keyboard.Type(FlaUI.Core.WindowsAPI.VirtualKeyShort.ENTER);
+            Assert.True(SpinWait.SpinUntil(() => RowControl(fixture, ControlType.Button, "Delete Alpha Dubs") == null, TimeSpan.FromSeconds(5)));
+            Assert.True(SpinWait.SpinUntil(() => fixture.Automation.FocusedElement()?.Name == "Beta Dubs enabled", TimeSpan.FromSeconds(5)),
+                "Focus after deleting Alpha Dubs: " + Describe(fixture.Automation.FocusedElement()));
+
+            FocusWithKeyboard(fixture, RowControl(fixture, ControlType.Button, "Delete Beta Dubs")!);
+            FlaUI.Core.Input.Keyboard.Type(FlaUI.Core.WindowsAPI.VirtualKeyShort.ENTER);
+            Assert.True(SpinWait.SpinUntil(() => fixture.Automation.FocusedElement()?.Name == "Dub provider name", TimeSpan.FromSeconds(5)),
+                "Focus after deleting the last provider: " + Describe(fixture.Automation.FocusedElement()));
+        }
+
+        [Fact]
+        public void ServicesOn_MissingToolsAndAStalledExtensionDownloadAreReportedWithoutBlockingTheApp()
+        {
+            // Services start with the window. PATH holds only Windows' own folders, so FFmpeg and ffprobe are missing,
+            // and a loopback proxy accepts the uBlock download's connection but never answers. Each service must
+            // settle on its own honest state, the app must stay usable meanwhile, and Repair must not claim success.
+            using var proxy = new SilentProxy();
+            string system = Environment.GetFolderPath(Environment.SpecialFolder.System);
+            string windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+            using var fixture = new AppFixture(mangaPagePng: null, initializeProfile: EnableServices,
+                environment: new System.Collections.Generic.Dictionary<string, string?>
+                {
+                    ["PATH"] = system + ";" + windows,
+                    ["HTTPS_PROXY"] = proxy.Address, ["HTTP_PROXY"] = proxy.Address, ["ALL_PROXY"] = null,
+                    ["NO_PROXY"] = "127.0.0.1,localhost"
+                });
+            var started = System.Diagnostics.Stopwatch.StartNew();
+            OpenSection(fixture, "Services");
+
+            // While the download hangs, FFmpeg's result is already published and Settings still navigates.
+            Assert.True(SpinWait.SpinUntil(() => HealthText(fixture).Contains("FFmpeg: ffmpeg missing; ffprobe missing.", StringComparison.Ordinal),
+                TimeSpan.FromSeconds(15)), HealthText(fixture));
+            Assert.True(proxy.Connections > 0 || SpinWait.SpinUntil(() => proxy.Connections > 0, TimeSpan.FromSeconds(10)),
+                "The uBlock download never reached the stalled proxy.");
+            Assert.True(started.Elapsed < TimeSpan.FromSeconds(18), $"The stall was already over after {started.Elapsed}.");
+            OpenSection(fixture, "Appearance");
+            OpenSection(fixture, "Services");
+            Assert.Equal("Preparing services...", ServiceSummary(fixture));
+
+            const string timedOut = "uBlock Origin: Timed out after 20 seconds during uBlock Origin download.";
+            Assert.True(SpinWait.SpinUntil(() => HealthText(fixture).Contains(timedOut, StringComparison.Ordinal),
+                TimeSpan.FromSeconds(40)), HealthText(fixture));
+            Assert.True(SpinWait.SpinUntil(() => ServiceSummary(fixture) == "Service attention needed", TimeSpan.FromSeconds(130)),
+                ServiceSummary(fixture) + Environment.NewLine + HealthText(fixture));
+            // Python: without a launcher in Windows' own folders there is no interpreter to find.
+            bool launcherInWindows = System.IO.File.Exists(System.IO.Path.Combine(windows, "py.exe")) ||
+                                     System.IO.File.Exists(System.IO.Path.Combine(system, "py.exe"));
+            if (!launcherInWindows)
+                Assert.Contains("Python scraper: Failed (python_missing)", HealthText(fixture), StringComparison.Ordinal);
+            Assert.DoesNotContain("Python scraper: Ready", HealthText(fixture), StringComparison.Ordinal);
+
+            // Repair retries every service; with nothing changed it ends in the same honest states.
+            int before = proxy.Connections;
+            var repair = SettingsButton(fixture, "Repair services");
+            repair.Invoke();
+            Assert.True(SpinWait.SpinUntil(() => !repair.IsEnabled, TimeSpan.FromSeconds(5)), "Repair services showed no busy state.");
+            Assert.True(SpinWait.SpinUntil(() => repair.IsEnabled, TimeSpan.FromSeconds(150)), "Repair services did not finish.");
+            Assert.True(proxy.Connections > before, "Repair did not retry the uBlock download.");
+            Assert.Contains(timedOut, HealthText(fixture), StringComparison.Ordinal);
+            Assert.Contains("FFmpeg: ffmpeg missing; ffprobe missing.", HealthText(fixture), StringComparison.Ordinal);
+            Assert.Equal("Service attention needed", ServiceSummary(fixture));
+            Assert.False(System.IO.Directory.Exists(System.IO.Path.Combine(fixture.SandboxPath, "Local", "UniversalMediaOS", "Extensions", "ublock-origin")),
+                "A failed download left an extension folder behind.");
+        }
+
+        private static void EnableServices(string root)
+        {
+            string path = System.IO.Path.Combine(root, "Roaming", "UniversalMediaOS", "config.json");
+            var settings = System.Text.Json.JsonSerializer.Deserialize<System.Collections.Generic.Dictionary<string, string>>(
+                System.IO.File.ReadAllText(path))!;
+            settings["AutoManageServices"] = "true";
+            System.IO.File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(settings));
+        }
+
+        private static string ServiceSummary(AppFixture fixture) => System.Linq.Enumerable.FirstOrDefault(
+            MainWindowOf(fixture).FindAllDescendants(cf => cf.ByControlType(ControlType.Text)),
+            text => text.Name is "Service checks passed" or "Service attention needed" or "Preparing services..." or "Service checks pending")?.Name ?? string.Empty;
+
+        /// <summary>A loopback HTTP proxy that accepts connections and never answers, like a stalled network.</summary>
+        private sealed class SilentProxy : IDisposable
+        {
+            private readonly System.Net.Sockets.TcpListener _listener = new(System.Net.IPAddress.Loopback, 0);
+            private readonly System.Collections.Concurrent.ConcurrentBag<System.Net.Sockets.TcpClient> _held = new();
+            private int _connections;
+            public SilentProxy()
+            {
+                _listener.Start();
+                _ = System.Threading.Tasks.Task.Run(async () =>
+                {
+                    try { while (true) { _held.Add(await _listener.AcceptTcpClientAsync()); Interlocked.Increment(ref _connections); } }
+                    catch (Exception) { /* Stopped. */ }
+                });
+            }
+            public string Address => "http://" + _listener.LocalEndpoint;
+            public int Connections => Volatile.Read(ref _connections);
+            public void Dispose()
+            {
+                _listener.Stop();
+                foreach (var client in _held) client.Dispose();
+            }
+        }
+
+        private static AutomationElement? RowControl(AutomationElement list, ControlType type, string name) =>
+            list.FindFirstDescendant(cf => cf.ByName(name).And(cf.ByControlType(type)));
+
+        private static AutomationElement? RowControl(AppFixture fixture, ControlType type, string name) =>
+            RowControl(SettingsRoot(fixture), type, name);
+
+        private static string AddDiagnostics(AppFixture fixture) =>
+            "Rows: " + RowNames(fixture) + "; dialogs: " + string.Join(", ", System.Linq.Enumerable.Select(MainWindowOf(fixture).ModalWindows, w => w.Title)) +
+            "; log: " + string.Join(" | ", System.Linq.Enumerable.Where(ReadShared(System.IO.Path.Combine(fixture.SandboxPath, "Roaming", "UniversalMediaOS", "app.log"))
+                .Split('\n'), line => line.Contains("DubAvailabilityProvider", StringComparison.Ordinal)));
+
+        private static string RowNames(AppFixture fixture) => string.Join(", ", System.Linq.Enumerable.Select(
+            System.Linq.Enumerable.Where(SettingsRoot(fixture).FindAllDescendants(), e => e.Properties.IsKeyboardFocusable.ValueOrDefault &&
+                (e.Name.Contains("Dubs", StringComparison.Ordinal) || e.Name is "Enabled" or "Delete")),
+            e => $"{e.ControlType} '{e.Name}'"));
+
+        /// <summary>Installs the pinned uBlock manifest in the profile, so Repair verifies it instead of downloading.</summary>
+        private static void SeedPinnedUBlock(string root)
+        {
+            string extension = System.IO.Path.Combine(root, "Local", "UniversalMediaOS", "Extensions", "ublock-origin");
+            System.IO.Directory.CreateDirectory(extension);
+            System.IO.File.WriteAllText(System.IO.Path.Combine(extension, "manifest.json"), "{\"version\":\"1.71.0\"}");
+        }
+
+        private static Button SettingsButton(AppFixture fixture, string name) =>
+            SettingsRoot(fixture).FindFirstDescendant(cf => cf.ByName(name).And(cf.ByControlType(ControlType.Button)))?.AsButton()
+            ?? throw new InvalidOperationException($"Settings button '{name}' is missing.");
+
+        /// <summary>Puts keyboard focus on an element of the foreground main window, as Tab would.</summary>
+        private static void FocusWithKeyboard(AppFixture fixture, AutomationElement element)
+        {
+            MainWindowOf(fixture).SetForeground();
+            element.Focus();
+            Assert.True(SpinWait.SpinUntil(() => element.Properties.HasKeyboardFocus.ValueOrDefault, TimeSpan.FromSeconds(5)),
+                $"'{element.Name}' did not take keyboard focus; focus is on " + Describe(fixture.Automation.FocusedElement()));
+        }
+
+        private static string Describe(AutomationElement? element) => element == null ? "nothing" :
+            $"{element.Properties.ControlType.ValueOrDefault} '{element.Properties.Name.ValueOrDefault}' " +
+            $"id='{element.Properties.AutomationId.ValueOrDefault}' class='{element.Properties.ClassName.ValueOrDefault}'";
 
         private static string HealthText(AppFixture fixture) => System.Linq.Enumerable.FirstOrDefault(
             SettingsRoot(fixture).FindAllDescendants(cf => cf.ByControlType(ControlType.Text)),
@@ -259,7 +542,8 @@ namespace UniversalMediaOS.Tests.E2E.Tests
             Assert.False(System.IO.File.Exists(config + ".tmp"), "A temporary settings file was left behind.");
         }
 
-        [Fact(Skip = "Requires an injectable resource monitor; the previous check did not create a low-memory condition.")]
+        [Fact(Skip = "Excluded by the user (2026-10-24): the app has no low-memory behavior left to test. 182da1b removed the startup " +
+                     "RAM check and Settings' resource line; SystemResourceCheck is unused. See docs/qa/packaged-runtime-services-settings-2026-10-23.md.")]
         public void T2_Settings_04_Low_Memory_Resource_Boundary()
         {
             NavigateTo("Settings");

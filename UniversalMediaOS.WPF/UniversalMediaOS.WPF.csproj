@@ -20,6 +20,8 @@
     <UseWPF>true</UseWPF>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\app-icon.ico</ApplicationIcon>
+    <!-- Uses .NET 9 when installed; on a machine without it, the lowest newer major (user decision, 2026-10-24). -->
+    <RollForward>Major</RollForward>
   </PropertyGroup>
 
 </Project>

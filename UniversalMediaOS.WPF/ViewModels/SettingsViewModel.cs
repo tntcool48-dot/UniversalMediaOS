@@ -1039,6 +1039,9 @@ namespace UniversalMediaOS.WPF.ViewModels
         [ObservableProperty] private string _parserType = "Badge";
         [ObservableProperty] private string _adapterType = string.Empty;
 
+        // The provider list's items are announced by this text; the default was the class name.
+        public override string ToString() => Name;
+
         partial void OnTimeoutSecondsChanged(int value)
         {
             int normalized = Math.Clamp(value, 1, 30);

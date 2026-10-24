@@ -7,6 +7,7 @@
              mc:Ignorable="d"
              d:DesignHeight="720" d:DesignWidth="1280"
              AutomationProperties.AutomationId="SettingsView"
+             helpers:KeyboardFocusReturn.AfterDisabled="True"
              Background="{DynamicResource BgApp}">
 
     <UserControl.Resources>
@@ -485,7 +486,11 @@
                                            TextWrapping="Wrap"
                                            Margin="0,4,0,14"/>
 
-                                <ItemsControl ItemsSource="{Binding DubAvailabilityProvidersList}" Margin="0,0,0,14">
+                                <!-- The list is not a Tab stop itself (empty, it was an unnamed stop); its rows' controls are. -->
+                                <ItemsControl x:Name="DubProvidersList"
+                                              ItemsSource="{Binding DubAvailabilityProvidersList}" Margin="0,0,0,14"
+                                              Focusable="False"
+                                              AutomationProperties.Name="Dub availability providers">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
                                             <Border BorderBrush="{DynamicResource BorderSubtle}" BorderThickness="0,0,0,1" Padding="0,0,0,12" Margin="0,0,0,12">
@@ -499,6 +504,7 @@
                                                         <TextBlock Text="{Binding SuggestUrlTemplate}" Foreground="{DynamicResource TextMuted}" TextTrimming="CharacterEllipsis" Margin="0,3,0,8"/>
                                                         <WrapPanel>
                                                             <CheckBox Content="Enabled"
+                                                                      AutomationProperties.Name="{Binding Name, StringFormat={}{0} enabled}"
                                                                       IsChecked="{Binding Enabled, Mode=TwoWay}"
                                                                       Foreground="{DynamicResource TextPrimary}"
                                                                       Margin="0,0,18,0"/>
@@ -520,6 +526,8 @@
                                                     </StackPanel>
                                                     <Button Grid.Column="1"
                                                             Content="{helpers:Loc Delete}"
+                                                            AutomationProperties.Name="{Binding Name, StringFormat=Delete {0}}"
+                                                            Click="DubProviderDelete_Click"
                                                             Command="{Binding DataContext.RemoveDubAvailabilityProviderCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                                             CommandParameter="{Binding}"
                                                             Style="{StaticResource DangerButton}"
@@ -533,7 +541,8 @@
                                 </ItemsControl>
 
                                 <TextBlock Text="Provider name" Style="{StaticResource CaptionText}" FontWeight="Bold" Margin="0,0,0,6"/>
-                                <TextBox Text="{Binding NewDubProviderName, UpdateSourceTrigger=PropertyChanged}"
+                                <TextBox x:Name="NewDubProviderNameBox"
+                                         Text="{Binding NewDubProviderName, UpdateSourceTrigger=PropertyChanged}"
                                          AutomationProperties.Name="Dub provider name"
                                          Margin="0,0,0,12"
                                          ToolTip="Friendly name for this dub availability provider."/>
