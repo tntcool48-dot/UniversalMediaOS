@@ -83,7 +83,7 @@ On the 71d20c1 build, at the 1:48 cue, **Arabic (downloaded)** rendered the Comm
 
 **Repair (3659de1).** When a saved provider caption's language is right-to-left (from the culture's own text direction: Arabic, Hebrew, Persian, Urdu and others), the saver writes a right-to-left mark at both ends of each cue text line of SubRip and WebVTT files. Headers, notes, cue numbers, timings and other languages are written unchanged; ASS files are left to libass. `PlaylistMediaDownloadTests.SavedRightToLeftCaptionsKeepTheirPunctuationOnTheirSide` (an Arabic VTT with a note and a two-line cue, a Hebrew SRT with leading dashes and CRLF, and English) failed before the repair (`rtl-marks-before-repair-20261024.trx`); the 149-case download/caption scope passes after it (`rtl-marks-after-repair-20261024.trx`).
 
-This covers captions the app saves from a provider (Watch via download, Download to library, Download season). It does not change right-to-left captions that are streamed, embedded in a container, or shipped beside a torrent's video; those still show edge punctuation on the left-to-right side. No catalog provider in this session offered Arabic captions (Vidsrc's eleven for Sintel were European languages), so the repaired saver's Arabic output was checked on screen with the Commons text written by the same function.
+This covers captions the app saves from a provider (Watch via download, Download to library, Download season). It does not change right-to-left captions that are streamed, embedded in a container, or shipped beside a torrent's video; those still show edge punctuation on the left-to-right side. No catalog provider in this session offered Arabic captions (Vidsrc's eleven for Sintel were European languages), so the repaired saver's Arabic output was checked on screen with the Commons text written by the same function (`MarkRightToLeftLines`): on the 3659de1 build the period (1:48), the Arabic question mark (2:09) and the ellipsis (3:27) all sat at the left end of their lines, in the same Sintel frames.
 
 ## Visible TV journey in the Downloads UI (tv-profile)
 
@@ -105,8 +105,10 @@ Downloads → Delete removes only the video file. For both the Movie and the TV 
 
 ## Cleanup and preservation
 
-- The 1,172,428,172-byte Sintel download was deleted through the app; the 58 MB Vidsrc copy and its eleven captions were removed by their final player close. The Commons Arabic/Japanese files (3.4 KB) remain as evidence in the ignored QA folder.
-- The hardlinked originals (Breaking Bad S1 from `catalog-season-20261009`, Sintel from `package-smoke-20261009`) kept their sizes and times; see the before/after snapshots in the QA folder.
+- The 1,172,428,172-byte Sintel download was deleted through the app; the 58 MB Vidsrc copy and its eleven captions were removed by their final player close. The Commons Arabic/Japanese files (3.4 KB) remain as evidence in the ignored QA folder, with half-size screenshots (16 MB in all).
+- Each in-app Find sources for Sintel (22:58 and 23:26 on October 23) left a ~55 MB Chromium profile under the profile's `Local/UniversalMediaOS/BrowserProfiles` that survived a normal app close. They were removed after recording; this belongs to the provider/scraper area.
+- My hardlinks to the shared originals were removed after the runs.
+- All 23 shared originals (Breaking Bad S1 from `catalog-season-20261009`, Sintel from `package-smoke-20261009`) kept their sizes, write times and small-file SHA-256 hashes (`originals-before-20261023.json` / `originals-after-20261024.json`).
 
 ## What remains open in this item
 
