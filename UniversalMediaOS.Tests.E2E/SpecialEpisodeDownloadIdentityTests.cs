@@ -36,6 +36,28 @@ public sealed class SpecialEpisodeDownloadIdentityTests
     [InlineData("OVA", 2, 2, NumberedTitle + " Movie OVA Episode 02", false)]
     [InlineData("OVA", 2, 2, NumberedTitle + " Extra Story OVA Episode 02", false)]
     [InlineData("OVA", 2, 2, "Fixture Chronicle: Southern Lights OVA Episode 02", false)]
+    // Live October 23 release conventions: dash/E units, plural labels and technical tags.
+    [InlineData("OVA", 2, 2, "[Group] " + NumberedTitle + " OVA - 02 [DVD x264 AC3][7E15928E].mkv", true)]
+    [InlineData("OVA", 2, 2, "[Group] " + NumberedTitle + " - E02 (OVA)[1080p][HEVC x265 10bit][Multi-Subs]", true)]
+    [InlineData("SPECIAL", 2, 2, "[Group] " + NumberedTitle + " Specials - 02 [A9E28304][720p, AAC].mkv", true)]
+    [InlineData("OVA", 2, 2, "[Group] " + NumberedTitle + " - 02 - OVA [DVD][480p][AAC].mp4", true)]
+    [InlineData("OVA", 2, 2, "[Group] " + NumberedTitle + " OVA - 02 (DVD 1024x576 AAC 10bit) [489D792C].mkv", true)]
+    [InlineData("OVA", 2, 2, "[Group] " + NumberedTitle + " OVA - 02 [576p][AAC].mp4", true)]
+    [InlineData("OVA", 2, 2, "[Group] " + NumberedTitle + " OVA - 02 (DVD 1024x576) Southern", false)]
+    [InlineData("OVA", 2, 2, "[Group]_Fixture_Chronicle_Northern_Lights_OVA_-_02_[848x480][226BE51C].avi", true)]
+    [InlineData("OVA", 2, 2, "[Group]_Fixture_Chronicle_Northern_Lights_OVA_-_02_-_03_[848x480].avi", false)]
+    [InlineData("OVA", 2, 2, "[Group]_Fixture_Chronicle_Southern_Lights_OVA_-_02_[848x480].avi", false)]
+    [InlineData("OVA", 2, 2, "[Group]_Fixture_Chronicle_Northern_Lights_-_02_[848x480].avi", false)]
+    [InlineData("OVA", 2, 2, "[Group] " + NumberedTitle + " - 02 [1080p]", false)]
+    [InlineData("OVA", 2, 2, "[Group] " + NumberedTitle + " OVA #02 [1080p]", false)]
+    [InlineData("OVA", 2, 2, "[Group] " + NumberedTitle + " OVA - 02.5 [1080p]", false)]
+    [InlineData("OVA", 2, 2, "[Group] " + NumberedTitle + " OVA - 01 ~ 02 [1080p]", false)]
+    [InlineData("OVA", 2, 2, "[Group] " + NumberedTitle + " OVA - 02 - 03 [1080p]", false)]
+    [InlineData("OVA", 2, 2, "[Group] " + NumberedTitle + " Specials 2 - 02 [1080p]", false)]
+    [InlineData("OVA", 2, 2, "[Group] " + NumberedTitle + " OVA - 02 [Multi-Subs] (Southern Lights)", false)]
+    [InlineData("OVA", 2, 2, "[Group] " + NumberedTitle + " Season 2 OVA - 02 [1080p]", false)]
+    [InlineData("OVA", 2, 2, "[Group] " + NumberedTitle + " OVA - 02 [BD Batch]", false)]
+    [InlineData("TV", 2, 2, "[Group] " + NumberedTitle + " OVA - 02 [1080p]", false)]
     public async Task NumberedMultiSpecialDiscoveryRequiresWholeWorkAndExplicitInRangeEpisode(
         string format, int count, int episode, string release, bool expected)
     {
@@ -63,6 +85,10 @@ public sealed class SpecialEpisodeDownloadIdentityTests
     [InlineData(NumberedTitle + " OVA S01E02", NumberedTitle + " OVA S01E02.mkv", false, false)]
     [InlineData(NumberedTitle + " OVA Episode 02a", NumberedTitle + " OVA Episode 02a.mkv", false, false)]
     [InlineData(NumberedTitle + " OVA Episode 02", "Episode 02.mkv", true, false)]
+    [InlineData("[Group] " + NumberedTitle + " - E02 (OVA)[1080p][HEVC x265 10bit][Multi-Subs]",
+        "[Group] " + NumberedTitle + " - E02 (OVA)[1080p][HEVC x265 10bit][Multi-Subs].mkv", true, true)]
+    [InlineData("[Group] " + NumberedTitle + " OVA - 02 [1080p]", "[Group] " + NumberedTitle + " - 02 [1080p].mkv", true, false)]
+    [InlineData("[Group] " + NumberedTitle + " OVA - 02 [1080p]", "[Group] " + NumberedTitle + " OVA - 01 [1080p].mkv", true, false)]
     public void NumberedMultiSpecialChecksMetadataAndTheActualSelectedVideo(
         string metadata, string video, bool metadataExpected, bool videoExpected)
     {
@@ -130,6 +156,31 @@ public sealed class SpecialEpisodeDownloadIdentityTests
             var service = new TemporaryEpisodeWatchService(Search, root);
             var results = await service.FindCandidatesAsync(Title, [Alias], episode, audio, _ => { },
                 CancellationToken.None, format, count);
+            Assert.Equal(expected ? 1 : 0, results.Count);
+        }
+        finally { Directory.Delete(root); }
+    }
+
+    [Theory]
+    [InlineData("[Group] No Game No Life - 01 [1080p].mkv", true)]
+    // Live October 23: the separate SPECIAL entry's release must not become TV episode 1.
+    [InlineData("[anon] No Game No Life Specials - 01 [1080p].mkv", false)]
+    [InlineData("[Group] No Game No Life OVAs - 01 [1080p].mkv", false)]
+    [InlineData("[Group] No Game No Life OAD - 01 [1080p].mkv", false)]
+    [InlineData("[Group] No Game No Life Movies - 01 [1080p].mkv", false)]
+    public async Task OrdinaryEpisodeDiscoveryRejectsPluralSpecialLabels(string release, bool expected)
+    {
+        string root = Path.Combine(Path.GetTempPath(), "UniversalMediaOS.Tests", Guid.NewGuid().ToString("N"));
+        Task<List<TorrentResult>> Search(string _, Action<string>? __, CancellationToken token) =>
+            Task.FromResult(new List<TorrentResult>
+            {
+                new() { Title = release, MagnetLink = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567", Seeders = 5 }
+            });
+        try
+        {
+            var service = new TemporaryEpisodeWatchService(Search, root);
+            var results = await service.FindCandidatesAsync("No Game No Life", [], 1, "Sub", _ => { },
+                CancellationToken.None, "TV", 12);
             Assert.Equal(expected ? 1 : 0, results.Count);
         }
         finally { Directory.Delete(root); }
