@@ -20,8 +20,8 @@ REPOSITORY = Path(__file__).resolve().parents[1]
 APPLICATION_INPUTS = ['UniversalMediaOS.Core', 'UniversalMediaOS.WPF', 'Directory.Build.props', 'global.json']
 GENERATED = {'BUILD-IDENTITY.txt', 'source-build-manifest.json'}
 STAMPED_ASSEMBLIES = ['UniversalMediaOS.WPF.dll', 'UniversalMediaOS.Core.dll']
-EXTERNAL_RUNTIMES = ('.NET 9 Windows Desktop runtime, WebView2 runtime, FFmpeg on PATH, Python 3.12 with '
-                     'pinned scraper packages installed on demand, optional qBittorrent')
+EXTERNAL_RUNTIMES = ('.NET 9 Windows Desktop runtime (a newer major when 9 is missing), WebView2 runtime, FFmpeg on PATH, '
+                     'Python 3.10 or newer with pinned scraper packages installed on demand, optional qBittorrent')
 
 
 class ManifestError(Exception):
@@ -98,6 +98,13 @@ def git(repository, *args):
     return subprocess.check_output(['git', *args], cwd=repository, text=True).strip()
 
 
+def runtime_policy(package):
+    """The shared frameworks the package asks for and its roll-forward policy (the SDK omits the default, Minor)."""
+    options = json.loads((package / 'UniversalMediaOS.WPF.runtimeconfig.json').read_text(encoding='utf-8'))['runtimeOptions']
+    frameworks = [f"{framework['name']} {framework['version']}" for framework in options['frameworks']]
+    return frameworks, options.get('rollForward', 'Minor')
+
+
 def build(package, repository, checkpoint, recorded):
     source = git(repository, 'rev-parse', 'HEAD')
     if git(repository, 'status', '--porcelain', '--untracked-files=no', '--', *APPLICATION_INPUTS):
@@ -108,8 +115,7 @@ def build(package, repository, checkpoint, recorded):
               for name in git(repository, 'ls-files', '--', *APPLICATION_INPUTS).splitlines()
               if (repository / name).is_file()]
     files = published_files(package)
-    config = json.loads((package / 'UniversalMediaOS.WPF.runtimeconfig.json').read_text(encoding='utf-8'))
-    frameworks = [f"{framework['name']} {framework['version']}" for framework in config['runtimeOptions']['frameworks']]
+    frameworks, roll_forward = runtime_policy(package)
     sdk = json.loads((repository / 'global.json').read_text(encoding='utf-8'))['sdk']['version']
     counts = {}
     for entry in files:
@@ -117,6 +123,7 @@ def build(package, repository, checkpoint, recorded):
     manifest = {
         'schema': 1, 'buildSource': source, 'committedUtc': git(repository, 'show', '-s', '--format=%cI', source),
         'recordedUtc': recorded, 'sdk': sdk, 'selfContained': False, 'runtimeFrameworks': frameworks,
+        'rollForward': roll_forward,
         'externalRuntimes': EXTERNAL_RUNTIMES, 'checkpoint': checkpoint,
         'publishedBytes': sum(entry['bytes'] for entry in files), 'publishedCounts': dict(sorted(counts.items())),
         'sourceInputs': inputs, 'publishedFiles': files, 'manifestSelfHashExcluded': True,
@@ -124,7 +131,7 @@ def build(package, repository, checkpoint, recorded):
     identity = '\n'.join([
         'UniversalMediaOS recovery candidate',
         f'Source: {source} (committed {manifest["committedUtc"]})',
-        f'Built with SDK {sdk}; framework-dependent: {", ".join(frameworks)}',
+        f'Built with SDK {sdk}; framework-dependent: {", ".join(frameworks)}; roll-forward {roll_forward}',
         f'Published files: {len(files)} ({manifest["publishedBytes"]:,} bytes): ' +
         ', '.join(f'{count} {category}' for category, count in manifest['publishedCounts'].items()),
         f'Source inputs: {len(inputs)}; deployed scripts match their source',

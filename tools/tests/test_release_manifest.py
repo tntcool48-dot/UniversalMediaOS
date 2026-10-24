@@ -1,5 +1,6 @@
 """The release manifest classifies published files from their own headers and refuses mismatched sources."""
 import importlib.util
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -80,6 +81,17 @@ class ReleaseManifestTests(unittest.TestCase):
         self.write('UniversalMediaOS.Core.dll', b'metadata 1.0.0+ffffffffffffffffffffffffffffffffffffffff')
         with self.assertRaisesRegex(manifest.ManifestError, 'UniversalMediaOS.Core.dll was not built'):
             manifest.check_stamp(self.package, source)
+
+    def test_runtime_policy_reports_frameworks_and_roll_forward(self):
+        frameworks = [{'name': 'Microsoft.NETCore.App', 'version': '9.0.0'},
+                      {'name': 'Microsoft.WindowsDesktop.App', 'version': '9.0.0'}]
+        config = self.package / 'UniversalMediaOS.WPF.runtimeconfig.json'
+        config.write_text(json.dumps({'runtimeOptions': {'frameworks': frameworks, 'rollForward': 'Major'}}), encoding='utf-8')
+        self.assertEqual((['Microsoft.NETCore.App 9.0.0', 'Microsoft.WindowsDesktop.App 9.0.0'], 'Major'),
+                         manifest.runtime_policy(self.package))
+        # Without the property the host's default applies: newer patches of the same major only.
+        config.write_text(json.dumps({'runtimeOptions': {'frameworks': frameworks}}), encoding='utf-8')
+        self.assertEqual('Minor', manifest.runtime_policy(self.package)[1])
 
     def test_verify_reports_every_changed_missing_and_unlisted_file(self):
         self.write('a.dll', portable_executable(managed=True))
