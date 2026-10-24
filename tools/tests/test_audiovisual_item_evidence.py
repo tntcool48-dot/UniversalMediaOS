@@ -309,5 +309,45 @@ class PlayerItemCaptureTests(unittest.TestCase):
         """)
 
 
+class BrowserProfilePlacementTests(unittest.TestCase):
+    """The app removes the folder it passes even when it kills a run; the profile must live inside it."""
+
+    def launch(self, environment):
+        import os
+        import tempfile
+        created = []
+        real_mkdtemp = tempfile.mkdtemp
+
+        def mkdtemp(**kwargs):
+            created.append(real_mkdtemp(**kwargs))
+            return created[-1]
+        with patch.dict(os.environ, environment, clear=False), \
+                patch.object(av.tempfile, 'mkdtemp', side_effect=mkdtemp), \
+                patch.object(av, 'ChromiumOptions'), patch.object(av, 'ChromiumPage'), \
+                patch.object(av, 'install_item_capture'):
+            page = av.launch_browser()
+        return page, created[0]
+
+    def test_profile_is_created_inside_the_folder_the_app_owns(self):
+        import os
+        import tempfile
+        with tempfile.TemporaryDirectory() as data_root, tempfile.TemporaryDirectory() as owned:
+            page, profile = self.launch({'UNIVERSAL_MEDIA_OS_DATA_ROOT': data_root, 'UMOS_AV_PROFILE_ROOT': owned})
+            self.assertEqual(os.path.normcase(owned), os.path.normcase(os.path.dirname(profile)))
+            self.assertEqual(profile, page._umos_profile)
+
+    def test_without_an_owned_folder_the_data_root_keeps_its_profiles(self):
+        import os
+        import tempfile
+        with tempfile.TemporaryDirectory() as data_root:
+            _, profile = self.launch({'UNIVERSAL_MEDIA_OS_DATA_ROOT': data_root, 'UMOS_AV_PROFILE_ROOT': ''})
+            expected = os.path.join(data_root, 'Local', 'UniversalMediaOS', 'BrowserProfiles')
+            self.assertEqual(os.path.normcase(expected), os.path.normcase(os.path.dirname(profile)))
+
+    def test_relative_owned_folder_is_rejected(self):
+        with self.assertRaises(ValueError):
+            self.launch({'UMOS_AV_PROFILE_ROOT': 'relative/profiles'})
+
+
 if __name__ == '__main__':
     unittest.main()

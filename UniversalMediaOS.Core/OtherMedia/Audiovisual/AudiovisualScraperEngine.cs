@@ -159,36 +159,76 @@ namespace UniversalMediaOS.Core.OtherMedia
                 psi.ArgumentList.Add(argument);
             }
 
+            // Each run owns its browser profiles. Cancellation and timeouts kill the process tree
+            // before the script can remove them, so the engine deletes this run's folder itself.
+            string profileRoot = Path.Combine(AppDataPaths.LocalBaseDirectory, "UniversalMediaOS", "BrowserProfiles",
+                "umos_av_run_" + Guid.NewGuid().ToString("N"));
+            psi.Environment["UMOS_AV_PROFILE_ROOT"] = profileRoot;
+
             using var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
             proc.Start();
-
-            var stdoutTask = proc.StandardOutput.ReadToEndAsync(linked.Token);
-            var stderrTask = Task.Run(async () =>
-            {
-                while (!linked.Token.IsCancellationRequested)
-                {
-                    string? line = await proc.StandardError.ReadLineAsync(linked.Token);
-                    if (line == null) break;
-                    AppLogger.Log($"[AudiovisualScraper] {line.Trim()}");
-                }
-            }, linked.Token);
-
             try
             {
-                await proc.WaitForExitAsync(linked.Token);
+                var stdoutTask = proc.StandardOutput.ReadToEndAsync(linked.Token);
+                var stderrTask = Task.Run(async () =>
+                {
+                    while (!linked.Token.IsCancellationRequested)
+                    {
+                        string? line = await proc.StandardError.ReadLineAsync(linked.Token);
+                        if (line == null) break;
+                        AppLogger.Log($"[AudiovisualScraper] {line.Trim()}");
+                    }
+                }, linked.Token);
+
+                try
+                {
+                    await proc.WaitForExitAsync(linked.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    try { proc.Kill(entireProcessTree: true); } catch { }
+                    if (externalToken.IsCancellationRequested)
+                        throw new OperationCanceledException(externalToken);
+                    return string.Empty;
+                }
+
+                string stdout = await stdoutTask;
+                try { await stderrTask; } catch { }
+
+                return stdout.Trim();
             }
-            catch (OperationCanceledException)
+            finally
             {
-                try { proc.Kill(entireProcessTree: true); } catch { }
-                if (externalToken.IsCancellationRequested)
-                    throw new OperationCanceledException(externalToken);
-                return string.Empty;
+                await RemoveProfileRootAsync(proc, profileRoot);
             }
+        }
 
-            string stdout = await stdoutTask;
-            try { await stderrTask; } catch { }
+        private static async Task RemoveProfileRootAsync(Process proc, string profileRoot)
+        {
+            try
+            {
+                // A killed browser can hold its profile files until the tree has exited.
+                using var exit = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                await proc.WaitForExitAsync(exit.Token);
+            }
+            catch (Exception ex) when (ex is OperationCanceledException or InvalidOperationException) { }
 
-            return stdout.Trim();
+            for (int attempt = 0; Directory.Exists(profileRoot); attempt++)
+            {
+                try
+                {
+                    Directory.Delete(profileRoot, recursive: true);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    if (attempt >= 10)
+                    {
+                        AppLogger.Log($"[AudiovisualScraperEngine] Browser profile cleanup failed: {ex.GetType().Name}", "WARNING");
+                        return;
+                    }
+                    await Task.Delay(200);
+                }
+            }
         }
     }
 }
