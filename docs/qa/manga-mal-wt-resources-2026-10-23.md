@@ -24,7 +24,7 @@ Checklist item: "Qualify live Manga progress, real-account MAL, Windows notifica
 
 **Firewall note.** Listening on all interfaces makes Windows Defender Firewall ask once per executable path. During the post-repair runs, Windows created "Query User" **Allow** rules (Private, Public; TCP and UDP) for this worktree's `testhost.exe` and, in the two-app UI case, its app executable. Someone answered those prompts; this session clicked nothing. Remove the rules if they are unwanted. The real app will ask the same question the first time a user starts the relay. For Radmin VPN, the network profile is Private.
 
-**Not yet qualified:** a real second machine joining over Radmin VPN or LAN, real media on both ends, and spoken audio. This needs the user (see "Waiting on the user").
+**Still open:** a real second machine joining over Radmin VPN or LAN, real media on both ends, and spoken audio. The user has no second machine available (answered October 23), so this cannot be qualified for now. The local checks above use this machine's own LAN/VPN address.
 
 ## 2. Manga reading progress was never kept
 
@@ -82,7 +82,7 @@ No new resource evidence beyond the cohort above. Still open:
    ```
 
    It waits for the desktop lock, opens the app in its own profile, and releases the lock when the app closes. In Settings → MAL, paste the Client ID, choose Connect MAL, sign in on MyAnimeList yourself and approve. Then sync the library from My List. No password, token or key is typed or stored by a session. Writing progress to the real account (automatic episode progress) needs a separate, explicit yes and a chosen episode.
-2. **Remote Watch Together.** Needs a second machine on Radmin VPN or the same LAN running this branch's build.
+2. **Remote Watch Together: open, no second machine.** The user has no second machine (answered October 23), so the remote journey stays open. If one becomes available later, it needs this branch's build on Radmin VPN or the same LAN.
    - On this machine: Watch Together → Start Relay (port 8000). Allow the Windows Firewall prompt for Private networks.
    - Connect with server `localhost` and a room name.
    - On the other machine: server `26.113.169.238` (Radmin VPN) or `192.168.1.14` (LAN), with the same room.
