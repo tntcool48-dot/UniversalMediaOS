@@ -99,7 +99,14 @@ Only the provider outage stopped a capture of the parent's episode 1. Non-native
 - Season/part-qualified subtitles keep the existing season-evidence rule, so `Mushoku Tensei` for `... Season 3` stays `unknown`.
 - Native, alias and whole-title paths are unchanged.
 
-**Verification:** the new module failed **3 of 5** before the repair (a parent card scored 12; both parent pages were `consistent`). After the repair, all **235** Python tests pass, including the 6 new cases.
+**Verification:** the new module failed **3 of 5** before the repair (a parent card scored 12; both parent pages were `consistent`). After the repair, all **235** Python tests passed, including the 6 new cases.
+
+**Live re-check (scraper `21c7c8c7…`, same limits, desktop lock held).** Lost Girls episode 1 and Stairway episode 1 again ended `all_indexed_sites_failed` (66.859 s and 65.453 s), because Anikoto's consistent, ID-matched special pages had unavailable hosts. Every parent page reached was now a **`conflict`**:
+- Miruro `attack-on-titan-season` (both URLs)
+- Re:Anime `attack-on-titan-final-season`
+- Re:Anime `kaguya-sama-love-is-war-5d97k2`
+
+Re:Anime's parent page was still being *tried*. Its live search HTML for the Stairway query lists only unrelated and parent cards, and the slug fallback synthesized `/watch/kaguya-sama-love-is-war-5d97k2` from shared franchise keywords. A regression built from that card shape failed (the same two URLs). The fallback now applies the same subtitle rule: **236 / 236** Python tests pass, and the live Re:Anime HTML now yields **no candidate** for the special. Re:Anime simply doesn't list it, and that absence is honest.
 
 **Limit:** a provider page that names only a franchise for a TV entry whose catalog title carries an English subtitle (for example `Demon Slayer` for `Demon Slayer: Kimetsu no Yaiba`) is now rejected unless it exposes the matching catalog ID. That is a deliberate false negative rather than a possible wrong work.
 
