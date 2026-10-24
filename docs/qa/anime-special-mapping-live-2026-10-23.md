@@ -71,3 +71,38 @@ The metadata for `[DKB] ... Coleus no Yume - E01 (OVA)` drops the `(OVA)` label 
 - **Cleanup:** releasing the final lease deleted the owned job folder (`job folder exists=False`), so no test media remains.
 
 This qualifies one real numbered multi-episode OVA transfer through the production feed → metadata → sole-video → verification → publish → release pipeline. It does not qualify in-app native playback, physical controls, captions or spoken audio for this file. No visible app journey was run for it.
+
+## Streaming lookup for special units
+
+The production `scraper.py resolve` ran with exactly the arguments `ScraperEngine.ResolveAsync` passes: English title, `[English, romaji]` aliases, AniList/MAL IDs, up to 8 synonyms, 6 sites, the unchanged 63-second budget, and native mode. It used an owned data root and held the shared desktop lock (off-screen Chromium). Scraper SHA-256 before the repair below: `094a2759…712bf`.
+
+| Request | Elapsed | Result | What the providers showed |
+| --- | --- | --- | --- |
+| Kaguya-sama: Love Is War -Stairway to Adulthood- (194884, SPECIAL/2), ep 1 | 66.969 s | `all_indexed_sites_failed`, 3 sites | Anikoto: identity `consistent`, `episodes=[1]`, `catalog_id_match=True`; selected host reported the file unavailable |
+| same entry, ep 2 | 66.109 s | `all_indexed_sites_failed`, 3 sites | Anikoto: `consistent`, `episodes=[2]`, ID match; host unavailable |
+| Attack on Titan: Lost Girls (99634, OVA/3), ep 1 | 67.484 s | `all_indexed_sites_failed`, 3 sites | Anikoto: `consistent`, ID match; host unavailable |
+| alias-free/ID-free `かぐや様は告らせたい 大人への階段`, ep 1 | 65.485 s | `all_indexed_sites_failed`, 4 sites | Native discovery found one exact AniList entry (2 translated titles); Anikoto: `consistent`, `catalog_alias=True`, ID match; host unavailable |
+
+So the special-unit mapping itself works on the streaming side: both units of a two-episode SPECIAL, an OVA unit and an alias-free native request each reached an independently consistent provider page with a matching catalog ID. Every attempt then ended in the provider's selected host reporting the file unavailable, so **no accepted live player was reached**. That outcome is recorded as provider unavailability, not as a lookup success. No website opened automatically, and the budget and site limits were unchanged.
+
+### Fault: a parent series page could stand in for its special
+
+The same logs show the parent series being offered for a special:
+- Re:Anime returned `/anime/kaguya-sama-love-is-war-5d97k2/ep-1` (the TV series) for the Stairway special.
+- For Lost Girls, Re:Anime returned `/anime/attack-on-titan-p9y2p9`, and Miruro's `/watch/…/attack-on-titan` page was judged **`consistent episodes=[1]`** with no catalog-ID match.
+
+Only the provider outage stopped a capture of the parent's episode 1. Non-native requests proceed on `consistent` or `unknown`, and the primary title's keyword rule accepted any page sharing two keywords and the franchise prefix. The native route already rejected this: its whole-title rule made Re:Anime's parent page a `conflict` in the alias-free request.
+
+**Repair:** when the catalog title ends in a delimited subtitle (`Franchise: Subtitle`, `Title -Subtitle-`, `Title - Subtitle`), candidate scoring and the keyword identity path now require at least one keyword that only that subtitle adds (`stairway`/`adulthood`, `lost`/`girls`, `regrets`).
+- A matching provider catalog ID still accepts a shortened heading.
+- A conflicting ID still conflicts.
+- Season/part-qualified subtitles keep the existing season-evidence rule, so `Mushoku Tensei` for `... Season 3` stays `unknown`.
+- Native, alias and whole-title paths are unchanged.
+
+**Verification:** the new module failed **3 of 5** before the repair (a parent card scored 12; both parent pages were `consistent`). After the repair, all **235** Python tests pass, including the 6 new cases.
+
+**Limit:** a provider page that names only a franchise for a TV entry whose catalog title carries an English subtitle (for example `Demon Slayer` for `Demon Slayer: Kimetsu no Yaiba`) is now rejected unless it exposes the matching catalog ID. That is a deliberate false negative rather than a possible wrong work.
+
+## Live cancellation and provider failure
+
+The production `ScraperEngine` (with `PythonBootstrapper`) resolved the Stairway special episode 1 in an owned data root, and its token was cancelled at **20.409 s**. At that moment Anikoto's identity was consistent and its host had just reported the file unavailable, so the live provider failure and the cancellation overlapped. The engine threw `OperationCanceledException` at **20.533 s**. Owned processes (those whose command line names the owned data root: the Python scraper plus its Chromium tree) went from **11 → 0** within 3 seconds. Only a 12 KB browser-profile folder remained; the existing 12-hour stale-profile cleanup covers it. Download-side live failures were also seen: AnimeTosho's DNS failure and a Nyaa `502`. Both ended as typed incomplete discovery, never as a reported absence.
