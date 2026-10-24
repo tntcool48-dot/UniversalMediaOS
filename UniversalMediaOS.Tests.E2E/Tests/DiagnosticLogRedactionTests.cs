@@ -1,3 +1,5 @@
+using System.IO;
+using System.Text.Json;
 using UniversalMediaOS.Core.Helpers;
 using Xunit;
 
@@ -5,6 +7,50 @@ namespace UniversalMediaOS.Tests.E2E.Tests
 {
     public sealed class DiagnosticLogRedactionTests
     {
+        // The same cases drive tools/tests/test_log_url_redaction.py, so the C# and
+        // Python redactors cannot drift apart on what reaches app.log.
+        public static IEnumerable<object[]> SharedContractCases()
+        {
+            using JsonDocument fixture = JsonDocument.Parse(File.ReadAllText(SharedContractPath()));
+            foreach (JsonElement item in fixture.RootElement.GetProperty("cases").EnumerateArray())
+            {
+                yield return
+                [
+                    item.GetProperty("name").GetString()!,
+                    item.GetProperty("message").GetString()!,
+                    item.GetProperty("expected").GetString()!,
+                    item.GetProperty("secrets").EnumerateArray().Select(secret => secret.GetString()!).ToArray()
+                ];
+            }
+        }
+
+        [Theory]
+        [MemberData(nameof(SharedContractCases))]
+        public void LogSanitizer_MatchesSharedSignedProviderUrlContract(
+            string name, string message, string expected, string[] secrets)
+        {
+            string safe = LogSanitizer.RedactSensitiveUrls(message);
+
+            Assert.True(expected == safe, $"{name}: expected '{expected}' but logged '{safe}'.");
+            foreach (string secret in secrets)
+            {
+                Assert.DoesNotContain(secret, safe);
+            }
+            Assert.Equal(expected, LogSanitizer.RedactSensitiveUrls(safe));
+        }
+
+        private static string SharedContractPath()
+        {
+            DirectoryInfo? root = new(AppContext.BaseDirectory);
+            while (root != null && !File.Exists(Path.Combine(root.FullName, "UniversalMediaOS.sln")))
+            {
+                root = root.Parent;
+            }
+
+            Assert.NotNull(root);
+            return Path.Combine(root!.FullName, "tools", "tests", "fixtures", "log-url-redaction.json");
+        }
+
         [Fact]
         public void LogSanitizer_RemovesUrlCredentialsQueriesAndFragments()
         {
