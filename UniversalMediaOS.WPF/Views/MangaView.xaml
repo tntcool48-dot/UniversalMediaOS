@@ -311,8 +311,23 @@
                     </Style.Triggers>
                 </Style>
             </Grid.Style>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
 
-            <ListBox ItemsSource="{Binding Chapters}"
+            <Button Grid.Row="0"
+                    HorizontalAlignment="Left"
+                    Margin="0,0,0,12"
+                    Style="{StaticResource PrimaryButton}"
+                    Content="{Binding ContinueText}"
+                    Command="{Binding ContinueReadingCommand}"
+                    AutomationProperties.Name="{Binding ContinueAccessibleName}"
+                    ToolTip="{Binding ContinueAccessibleName}"
+                    Visibility="{Binding HasContinueReading, Converter={StaticResource BoolToVisibility}}"/>
+
+            <ListBox Grid.Row="1"
+                     ItemsSource="{Binding Chapters}"
                      Background="Transparent"
                      BorderThickness="0"
                      VirtualizingPanel.IsVirtualizing="True"
@@ -399,8 +414,10 @@
             </ListBox>
         </Grid>
 
-        <ListBox Grid.Row="1"
+        <ListBox x:Name="MangaPageList"
+                 Grid.Row="1"
                  ItemsSource="{Binding PageUrls}"
+                 ScrollViewer.ScrollChanged="MangaPageList_ScrollChanged"
                  Background="Transparent"
                  BorderThickness="0"
                  ScrollViewer.VerticalScrollBarVisibility="Auto"

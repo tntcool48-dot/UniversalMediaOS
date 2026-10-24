@@ -524,6 +524,7 @@ namespace UniversalMediaOS.WPF
             services.AddTransient<DatabaseContext>();
             services.AddTransient<FuzzyShieldSearch>();
             services.AddTransient<MangaService>();
+            services.AddSingleton<MangaReadingProgressStore>();
             services.AddSingleton<TripleNetHandoff>();
             services.AddSingleton<IDownloadJobExecutor, SeasonDownloadJobExecutor>();
             services.AddSingleton<DownloadQueueService>();
