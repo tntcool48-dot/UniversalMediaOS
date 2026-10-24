@@ -129,7 +129,7 @@ namespace UniversalMediaOS.Core.Routing
                             return null;
                         }
 
-                        return RegisterScraperStream(stream, Log);
+                        return RegisterScraperStream(stream, audioPreference, Log);
                     }
 
                     Log("> [Tier 1] No native stream was found within the configured indexed-site budget.");
@@ -204,7 +204,7 @@ namespace UniversalMediaOS.Core.Routing
                             }
 
                             Log("> [Tier 2] The automatic resolver found verified media but no safe browser page. Opening the verified native stream instead.");
-                            return RegisterScraperStream(discovered, Log);
+                            return RegisterScraperStream(discovered, audioPreference, Log);
                         }
                     }
                 }
@@ -231,7 +231,7 @@ namespace UniversalMediaOS.Core.Routing
 
         // ── Helper: pick best search result ─────────────────────────────────
 
-        private PlaybackSource RegisterScraperStream(ScraperStreamResult stream, Action<string> log)
+        private PlaybackSource RegisterScraperStream(ScraperStreamResult stream, string audioPreference, Action<string> log)
         {
             if (!_proxy.IsRunning)
             {
@@ -274,14 +274,24 @@ namespace UniversalMediaOS.Core.Routing
                 Cookie = stream.Cookie,
                 UserAgent = DesktopUserAgent,
                 Subtitles = MediaSubtitleTrack.Copy(stream.Subtitles),
-                AudioNotice = stream.SelectedAudio switch
-                {
-                    "dub" when !HasEnglishAudio(stream) => "Dub server selected · audio language unverified",
-                    "sub" when !HasJapaneseAudio(stream) => "Sub server selected · audio language unverified",
-                    _ => string.Empty
-                }
+                AudioNotice = AudioNotice(stream, audioPreference)
             };
         }
+
+        private static string AudioNotice(ScraperStreamResult stream, string audioPreference) => stream.SelectedAudio switch
+        {
+            "dub" when !HasEnglishAudio(stream) => "Dub server selected · audio language unverified",
+            "sub" when !HasJapaneseAudio(stream) => "Sub server selected · audio language unverified",
+            "dub" or "sub" => string.Empty,
+            // Without a reported server choice, only a declared language of the
+            // requested audio settles it; the request itself is not evidence.
+            _ => audioPreference switch
+            {
+                "dub" when !HasEnglishAudio(stream) => "Audio language unverified.",
+                "sub" when !HasJapaneseAudio(stream) => "Audio language unverified.",
+                _ => string.Empty
+            }
+        };
 
         private static bool IsHlsUrl(string url) =>
             url.Contains(".m3u8", StringComparison.OrdinalIgnoreCase)
