@@ -384,15 +384,21 @@ Verified localization batches: the runtime preserves WPF-owned selected-text pre
 
   The same journey played a newly available Archive upload ("Try stream"): 311 s sustained, then a seek at 5119 s through to its end at 5204 s. A scraper re-run left no profiles behind (five before).
 
+  November 10, on the merged `401155b` (my October regressions **114 / 114** first), three more repairs:
+  - **Closing the app now stops Movie/TV lookups and removes their browser profiles.** Before, the scrapers outlived the app, started Chromium on their own and left run folders behind. A profile still held when its lookup ends is retried until released. Before: **0 of 3** new cases passed; after: **56 / 56**, twice. In the real app, neither close timing left a process or folder (two orphans before).
+  - **Every release year the catalog entity records now counts.** *House on Haunted Hill* is recorded as 1958 and 1959, and its 1959 Archive uploads and provider items were rejected. Nothing is guessed with ±1, and remakes stay apart. Before: **3 / 7** failed; after: **415 / 415**. Live, it finds 7 Archive uploads (0 before).
+  - **Each source card shows that source's own runtime** (display only, never evidence). Before: **6 / 7** failed; after: **363 / 363**. In the real app, the *Lost World* cards show 1 h 8 min (abridged) beside 1 h 16, 1 h 32 and 1 h 44 min.
+
   Still open:
   - spoken audio (no provider declares it; a listener is needed);
-  - cut labels: a verified 1923 *Hunchback* print runs 109 of 133 min, and unverified uploads include abridged cuts;
+  - the catalog's own runtime beside the source runtime, and cut labels;
   - human Archive subtitles with no declared source file, and Vidsrc caption cue coverage;
-  - catalog year versus Archive year (*House on Haunted Hill* 1958 vs 1959);
+  - Archive TV episodes;
   - live configured providers (the user confirmed no index exists);
-  - catalog DASH.
+  - catalog DASH;
+  - profile cleanup after a crash or forced exit.
 
-  Keep fast partial results, conflict rejection and bounded/cancelled work across tabs. [Live provider QA](C:/Users/user/animeapp/docs/qa/movie-provider-live-archive-2026-10-23.md). Earlier: configured-provider item-evidence/ID and audio-inheritance repairs (50 related + 6 ID/source checks, isolated responses) [Manifest evidence QA](C:/Users/user/animeapp/docs/qa/manifest-item-evidence-2026-10-09.md); preserved Archive IDs resolve directly (13 cases) [Direct-ID QA](C:/Users/user/animeapp/docs/qa/retained-archive-id-and-resume-dispatch-2026-10-16.md).
+  Keep fast partial results, conflict rejection and bounded/cancelled work across tabs. [Live provider QA](C:/Users/user/animeapp/docs/qa/movie-provider-live-archive-2026-10-23.md), [second pass](C:/Users/user/animeapp/docs/qa/movie-tv-providers-second-pass-2026-11-10.md). Earlier: configured-provider item-evidence/ID and audio-inheritance repairs (50 related + 6 ID/source checks, isolated responses) [Manifest evidence QA](C:/Users/user/animeapp/docs/qa/manifest-item-evidence-2026-10-09.md); preserved Archive IDs resolve directly (13 cases) [Direct-ID QA](C:/Users/user/animeapp/docs/qa/retained-archive-id-and-resume-dispatch-2026-10-16.md).
 - [x] Complete the original finite keyless catalog acceptance matrix: representative film/remake/animation/TV identities, useful partial/punctuation search, credential/Archive-independent routing, namespaces/year/form, retained aliases, paging/failure/cancellation and actual production Load More. Current **4d8bba9** second-monitor **5 → 10** append retains old cards/partial notice; all fifteen rows/settings are unchanged. Provider-resolution/DASH/audio/cut and final release gates remain separate. [Original criteria, retained matrix and current-source proof](C:/Users/user/animeapp/docs/qa/movie-catalog-record-isolation-and-aliases-2026-10-16.md).
 
 ### Books — deferred, G, IP13/IP17
