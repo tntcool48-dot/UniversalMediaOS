@@ -1,7 +1,9 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
@@ -44,9 +46,14 @@ namespace UniversalMediaOS.Core.Services
     /// Invokes the stateless scraper.py CLI as a subprocess.
     /// Parses stdout JSON and routes results through the HLS loopback proxy.
     /// </summary>
-    public sealed class ScraperEngine : IScraperResolver
+    public sealed class ScraperEngine : IScraperResolver, IDisposable
     {
         private readonly PythonBootstrapper _python;
+        // Lookups still running, so closing the app can stop them, and run folders not yet deleted
+        // (a browser that is still exiting can hold its files past the run).
+        private readonly ConcurrentDictionary<Process, string> _running = new();
+        private readonly ConcurrentDictionary<string, byte> _undeletedProfileRoots = new(StringComparer.OrdinalIgnoreCase);
+        private readonly CancellationTokenSource _lifetime = new();
 
         // Total budget across all mirrors — the Python script manages per-mirror 8s timeouts internally
         private const int SearchTimeoutMs = 40_000;
@@ -232,10 +239,11 @@ namespace UniversalMediaOS.Core.Services
 
             AppLogger.Log($"[ScraperEngine] Starting mode={mode}, python='{pythonExe}', scraper='{scraperPath}', args={arguments.Length}");
 
-            // Combine caller token with our hard timeout
+            // Combine caller token with our hard timeout and the app's lifetime
+            _lifetime.Token.ThrowIfCancellationRequested();
             using var timeoutCts = new CancellationTokenSource(Math.Max(5_000, timeoutMs));
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(
-                externalToken, timeoutCts.Token);
+                externalToken, timeoutCts.Token, _lifetime.Token);
 
             var psi = new ProcessStartInfo
             {
@@ -258,86 +266,171 @@ namespace UniversalMediaOS.Core.Services
                 psi.ArgumentList.Add(argument);
             }
 
+            // Each run owns its browser profiles. Cancellation, timeouts and closing the app kill the process
+            // tree before scraper.close_browser runs, so the engine deletes this run's folder itself.
+            string profileRoot = Path.Combine(AppDataPaths.LocalBaseDirectory, "UniversalMediaOS", "BrowserProfiles",
+                "umos_scraper_run_" + Guid.NewGuid().ToString("N"));
+            psi.Environment["UMOS_SCRAPER_PROFILE_ROOT"] = profileRoot;
+
             using var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
             proc.Start();
-
-            // Read stdout and stderr concurrently to prevent deadlock
-            var stdoutTask = proc.StandardOutput.ReadToEndAsync(linked.Token);
-            var stderrLines = new List<string>();
-            var stderrTask = Task.Run(async () =>
-            {
-                while (!linked.Token.IsCancellationRequested)
-                {
-                    string? line = await proc.StandardError.ReadLineAsync();
-                    if (line == null)
-                    {
-                        break;
-                    }
-
-                    string normalized = LogSanitizer.RedactSensitiveUrls(line.Trim());
-                    if (string.IsNullOrWhiteSpace(normalized))
-                    {
-                        continue;
-                    }
-
-                    stderrLines.Add(normalized);
-                    if (progressLog != null)
-                    {
-                        progressLog(normalized);
-                    }
-                    else
-                    {
-                        AppLogger.Log($"[ScraperEngine] {normalized}");
-                    }
-                }
-            }, linked.Token);
-
+            _undeletedProfileRoots[profileRoot] = 0;
+            _running[proc] = profileRoot;
             try
             {
-                await proc.WaitForExitAsync(linked.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(entireProcessTree: true); } catch { }
+
+                // Read stdout and stderr concurrently to prevent deadlock
+                var stdoutTask = proc.StandardOutput.ReadToEndAsync(linked.Token);
+                var stderrLines = new List<string>();
+                var stderrTask = Task.Run(async () =>
+                {
+                    while (!linked.Token.IsCancellationRequested)
+                    {
+                        string? line = await proc.StandardError.ReadLineAsync();
+                        if (line == null)
+                        {
+                            break;
+                        }
+
+                        string normalized = LogSanitizer.RedactSensitiveUrls(line.Trim());
+                        if (string.IsNullOrWhiteSpace(normalized))
+                        {
+                            continue;
+                        }
+
+                        stderrLines.Add(normalized);
+                        if (progressLog != null)
+                        {
+                            progressLog(normalized);
+                        }
+                        else
+                        {
+                            AppLogger.Log($"[ScraperEngine] {normalized}");
+                        }
+                    }
+                }, linked.Token);
+
                 try
                 {
-                    await Task.WhenAll(stdoutTask, stderrTask)
-                        .WaitAsync(TimeSpan.FromSeconds(2));
+                    await proc.WaitForExitAsync(linked.Token);
                 }
-                catch
+                catch (OperationCanceledException)
                 {
-                    // The process has been killed; bounded drain failures are non-fatal.
+                    try { proc.Kill(entireProcessTree: true); } catch { }
+                    try
+                    {
+                        await Task.WhenAll(stdoutTask, stderrTask)
+                            .WaitAsync(TimeSpan.FromSeconds(2));
+                    }
+                    catch
+                    {
+                        // The process has been killed; bounded drain failures are non-fatal.
+                    }
+
+                    if (externalToken.IsCancellationRequested || _lifetime.IsCancellationRequested)
+                    {
+                        AppLogger.Log($"[ScraperEngine] {mode} cancelled by the caller.");
+                        throw new OperationCanceledException(externalToken);
+                    }
+
+                    AppLogger.Log($"[ScraperEngine] {mode} timed out.", "WARNING");
+                    progressLog?.Invoke($"[ScraperEngine] {mode} timed out after {Math.Max(5_000, timeoutMs) / 1000}s; resolution stopped.");
+                    return string.Empty;
                 }
 
-                if (externalToken.IsCancellationRequested)
+                string stdout = await stdoutTask;
+                try
                 {
-                    AppLogger.Log($"[ScraperEngine] {mode} cancelled by the caller.");
-                    throw new OperationCanceledException(externalToken);
+                    await stderrTask;
+                }
+                catch (OperationCanceledException)
+                {
                 }
 
-                AppLogger.Log($"[ScraperEngine] {mode} timed out.", "WARNING");
-                progressLog?.Invoke($"[ScraperEngine] {mode} timed out after {Math.Max(5_000, timeoutMs) / 1000}s; resolution stopped.");
-                return string.Empty;
+                if (stderrLines.Count > 0 && progressLog == null)
+                    AppLogger.Log($"[ScraperEngine] stderr lines={stderrLines.Count}", "INFO");
+
+                AppLogger.Log($"[ScraperEngine] {mode} exit={proc.ExitCode}, stdout length={stdout.Length}");
+                if (proc.ExitCode != 0 && string.IsNullOrWhiteSpace(stdout))
+                {
+                    AppLogger.Log($"[ScraperEngine] {mode} exited with code {proc.ExitCode} and no JSON response.", "WARNING");
+                }
+                return stdout.Trim();
             }
+            finally
+            {
+                _running.TryRemove(proc, out _);
+                if (await RemoveProfileRootAsync(proc, profileRoot)) _undeletedProfileRoots.TryRemove(profileRoot, out _);
+                else _ = RemoveLaterAsync(profileRoot);
+            }
+        }
 
-            string stdout = await stdoutTask;
+        /// <summary>Closing the app stops lookups still running, which would otherwise outlive it with their
+        /// browsers, and removes their profiles. Only this engine's run folders are touched.</summary>
+        public void Dispose()
+        {
+            if (_lifetime.IsCancellationRequested) return;
+            _lifetime.Cancel();
+            foreach (Process proc in _running.Keys.ToArray())
+            {
+                try
+                {
+                    proc.Kill(entireProcessTree: true);
+                    proc.WaitForExit(3000);
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException) { }
+            }
+            foreach (string profileRoot in _undeletedProfileRoots.Keys.ToArray())
+            {
+                for (int attempt = 0; !TryDeleteProfileRoot(profileRoot) && attempt < 10; attempt++)
+                    Thread.Sleep(200);
+            }
+        }
+
+        private static async Task<bool> RemoveProfileRootAsync(Process proc, string profileRoot)
+        {
             try
             {
-                await stderrTask;
+                if (!proc.HasExited) await proc.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
             }
-            catch (OperationCanceledException)
+            catch (Exception ex) when (ex is TimeoutException or InvalidOperationException) { }
+            for (int attempt = 0; !TryDeleteProfileRoot(profileRoot); attempt++)
             {
+                if (attempt >= 10)
+                {
+                    AppLogger.Log("[ScraperEngine] Browser profile still in use; removing it once released.", "WARNING");
+                    return false;
+                }
+                await Task.Delay(200);
             }
+            return true;
+        }
 
-            if (stderrLines.Count > 0 && progressLog == null)
-                AppLogger.Log($"[ScraperEngine] stderr lines={stderrLines.Count}", "INFO");
-
-            AppLogger.Log($"[ScraperEngine] {mode} exit={proc.ExitCode}, stdout length={stdout.Length}");
-            if (proc.ExitCode != 0 && string.IsNullOrWhiteSpace(stdout))
+        // A browser that is still exiting holds its files for a while: keep trying, and again when the app closes.
+        private async Task RemoveLaterAsync(string profileRoot)
+        {
+            for (int attempt = 0; attempt < 30 && !_lifetime.IsCancellationRequested; attempt++)
             {
-                AppLogger.Log($"[ScraperEngine] {mode} exited with code {proc.ExitCode} and no JSON response.", "WARNING");
+                await Task.Delay(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+                if (TryDeleteProfileRoot(profileRoot))
+                {
+                    _undeletedProfileRoots.TryRemove(profileRoot, out _);
+                    return;
+                }
             }
-            return stdout.Trim();
+        }
+
+        private static bool TryDeleteProfileRoot(string profileRoot)
+        {
+            try
+            {
+                if (Directory.Exists(profileRoot)) Directory.Delete(profileRoot, recursive: true);
+                return true;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return false;
+            }
         }
     }
 }
