@@ -54,8 +54,40 @@ Readable routes are unchanged: embed paths (`/embed/tv/tt0903747/1/1`), slugs, A
 
 The real app and the FlaUI tests were not run; no UI changed.
 
+## Second pass on the merged code — November 10, 2026
+
+Branch **codex/app-recovery** at **401155b**, which merges this fix with nine other branches.
+
+**The regressions still pass on the merged code.** The same `run-e2e-tests.ps1 -Filter` over the six classes passed **109 / 109**, and `tools/tests` passed **244 / 244**.
+
+**The new log lines all go through the redactor.** Since this fix, the other branches added 12 log calls: Python preparation state, season-downloader skips and errors, unlabelled release titles, Manga reading progress, the Watch Together handshake, the audiovisual scraper's stderr, browser-profile cleanup, and the local-path line for LibVLC. Each one ends in `AppLogger.Log`, which redacts every line before writing it. `AppLogger` is still the only code that writes `app.log`. The scraper diffs added no stderr lines that carry URLs. None of the new lines writes a provider, stream, caption or download URL, except the audiovisual scraper's stderr, which is redacted on the way in.
+
+**The running app logs no signed values.** The merged Debug build ran in an isolated profile (`UNIVERSAL_MEDIA_OS_DATA_ROOT`) with debug logging on, under the desktop lock. The run went: TV Shows → The Office (2005) → Season 1 → 1. Pilot → Find sources → **Try stream**. The stream played natively through the HLS proxy for 45 s, then the app closed normally (exit 0). Every step used UI Automation patterns; no keyboard or pointer input was sent. The first try at Find sources ran before an episode was chosen, and the app asked for one. The driver now chooses the episode first.
+
+That profile's `app.log` had 54 lines with 15 URLs. A scanner that prints only counts, never values, found:
+
+| Check | Count |
+| --- | --- |
+| Lines the redactor would still change if run again | 0 |
+| URL queries not reduced to `?<redacted>` | 0 |
+| `token=`, `sig=`, `expires=`, `hmac=`, `policy=` and similar parameters | 0 |
+| JWTs (`eyJ…`) | 0 |
+| Percent-encoded URLs | 0 |
+| Hex runs of 32+ characters, or mixed-case base64 runs of 40+ | 0 |
+| Magnet links | 0 |
+
+Redaction markers: 27, made of 13 path segments and 14 queries. The run covered both sides:
+
+- **Python.** Three `Proxy validation OK manifest=… segment=…` lines came from `scraper.py` through the audiovisual scraper's stderr. This is the line that leaked on October 23. They carry 9 redacted path segments and 6 redacted queries.
+- **C#.** `LoadMedia`, `PlayMedia`, the pending-media replay, the selected source, the LibVLC referer option and the HLS proxy's listening address carry the other 4 redacted path segments and 8 redacted queries.
+
+The driver, the scanner and the counts are in `.artifacts/implementation/log-redaction-20261110`; the log itself was not kept. Nothing needed fixing, so this pass changed no code.
+
+This run did not produce caption, caption-menu or download-refusal lines: the source attached no captions, and nothing was downloaded. Those lines go through the same `AppLogger.Log`, and caption-menu lines carry only track labels.
+
 ## Not covered
 
 - A URL that appears without its scheme (`//cdn…`), or percent-encoded outside any URL (`url=https%3A%2F%2F…`), is not matched. No log line in the app writes either.
 - Short opaque IDs that no route keyword introduces, such as a 12-character signature segment, stay visible. They look the same as ordinary short IDs.
 - Older `app.log` files on disk keep whatever they already recorded.
+- The real-app check covered one TV stream. No real app run yet covers caption URLs, the Anime tab's provider waterfall, or season downloads.
