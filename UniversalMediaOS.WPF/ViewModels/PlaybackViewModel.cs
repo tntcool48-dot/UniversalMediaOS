@@ -162,6 +162,7 @@ namespace UniversalMediaOS.WPF.ViewModels
         private readonly List<string> _subtitleProxySessions = [];
         private readonly Dictionary<string, (PlaybackTrackOption Original, int NativeId, PreparedLocalCaption Lease)> _preparedEmbeddedCaptions = [];
         private readonly HashSet<string> _attemptedEmbeddedCaptions = [];
+        private PreparedLocalCaption? _rightToLeftCaptionCopy;
         private CancellationTokenSource? _embeddedCaptionCancellation;
         private string? _pendingEmbeddedCaptionKey;
         private Task _embeddedCaptionPreparation = Task.CompletedTask;
@@ -1154,12 +1155,22 @@ namespace UniversalMediaOS.WPF.ViewModels
             {
                 string location = track.Url;
                 bool localCaption = Uri.TryCreate(track.Url, UriKind.Absolute, out var captionUri) && captionUri.IsFile;
+                bool rightToLeft = CaptionLanguage.IsRightToLeft(CaptionLanguage.FromDeclaration(track.Language) is { Length: > 0 } declared
+                    ? declared : CaptionLanguage.FromDeclaration(track.Label));
+                if (localCaption && rightToLeft)
+                {
+                    // Torrent and other local files are shown from an owned marked copy; the original stays as it is.
+                    _rightToLeftCaptionCopy?.Dispose();
+                    _rightToLeftCaptionCopy = LocalEmbeddedCaptionPreparation.PrepareRightToLeftCopy(
+                        captionUri!.LocalPath, AppDataPaths.LocalBaseDirectory);
+                    if (_rightToLeftCaptionCopy != null) location = new Uri(_rightToLeftCaptionCopy.Path).AbsoluteUri;
+                }
                 if (_hlsProxy != null && !localCaption)
                 {
                     _hlsProxy.Start();
                     string sessionId = _hlsProxy.RegisterSession(new ProxySession(
                         track.Url, track.UserAgent, track.Cookie, null, track.Referer,
-                        DateTime.UtcNow, track.RequestHeaders, track.InlineVtt));
+                        DateTime.UtcNow, track.RequestHeaders, track.InlineVtt, RightToLeftCaption: rightToLeft));
                     _subtitleProxySessions.Add(sessionId);
                     location = _hlsProxy.CreateSubtitleUrl(sessionId, track.Url, track.Label);
                 }
@@ -2543,6 +2554,8 @@ namespace UniversalMediaOS.WPF.ViewModels
             _currentMedia = null;
             foreach (var prepared in _preparedEmbeddedCaptions.Values) prepared.Lease.Dispose();
             _preparedEmbeddedCaptions.Clear();
+            _rightToLeftCaptionCopy?.Dispose();
+            _rightToLeftCaptionCopy = null;
             _attemptedEmbeddedCaptions.Clear();
             foreach (string sessionId in _mediaProxySessions.ToArray())
             {
@@ -2620,7 +2633,12 @@ namespace UniversalMediaOS.WPF.ViewModels
                     {
                         var preferred = _preferredCaptionKey == "off" ? off
                             : PlaybackTrackOption.Remembered(choices, _preferredCaptionKey, _preferredCaptionLanguage);
-                        if (preferred != null && MediaPlayer.SetSpu(preferred.NativeId)) _restoreCaptionSelection = false;
+                        if (preferred != null && MediaPlayer.SetSpu(preferred.NativeId))
+                        {
+                            _restoreCaptionSelection = false;
+                            // A remembered right-to-left track shows from its marked copy, as a chosen one does.
+                            if (CaptionLanguage.IsRightToLeft(preferred.NativeLanguage)) PrepareEmbeddedCaption(preferred);
+                        }
                     }
                     SelectedCaption = _pendingEmbeddedCaptionKey != null
                         ? CaptionOptions.FirstOrDefault(choice => choice.Key == _preferredCaptionKey)

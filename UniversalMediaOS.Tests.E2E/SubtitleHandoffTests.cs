@@ -495,6 +495,65 @@ public sealed class SubtitleHandoffTests
     public void CaptionProxyRejectsDecoysAndAcceptsRealTimedText(string body, bool expected) =>
         Assert.Equal(expected, HlsLoopbackProxy.IsSubtitlePayload(System.Text.Encoding.UTF8.GetBytes(body)));
 
+    private const string RightToLeftMark = "‏";
+
+    [Fact]
+    public async Task StreamedRightToLeftCaptionsKeepTheirPunctuationOnTheirSide()
+    {
+        // LibVLC lays caption lines out left to right; an unmarked Arabic line shows its period at the right end.
+        using var profile = new CaptionTestDataScope();
+        using var proxy = new HlsLoopbackProxy();
+        using var player = new PlaybackViewModel(new DatabaseContext(), null, null, null, proxy);
+        player.SetTabActive(false);
+        const string arabic = "WEBVTT\n\n00:01:47.250 --> 00:01:50.500\nهذا النصل له ماض مظلم.\n";
+        const string english = "WEBVTT\n\n00:01:47.250 --> 00:01:50.500\nThis blade has a dark past.\n";
+        player.LoadMedia("https://video.example/film.mp4", "Fixture", subtitles: [
+            new MediaSubtitleTrack("https://captions.example/ar.vtt", "Arabic", "ar") { InlineVtt = arabic }]);
+        using var http = new HttpClient();
+        Assert.Equal("WEBVTT\n\n00:01:47.250 --> 00:01:50.500\n" + RightToLeftMark + "هذا النصل له ماض مظلم." + RightToLeftMark + "\n",
+            await http.GetStringAsync(Assert.Single(CurrentMedia(player).Slaves).Uri));
+        player.LoadMedia("https://video.example/film-2.mp4", "Fixture", subtitles: [
+            new MediaSubtitleTrack("https://captions.example/en.vtt", "English", "en") { InlineVtt = english }]);
+        Assert.Equal(english, await http.GetStringAsync(Assert.Single(CurrentMedia(player).Slaves).Uri));
+    }
+
+    [Fact]
+    public void LocalRightToLeftCaptionFilesShowFromAMarkedCopyAndKeepTheOriginal()
+    {
+        // Torrent releases ship captions such as "episode-0001.ar.srt" beside the video; the app does not save them itself.
+        using var profile = new CaptionTestDataScope();
+        string directory = Path.Combine(Path.GetTempPath(), "UniversalMediaOS.Tests", "RtlSidecar-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            string video = Path.Combine(directory, "episode-0001.mkv");
+            string arabic = Path.Combine(directory, "episode-0001.ar.srt"), english = Path.Combine(directory, "episode-0001.en.srt");
+            string legacy = Path.Combine(directory, "episode-0001.ara.srt");
+            File.WriteAllBytes(video, []);
+            const string cue = "1\r\n00:01:47,250 --> 00:01:50,500\r\n";
+            File.WriteAllText(arabic, cue + "هذا النصل له ماض مظلم.\r\n");
+            File.WriteAllText(english, cue + "This blade has a dark past.\r\n");
+            // Windows-1256 is common for Arabic SubRip; such a file must reach the player unchanged.
+            byte[] codePage = [.. System.Text.Encoding.ASCII.GetBytes(cue), 0xE5, 0xD0, 0xC7, 0x2E, 0x0D, 0x0A];
+            File.WriteAllBytes(legacy, codePage);
+            using var player = new PlaybackViewModel(new DatabaseContext());
+            player.SetTabActive(false);
+            player.LoadMedia(video, "Episode", localCaptionPaths: [english, arabic, legacy]);
+            player.SelectedCaption = player.CaptionOptions.First(option => option.Subtitle?.Url == new Uri(arabic).AbsoluteUri);
+            string shown = new Uri(Assert.Single(CurrentMedia(player).Slaves).Uri).LocalPath;
+            Assert.NotEqual(arabic, shown, StringComparer.OrdinalIgnoreCase);
+            Assert.Equal(cue + RightToLeftMark + "هذا النصل له ماض مظلم." + RightToLeftMark + "\r\n", File.ReadAllText(shown));
+            Assert.Equal(cue + "هذا النصل له ماض مظلم.\r\n", File.ReadAllText(arabic));
+            player.SelectedCaption = player.CaptionOptions.First(option => option.Subtitle?.Url == new Uri(legacy).AbsoluteUri);
+            Assert.Equal(legacy, new Uri(Assert.Single(CurrentMedia(player).Slaves).Uri).LocalPath, StringComparer.OrdinalIgnoreCase);
+            Assert.False(File.Exists(shown), "The marked copy belongs to its input and goes with it.");
+            player.SelectedCaption = player.CaptionOptions.First(option => option.Subtitle?.Url == new Uri(english).AbsoluteUri);
+            Assert.Equal(english, new Uri(Assert.Single(CurrentMedia(player).Slaves).Uri).LocalPath, StringComparer.OrdinalIgnoreCase);
+            Assert.Equal(codePage, File.ReadAllBytes(legacy));
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
     private static Media CurrentMedia(PlaybackViewModel player) =>
         (Media)typeof(PlaybackViewModel).GetField("_currentMedia", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(player)!;
 

@@ -28,7 +28,8 @@ namespace UniversalMediaOS.Core.Streaming
         string? Referer,
         DateTime CreatedAt,
         IReadOnlyDictionary<string, string>? RequestHeaders = null,
-        string SubtitleContent = "");
+        string SubtitleContent = "",
+        bool RightToLeftCaption = false);
 
     /// <summary>
     /// Lightweight self-contained HTTP proxy running on a dynamically selected
@@ -556,6 +557,7 @@ namespace UniversalMediaOS.Core.Streaming
             if (session.SubtitleContent.Length > 0)
             {
                 byte[] loaded = Encoding.UTF8.GetBytes(session.SubtitleContent);
+                if (session.RightToLeftCaption) loaded = CaptionLanguage.MarkRightToLeftCaption(loaded) ?? loaded;
                 resp.StatusCode = 200;
                 resp.ContentType = "text/vtt; charset=utf-8";
                 resp.ContentLength64 = loaded.Length;
@@ -576,6 +578,7 @@ namespace UniversalMediaOS.Core.Streaming
                 await WriteError(resp, 502, "The caption response was not a supported timed-text file.");
                 return;
             }
+            if (session.RightToLeftCaption) bytes = CaptionLanguage.MarkRightToLeftCaption(bytes) ?? bytes;
             resp.StatusCode = 200;
             resp.ContentType = "text/plain";
             resp.ContentLength64 = bytes.Length;

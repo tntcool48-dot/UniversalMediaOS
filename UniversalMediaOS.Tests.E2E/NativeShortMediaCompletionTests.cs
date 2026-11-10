@@ -976,6 +976,72 @@ public sealed class NativeShortMediaCompletionTests(ITestOutputHelper output)
         });
 
     [Fact]
+    public Task EmbeddedRightToLeftCaptionsShowFromAMarkedCopyAlsoWhenRemembered()
+        => OnDispatcher(async () =>
+        {
+            string? previous = Environment.GetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable);
+            string root = Path.Combine(Path.GetTempPath(), "UniversalMediaOS.Tests", "EmbeddedRtl-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, root);
+            string? connectionString = null;
+            try
+            {
+                string video = Path.Combine(root, "episode.mkv"), arabic = Path.Combine(root, "arabic.srt");
+                File.WriteAllText(arabic, "1\n00:00:00,000 --> 00:00:08,000\nهذا النصل له ماض مظلم.\n");
+                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                var encoded = await new PreparationProcessRunner().RunAsync("ffmpeg", ["-nostdin", "-hide_banner", "-v", "error",
+                    "-f", "lavfi", "-i", "color=c=black:size=160x90:rate=24", "-i", arabic,
+                    "-map", "0:v", "-map", "1:s", "-t", "10", "-c:v", "libx264", "-c:s", "srt",
+                    "-metadata:s:s:0", "language=ara", "-y", video], deadline.Token);
+                Assert.Equal(0, encoded.ExitCode);
+                File.Delete(arabic);
+                using (var seed = new DatabaseContext())
+                {
+                    seed.Database.EnsureCreated();
+                    connectionString = seed.Database.GetConnectionString();
+                }
+                string captions = Path.Combine(root, "Local", "UniversalMediaOS", "NativeCaptions");
+                string Marked() => Directory.Exists(captions)
+                    ? string.Join("|", Directory.GetFiles(captions, "*", SearchOption.AllDirectories).Select(File.ReadAllText)) : "";
+                using var memory = new MemoryVideo();
+                using var player = new PlaybackViewModel(new DatabaseContext());
+                memory.Attach(player.MediaPlayer);
+                player.Volume = 0;
+                player.LoadMedia(video, "Embedded Arabic fixture");
+                player.PlayPending();
+                await Wait(() => player.IsPlaying && player.CaptionOptions.Count == 2, player);
+                var original = player.CaptionOptions.Single(option => option.Label == "Arabic");
+                player.SelectedCaption = original;
+                await player.EmbeddedCaptionPreparation;
+                await Wait(() => player.SelectedCaption?.NativeId is int id && id != original.NativeId, player);
+                Assert.Contains("‏هذا النصل له ماض مظلم.‏", Marked(), StringComparison.Ordinal);
+
+                // The next input restores the remembered Arabic choice without another selection.
+                player.LoadMedia(video, "Embedded Arabic fixture");
+                player.PlayPending();
+                await Wait(() => player.IsPlaying && player.SelectedCaption?.Label == "Arabic", player);
+                await player.EmbeddedCaptionPreparation;
+                await Wait(() => Marked().Contains("‏", StringComparison.Ordinal) &&
+                    player.SelectedCaption?.NativeId is int id && id != original.NativeId, player,
+                    () => $"caption={player.SelectedCaption?.Label}#{player.SelectedCaption?.NativeId}; files={Marked().Length}");
+                player.Dispose();
+                await player.EmbeddedCaptionPreparation;
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, previous);
+                if (connectionString != null)
+                {
+                    using var connection = new Microsoft.Data.Sqlite.SqliteConnection(connectionString);
+                    Microsoft.Data.Sqlite.SqliteConnection.ClearPool(connection);
+                }
+                Assert.StartsWith(Path.GetFullPath(Path.Combine(Path.GetTempPath(), "UniversalMediaOS.Tests")) + Path.DirectorySeparatorChar,
+                    Path.GetFullPath(root), StringComparison.OrdinalIgnoreCase);
+                if (Directory.Exists(root)) Directory.Delete(root, true);
+            }
+        });
+
+    [Fact]
     public Task SavedCaptionChoiceShowsInsteadOfAnEmbeddedTrack()
         => OnDispatcher(async () =>
         {

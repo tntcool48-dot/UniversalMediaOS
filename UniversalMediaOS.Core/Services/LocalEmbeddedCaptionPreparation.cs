@@ -45,6 +45,35 @@ public sealed class LocalEmbeddedCaptionPreparation
                 return null;
             }
             deadline.Token.ThrowIfCancellationRequested();
+            if (CaptionLanguage.IsRightToLeft(NormalizeLanguage(language)) &&
+                CaptionLanguage.MarkRightToLeftCaption(await File.ReadAllBytesAsync(result.Path, deadline.Token)
+                    .ConfigureAwait(false)) is { } marked)
+                await File.WriteAllBytesAsync(result.Path, marked, deadline.Token).ConfigureAwait(false);
+            return result;
+        }
+        catch
+        {
+            result.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>An owned copy of a local right-to-left caption file (for example a torrent's "episode.ar.srt")
+    /// with marks that keep its edge punctuation on the reader's side. Null when the file needs none or
+    /// cannot take them (ASS, not UTF-8, empty or too large); the original file is never changed.</summary>
+    public static PreparedLocalCaption? PrepareRightToLeftCopy(string captionPath, string localBaseDirectory)
+    {
+        var file = new FileInfo(captionPath);
+        if (!file.Exists || file.Length is <= 0 or >= 8388608) return null;
+        byte[]? marked = CaptionLanguage.MarkRightToLeftCaption(File.ReadAllBytes(captionPath));
+        if (marked == null) return null;
+        string root = Path.GetFullPath(Path.Combine(localBaseDirectory, "UniversalMediaOS", "NativeCaptions"));
+        string directory = Path.Combine(root, Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var result = new PreparedLocalCaption(root, directory, Path.Combine(directory, "caption" + file.Extension.ToLowerInvariant()));
+        try
+        {
+            File.WriteAllBytes(result.Path, marked);
             return result;
         }
         catch
