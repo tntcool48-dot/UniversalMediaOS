@@ -411,6 +411,33 @@ public sealed class NativePlayerKeyboardTests(ITestOutputHelper output)
             $"Right did not seek.\n{string.Join("\n", trail)}");
     }
 
+    [Fact]
+    public void ANewPlayerTabStartsAtTheVolumeLastChosen()
+    {
+        using var fixture = new AppFixture();
+        IntPtr ownedHandle = new(fixture.MainWindow.Properties.NativeWindowHandle.Value);
+        Window Window() => fixture.Automation.FromHandle(ownedHandle).AsWindow();
+        int Tabs() => Window().FindAllDescendants(cf => cf.ByAutomationId("SelectTab")).Length;
+        // Only the active player's controls are shown; others are hidden with their tabs.
+        FlaUI.Core.Patterns.IRangeValuePattern Volume() =>
+            Window().FindFirstDescendant(cf => cf.ByName("Playback volume"))!.Patterns.RangeValue.Pattern;
+        double OpenPlayer()
+        {
+            int before = Tabs();
+            Window().FindFirstDescendant(cf => cf.ByName("Player"))!.AsButton().Invoke();
+            Assert.True(SpinWait.SpinUntil(() => Tabs() == before + 1 &&
+                Window().FindFirstDescendant(cf => cf.ByName("Playback volume")) != null, TimeSpan.FromSeconds(8)));
+            Thread.Sleep(500);
+            return Volume().Value.Value;
+        }
+
+        Assert.Equal(100, OpenPlayer());
+        Volume().SetValue(0);
+        Assert.Equal(0, OpenPlayer());
+        Volume().SetValue(35);
+        Assert.Equal(35, OpenPlayer());
+    }
+
     private static string ReadLog(string path)
     {
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);

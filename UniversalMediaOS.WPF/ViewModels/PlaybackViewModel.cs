@@ -294,8 +294,12 @@ namespace UniversalMediaOS.WPF.ViewModels
         [ObservableProperty]
         private string _playPauseText = "Play";
 
+        // A new player starts at the volume last chosen in any player this
+        // session, so muting one tab does not leave the next playing aloud.
+        private static int s_lastChosenVolume = 100;
+
         [ObservableProperty]
-        private int _volume = 100;
+        private int _volume = s_lastChosenVolume;
 
         [ObservableProperty]
         private double _playbackRate = 1.0;
@@ -647,6 +651,7 @@ namespace UniversalMediaOS.WPF.ViewModels
         partial void OnVolumeChanged(int value)
         {
             int normalized = Math.Clamp(value, 0, 100);
+            s_lastChosenVolume = normalized;
             if (MediaPlayer != null)
             {
                 MediaPlayer.Volume = normalized;
