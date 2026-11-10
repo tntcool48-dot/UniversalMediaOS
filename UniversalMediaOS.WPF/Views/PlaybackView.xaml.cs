@@ -955,6 +955,9 @@ namespace UniversalMediaOS.WPF.Views
             bool seekBarArrow = ReferenceEquals(focused, PlaybackSlider) && e.Key is Key.Left or Key.Right;
             if (!seekBarArrow && (focused is TextBox or ComboBox or Slider ||
                 (focused is System.Windows.Controls.Primitives.ButtonBase && e.Key is Key.Space or Key.Enter))) return;
+            // Player shortcuts are unmodified keys. Ctrl+Shift+Left/Right move
+            // tabs; when a tab cannot move further it must not seek instead.
+            if (Keyboard.Modifiers != ModifierKeys.None) return;
 
             if (vm.IsPersistenceWaiting && e.Key is Key.Space or Key.K or Key.Left or Key.Right or Key.M or Key.F or Key.P)
             {

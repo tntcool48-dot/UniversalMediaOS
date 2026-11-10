@@ -131,7 +131,7 @@ public sealed class NativePlayerDisplayTests(ITestOutputHelper output)
         Named("Toggle fullscreen")!.AsButton().Invoke();
         Settle();
         Check("fullscreen", start.Bounds);
-        Window().SetForeground();
+        ForegroundGuard.Require(Window(), fixture.App.ProcessId);
         FlaUI.Core.Input.Keyboard.Type(FlaUI.Core.WindowsAPI.VirtualKeyShort.ESCAPE);
         Settle();
         Check("after fullscreen", WindowedVideo());
@@ -139,7 +139,7 @@ public sealed class NativePlayerDisplayTests(ITestOutputHelper output)
         Named("Toggle picture in picture")!.AsButton().Invoke();
         Settle();
         Check("picture in picture", WindowedVideo());
-        Window().SetForeground();
+        ForegroundGuard.Require(Window(), fixture.App.ProcessId);
         FlaUI.Core.Input.Keyboard.Type(FlaUI.Core.WindowsAPI.VirtualKeyShort.ESCAPE);
         Settle();
         Check("after picture in picture", WindowedVideo());

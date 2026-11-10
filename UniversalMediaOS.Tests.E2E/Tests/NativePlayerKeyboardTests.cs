@@ -84,6 +84,7 @@ public sealed class NativePlayerKeyboardTests(ITestOutputHelper output)
         var trail = new List<string>();
         void Press(VirtualKeyShort key, VirtualKeyShort? modifier = null)
         {
+            ForegroundGuard.Require(Window(), fixture.App.ProcessId);
             if (modifier is { } held && key is VirtualKeyShort.DOWN or VirtualKeyShort.UP)
             {
                 // A physical arrow key is extended. FlaUI sends a bare virtual key,
@@ -121,8 +122,8 @@ public sealed class NativePlayerKeyboardTests(ITestOutputHelper output)
         Named("Play or pause")!.AsButton().Invoke();
         Assert.True(SpinWait.SpinUntil(IsPaused, TimeSpan.FromSeconds(3)));
         Named("Playback options")!.Patterns.ExpandCollapse.Pattern.Collapse();
-        string playerTab = Window().FindAllDescendants(cf => cf.ByAutomationId("SelectTab"))
-            .Single(tab => tab.Name.Contains("keyboard", StringComparison.OrdinalIgnoreCase) || tab.Name == "Playback").Name;
+        // The player opened last; its title follows the opened media.
+        string playerTab = Window().FindAllDescendants(cf => cf.ByAutomationId("SelectTab")).Last().Name;
 
         // 1. From the selected player tab, Tab reaches the native controls.
         Window().SetForeground();
@@ -326,10 +327,114 @@ public sealed class NativePlayerKeyboardTests(ITestOutputHelper output)
         Assert.Equal("shown", Shown());
     }
 
+    [Fact]
+    public async Task ModifiedArrowKeysNeverSeekThePlayer()
+    {
+        using var fixture = new AppFixture();
+        string video = Path.Combine(fixture.SandboxPath, "modified-arrows.mkv");
+        using (var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
+        {
+            var encoded = await new PreparationProcessRunner().RunAsync("ffmpeg", [
+                "-nostdin", "-hide_banner", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=160x90:rate=25",
+                "-t", "180", "-c:v", "mpeg4", "-y", video
+            ], deadline.Token);
+            Assert.Equal(0, encoded.ExitCode);
+        }
+        IntPtr ownedHandle = new(fixture.MainWindow.Properties.NativeWindowHandle.Value);
+        Window Window() => fixture.Automation.FromHandle(ownedHandle).AsWindow();
+        AutomationElement? Named(string name) => Window().FindFirstDescendant(cf => cf.ByName(name));
+        double Position() => Window().FindFirstDescendant(cf => cf.ByAutomationId("PlaybackSlider"))!
+            .Patterns.RangeValue.Pattern.Value.Value;
+        bool IsPaused() => Named("Play or pause")?.FindFirstDescendant(cf => cf.ByText("Play")) != null;
+        string[] TabOrder() => Window().FindAllDescendants(cf => cf.ByAutomationId("SelectTab")).Select(tab => tab.Name).ToArray();
+        var trail = new List<string>();
+        void Arrow(bool right, params VirtualKeyShort[] modifiers)
+        {
+            // Physical arrow keys are extended scan codes; a bare virtual key
+            // becomes a keypad key under Shift or Alt.
+            ushort scan = right ? (ushort)0x4D : (ushort)0x4B;
+            ForegroundGuard.Require(Window(), fixture.App.ProcessId);
+            foreach (var modifier in modifiers) Keyboard.Press(modifier);
+            Keyboard.PressScanCode(scan, true);
+            Keyboard.ReleaseScanCode(scan, true);
+            foreach (var modifier in modifiers.Reverse()) Keyboard.Release(modifier);
+            Thread.Sleep(800);
+            trail.Add($"{string.Join("+", modifiers)}+{(right ? "Right" : "Left")} -> position {Position():0}, tabs {string.Join("/", TabOrder())}");
+        }
+        void AssertStill(double pausedAt, string what) => Assert.True(Math.Abs(Position() - pausedAt) < 500 && IsPaused(),
+            $"{what} moved the paused video from {pausedAt:0}.\n{string.Join("\n", trail)}");
+
+        Named("Player")!.AsButton().Invoke();
+        Assert.True(SpinWait.SpinUntil(() => Named("Play or pause") != null, TimeSpan.FromSeconds(3)));
+        Named("Playback options")!.Patterns.ExpandCollapse.Pattern.Expand();
+        Named("Playback volume")!.Patterns.RangeValue.Pattern.SetValue(0);
+        Named("Media URL or local file path")!.AsTextBox().Text = video;
+        Named("Open media URL or path")!.AsButton().Invoke();
+        Assert.True(SpinWait.SpinUntil(() => Position() >= 1500, TimeSpan.FromSeconds(10)));
+        Named("Play or pause")!.AsButton().Invoke();
+        Assert.True(SpinWait.SpinUntil(IsPaused, TimeSpan.FromSeconds(5)));
+        Named("Playback options")!.Patterns.ExpandCollapse.Pattern.Collapse();
+        // Start mid-clip, so a stray seek either way is visible.
+        Window().FindFirstDescendant(cf => cf.ByAutomationId("PlaybackSlider"))!.Patterns.RangeValue.Pattern.SetValue(60_000);
+        Assert.True(SpinWait.SpinUntil(() => Math.Abs(Position() - 60_000) < 1500, TimeSpan.FromSeconds(3)));
+        Thread.Sleep(500);
+        double pausedAt = Position();
+        string playerTab = TabOrder().Last();
+
+        // 1. The player tab is last: Ctrl+Shift+Right cannot move it and must not seek.
+        Window().SetForeground();
+        Window().FindAllDescendants(cf => cf.ByAutomationId("SelectTab")).Single(tab => tab.Name == playerTab).Focus();
+        Thread.Sleep(300);
+        Arrow(true, VirtualKeyShort.CONTROL, VirtualKeyShort.SHIFT);
+        Assert.Equal(playerTab, TabOrder().Last());
+        AssertStill(pausedAt, "Ctrl+Shift+Right at the last tab");
+        // 2. Moving it left works; at the first position Ctrl+Shift+Left must not seek.
+        for (int moves = TabOrder().Length - 1; moves > 0; moves--) Arrow(false, VirtualKeyShort.CONTROL, VirtualKeyShort.SHIFT);
+        Assert.Equal(playerTab, TabOrder().First());
+        AssertStill(pausedAt, "Moving the tab left");
+        Arrow(false, VirtualKeyShort.CONTROL, VirtualKeyShort.SHIFT);
+        Assert.Equal(playerTab, TabOrder().First());
+        AssertStill(pausedAt, "Ctrl+Shift+Left at the first tab");
+
+        // 3. Inside the native controls, modified arrows do not seek either.
+        Named("Play or pause")!.Focus();
+        Thread.Sleep(300);
+        Arrow(true, VirtualKeyShort.CONTROL);
+        Arrow(false, VirtualKeyShort.SHIFT);
+        Arrow(true, VirtualKeyShort.CONTROL, VirtualKeyShort.SHIFT);
+        AssertStill(pausedAt, "Modified arrows in the native controls");
+        // 4. A plain arrow still seeks.
+        Arrow(true);
+        Assert.True(SpinWait.SpinUntil(() => Position() >= pausedAt + 25_000, TimeSpan.FromSeconds(3)),
+            $"Right did not seek.\n{string.Join("\n", trail)}");
+    }
+
     private static string ReadLog(string path)
     {
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         using var reader = new StreamReader(stream);
         return reader.ReadToEnd();
     }
+}
+
+// Physical keys go to whatever window has the foreground. On a shared desktop
+// that can be someone else's window, so send nothing unless the app has it.
+internal static class ForegroundGuard
+{
+    public static void Require(Window window, int processId)
+    {
+        if (OwnsForeground(processId)) return;
+        window.SetForeground();
+        if (!SpinWait.SpinUntil(() => OwnsForeground(processId), TimeSpan.FromSeconds(2)))
+            Assert.Fail("Another process has the foreground window; no keys were sent to it.");
+    }
+
+    private static bool OwnsForeground(int processId)
+    {
+        GetWindowThreadProcessId(GetForegroundWindow(), out uint owner);
+        return owner == processId;
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
 }
