@@ -333,8 +333,9 @@ namespace UniversalMediaOS.WPF.ViewModels
                     {
                         if (File.Exists(item.FullPath))
                         {
-                            File.Delete(item.FullPath);
-                            AppLogger.Log($"Successfully deleted file: '{item.FullPath}'");
+                            // The media, its captions and its saved record; never another item's files.
+                            foreach (string path in AuthorizedMediaDownloadService.DeleteDownloadedItem(item.FullPath))
+                                AppLogger.Log($"Successfully deleted file: '{path}'");
                         }
                         else
                         {
