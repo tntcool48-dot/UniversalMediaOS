@@ -73,6 +73,9 @@ public sealed record AudiovisualIdentity
 
     public int? Year { get; init; }
 
+    // Every release year the catalog entity itself records (premiere, other countries); Year is the earliest.
+    public IReadOnlyList<int> ReleaseYears { get; init; } = Array.Empty<int>();
+
     public int? TmdbId { get; init; }
 
     public string ImdbId { get; init; } = string.Empty;

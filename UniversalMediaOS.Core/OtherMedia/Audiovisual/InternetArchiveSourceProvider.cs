@@ -154,9 +154,12 @@ public sealed class InternetArchiveSourceProvider : IAudiovisualSourceProvider
     {
         string escapedTitle = identity.Title.Replace("\"", "\\\"", StringComparison.Ordinal);
         string query = $"title:\"{escapedTitle}\" AND mediatype:movies";
-        if (identity.Year.HasValue)
+        int[] years = (identity.Year.HasValue ? new[] { identity.Year.Value } : Array.Empty<int>())
+            .Concat(identity.ReleaseYears ?? Array.Empty<int>()).Distinct().Order().ToArray();
+        if (years.Length > 0)
         {
-            query += $" AND year:{identity.Year.Value.ToString(CultureInfo.InvariantCulture)}";
+            query += " AND (" + string.Join(" OR ", years.Select(year =>
+                "year:" + year.ToString(CultureInfo.InvariantCulture))) + ")";
         }
 
         var queryParts = new List<string>

@@ -31,7 +31,7 @@ public static class ExactAudiovisualMatcher
         if (wanted.ContentForm == AudiovisualContentForm.Unknown || actual.ContentForm == AudiovisualContentForm.Unknown)
             return Unknown("content_form_missing");
         if (wanted.ContentForm != actual.ContentForm) return Reject("content_form_conflict");
-        if (wanted.Year.HasValue && actual.Year.HasValue && wanted.Year != actual.Year) return Reject("year_conflict");
+        if (wanted.Year.HasValue && actual.Year.HasValue && !IsRecordedYear(wanted, actual.Year.Value)) return Reject("year_conflict");
         bool sameId = wantedIds.Intersect(actualIds).Any();
         if (!sameId)
         {
@@ -101,12 +101,12 @@ public static class ExactAudiovisualMatcher
 
             return !requested.Year.HasValue ||
                    !candidate.Year.HasValue ||
-                   requested.Year.Value == candidate.Year.Value;
+                   IsRecordedYear(requested, candidate.Year.Value);
         }
 
         if (!requested.Year.HasValue ||
             !candidate.Year.HasValue ||
-            requested.Year.Value != candidate.Year.Value)
+            !IsRecordedYear(requested, candidate.Year.Value))
         {
             return false;
         }
@@ -115,6 +115,11 @@ public static class ExactAudiovisualMatcher
         HashSet<string> candidateTitles = GetNormalizedTitles(candidate);
         return requestedTitles.Count > 0 && requestedTitles.Overlaps(candidateTitles);
     }
+
+    /// <summary>Whether a candidate's year is one the requested catalog entity itself records: its shown year or
+    /// another of its recorded releases. Nothing is inferred from nearby years.</summary>
+    public static bool IsRecordedYear(AudiovisualIdentity requested, int year) =>
+        requested.Year == year || (requested.ReleaseYears ?? Array.Empty<int>()).Contains(year);
 
     public static bool IsUnitMatch(
         AudiovisualMediaKind kind,
