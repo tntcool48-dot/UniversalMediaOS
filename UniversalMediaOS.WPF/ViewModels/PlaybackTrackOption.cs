@@ -33,6 +33,22 @@ public sealed record PlaybackTrackOption(string Key, string Label, int NativeId 
             offered.FirstOrDefault(option => option.Subtitle!.IsDefault) ?? offered.FirstOrDefault();
     }
 
+    // Two tracks of one language can carry the same label. Number only those, in menu order, so they can
+    // be told apart without claiming how they differ; keys (and remembered choices) are unchanged.
+    internal static IReadOnlyList<PlaybackTrackOption> WithDistinctLabels(IReadOnlyList<PlaybackTrackOption> choices)
+    {
+        var totals = choices.GroupBy(choice => choice.Label, StringComparer.CurrentCultureIgnoreCase)
+            .Where(group => group.Count() > 1).ToDictionary(group => group.Key, group => group.Count(), StringComparer.CurrentCultureIgnoreCase);
+        if (totals.Count == 0) return choices;
+        var seen = new Dictionary<string, int>(StringComparer.CurrentCultureIgnoreCase);
+        return choices.Select(choice =>
+        {
+            if (!totals.TryGetValue(choice.Label, out int total)) return choice;
+            int position = seen[choice.Label] = seen.GetValueOrDefault(choice.Label) + 1;
+            return choice with { Label = $"{choice.Label} · {position} of {total}" };
+        }).ToArray();
+    }
+
     internal static IReadOnlyList<PlaybackTrackOption> ExternalCaptions(IReadOnlyList<MediaSubtitleTrack> tracks)
     {
         var keys = tracks.Select(track => $"external:{LanguageCode(track.Language)}|{track.Label.Trim().ToLowerInvariant()}").ToArray();

@@ -326,7 +326,7 @@ public sealed class SubtitleHandoffTests
             player.LoadMedia(first, "Episode 1", localCaptionPaths: captions);
             Assert.Equal(["CC Off", "English (downloaded)", "French (downloaded)", "Spanish (downloaded)",
                 "Portuguese (Brazil) (downloaded)", "Arabic (downloaded)", "German (downloaded)",
-                "Downloaded subtitles", "Downloaded subtitles"], player.CaptionOptions.Select(option => option.Label).ToArray());
+                "Downloaded subtitles · 1 of 2", "Downloaded subtitles · 2 of 2"], player.CaptionOptions.Select(option => option.Label).ToArray());
             player.SelectedCaption = player.CaptionOptions.Single(option => option.Label == "French (downloaded)");
             Assert.EndsWith("caption-02.fr.vtt", Assert.Single(CurrentMedia(player).Slaves).Uri);
 
@@ -552,6 +552,52 @@ public sealed class SubtitleHandoffTests
             Assert.Equal(codePage, File.ReadAllBytes(legacy));
         }
         finally { Directory.Delete(directory, true); }
+    }
+
+    [Fact]
+    public void CaptionsWithTheSameLabelAreNumberedSoTheyCanBeToldApart()
+    {
+        using var profile = new CaptionTestDataScope();
+        string directory = Path.Combine(Path.GetTempPath(), "UniversalMediaOS.Tests", "SameLabel-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            string video = Path.Combine(directory, "film.mkv");
+            File.WriteAllBytes(video, []);
+            string Write(string name, string text)
+            {
+                string path = Path.Combine(directory, name);
+                File.WriteAllText(path, "1\n00:00:00,000 --> 00:00:10,000\n" + text + "\n");
+                return path;
+            }
+            string first = Write("caption-01.fr.srt", "Premier"), english = Write("caption-02.en.srt", "English");
+            string second = Write("caption-03.fr.srt", "Second");
+            using var player = new PlaybackViewModel(new DatabaseContext());
+            player.SetTabActive(false);
+            player.LoadMedia(video, "Film", localCaptionPaths: [first, english, second]);
+            Assert.Equal(["CC Off", "French (downloaded) · 1 of 2", "English (downloaded)", "French (downloaded) · 2 of 2"],
+                player.CaptionOptions.Select(option => option.Label).ToArray());
+            player.SelectedCaption = player.CaptionOptions.Single(option => option.Label == "French (downloaded) · 2 of 2");
+            Assert.Equal(second, new Uri(Assert.Single(CurrentMedia(player).Slaves).Uri).LocalPath, StringComparer.OrdinalIgnoreCase);
+            Assert.Equal("French (downloaded) · 2 of 2", player.SelectedCaption!.Label);
+
+            player.LoadMedia("https://video.example/film.mp4", "Film", subtitles: [
+                new("https://captions.example/a.vtt", "English", "en"), new("https://captions.example/b.vtt", "English", "en")]);
+            Assert.Equal(["CC Off", "English · 1 of 2", "English · 2 of 2"], player.CaptionOptions.Select(option => option.Label).ToArray());
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
+    [Fact]
+    public void EmbeddedTracksWithTheSameLanguageAreNumberedOnlyWhereTheirLabelsMatch()
+    {
+        var labels = PlaybackTrackOption.WithDistinctLabels([
+            PlaybackTrackOption.Native(2, "Track 1", "eng", "", "Subtitle"),
+            PlaybackTrackOption.Native(3, "Track 2", "eng", "", "Subtitle"),
+            PlaybackTrackOption.Native(4, "Track 3", "eng", "SDH", "Subtitle"),
+            PlaybackTrackOption.Native(5, "Track 4", "ara", "", "Subtitle")]);
+        Assert.Equal(["English · 1 of 2", "English · 2 of 2", "English · SDH", "Arabic"], labels.Select(option => option.Label).ToArray());
+        Assert.Equal("ar", labels[3].NativeLanguage);
     }
 
     private static Media CurrentMedia(PlaybackViewModel player) =>

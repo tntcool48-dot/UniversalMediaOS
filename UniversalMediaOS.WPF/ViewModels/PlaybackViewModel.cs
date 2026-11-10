@@ -2617,8 +2617,8 @@ namespace UniversalMediaOS.WPF.ViewModels
                 }
                 // Provider captions are selected by their actual URL; native captions use
                 // decoded stream IDs only when no provider files were supplied.
-                var choices = _currentMedia == null ? [] : _lastMediaSubtitles.Count > 0
-                    ? PlaybackTrackOption.ExternalCaptions(_lastMediaSubtitles) : NativeTrackOptions(TrackType.Text);
+                var choices = PlaybackTrackOption.WithDistinctLabels(_currentMedia == null ? [] : _lastMediaSubtitles.Count > 0
+                    ? PlaybackTrackOption.ExternalCaptions(_lastMediaSubtitles) : NativeTrackOptions(TrackType.Text));
                 var off = new PlaybackTrackOption("off", Helpers.LocalizationRuntime.Translate("CC Off"));
                 UpdateTrackOptions(CaptionOptions, new[] { off }.Concat(choices).ToArray());
                 CaptionsAvailable = choices.Count > 0;
