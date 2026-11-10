@@ -94,7 +94,7 @@ The 517 MB of media, the profile and the browser profiles were deleted after thi
 ## Limits and follow-ups
 
 - **What remains open in this item:**
-  - Spoken audio stays unknown for both qualified seasons (Breaking Bad S1, The Office S1), and so does specified-audio season acceptance.
+  - Spoken audio stays unknown for both qualified seasons (Breaking Bad S1, The Office S1), and so does specified-audio season acceptance. On November 10 a required-language season download was repaired to check every episode and report the ones not available in that language ([required-audio QA](season-required-audio-2026-11-10.md)).
   - Freely licensed and public-domain seasons are unavailable through the current providers.
   - These cue checks do not certify synchronization throughout each episode.
 - **Seen outside this item, not fixed here:**
