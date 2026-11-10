@@ -68,3 +68,26 @@ TRX files are kept in `C:/Users/user/animeapp/.artifacts/implementation/download
 | Whole Downloads class, after the shared fixture changes | 9 / 9 passed, 1 skipped (`T2_Downloads_03`, the proposed exclusion), in 2 min 15 s | `downloads-class-20261024.trx` |
 
 All runs used one Debug build at `.artifacts/implementation/build`, with zero warnings and SDK 9.0.310. The hosted run remains the full checkpoint. Skipped Downloads methods drop from **five to one** (`T2_Downloads_03`, the proposed exclusion).
+
+## November 10: Delete, and the merged code
+
+Rechecked on the merged `codex/app-recovery` at **401155b**, where all ten session branches are combined.
+
+**Delete left a download's captions and saved details behind.** download-captions found this on Sintel and Breaking Bad: Downloads → Delete removed only the media file. A saved Movie/TV item's caption files and `library-item.json` stayed in its folder, and a season-torrent episode's sidecar captions stayed beside the deleted episode. Three regressions in `SeasonLibraryDownloadTests` failed on the merged code (`delete-before-20261110.trx`):
+
+| Case | Before | After |
+| --- | --- | --- |
+| Two saved episodes in one season folder, plus a user file there; delete episode 1 | Its caption and `library-item.json` were left behind | Its media, caption and record are gone, and its own revision folder is removed once empty. Episode 2's files and the user's file are kept. |
+| Season-torrent episodes sharing a folder; delete `Show - 01.mkv` | `Show - 01.srt`, `Show - 01.en.srt` and `Show - 01.English.forced.ass` were left behind | They are gone. `Show - 01.5.*`, `Show - 02.*` and `Show - 01 notes.txt` are kept: a sidecar belongs to the file whose name is its longest prefix. |
+| A temporary watch still owns a file | Deleting a library copy already left the watch's own file alone, but a file inside a temporary watch folder (listed when the download folder contains it) was deleted | That file is refused and kept: "This file belongs to a temporary watch. Close its player tab; the app removes it then." |
+
+Delete removes the media first, so a locked or protected file stops it before anything else is removed. If an item's saved record cannot be read, only the media and its sidecars are removed; its listed captions are not guessed.
+
+| Run on the merged code | Result | TRX |
+| --- | --- | --- |
+| Delete regressions, before / after | 0 / 3, then 3 / 3 | `delete-before-20261110.trx`, `delete-after-20261110.trx` |
+| Library, readiness and playlist classes | 98 / 98 | `delete-related-20261110.trx` |
+| My earlier download cohort (pinning, qBit ownership, feeds, validation, native boundary, containment, alias transfers, SUBST) | 97 / 97 in 3 min 18 s | `merged-download-cohort-20261110.trx` |
+| Whole Downloads class in the real app | 9 / 9 passed, 1 skipped (`T2_Downloads_03`), in 2 min 34 s | `merged-downloads-class-20261110.trx` |
+
+The merge broke nothing in this item. The November TRX files are kept in `C:/Users/user/animeapp/.artifacts/implementation/download-storage-20261110`. The two exclusions above remain proposals until the user confirms them in this session. Real qBittorrent path handling stays open because qBittorrent is not installed.
