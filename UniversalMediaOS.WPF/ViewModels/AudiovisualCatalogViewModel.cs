@@ -129,6 +129,14 @@ public sealed class AudiovisualSourceViewModel
         ? "Feature"
         : $"Season {Source.Unit.SeasonNumber?.ToString() ?? "?"}, episode {Source.Unit.EpisodeNumber?.ToString() ?? "?"}" +
           (string.IsNullOrWhiteSpace(Source.Unit.Title) ? string.Empty : $" \u00B7 {Source.Unit.Title}");
+    // The source's own declared runtime, so an abridged or extended cut is visible before playing.
+    public string RuntimeText => Source.DurationSeconds is not > 0 ? string.Empty
+        : Source.DurationSeconds.Value < 60
+            ? $"Runtime {Math.Round(Source.DurationSeconds.Value):0} s"
+            : (int)Math.Round(Source.DurationSeconds.Value / 60) is var minutes && minutes >= 60
+                ? $"Runtime {minutes / 60} h {minutes % 60} min"
+                : $"Runtime {minutes} min";
+    public bool HasRuntime => RuntimeText.Length > 0;
     public bool IsArabicVerified => Source.IsArabicCartoonVerified;
     public bool CanPlay => Source.AccessMode == AudiovisualSourceAccessMode.DirectMedia;
     public bool CanOpenWebsite => Source.AccessMode == AudiovisualSourceAccessMode.WebPage;

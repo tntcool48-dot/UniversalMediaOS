@@ -362,6 +362,8 @@ public sealed class InternetArchiveSourceProvider : IAudiovisualSourceProvider
                 Rights = rights,
                 ContentType = GetVideoContentType(fileName),
                 Subtitles = captions,
+                DurationSeconds = GetLengthSeconds(GetScalarString(files.EnumerateArray()
+                    .FirstOrDefault(file => GetScalarString(file, "name") == fileName), "length")),
                 Languages = languages,
                 Identity = candidateIdentity,
                 Unit = candidateUnit,
