@@ -310,7 +310,9 @@ public sealed class NativePlayerKeyboardTests(ITestOutputHelper output)
 
         // 2. The pointer over the video shows them again.
         var area = Window().BoundingRectangle;
-        Mouse.MoveTo(new System.Drawing.Point(area.Left + area.Width / 2, area.Top + area.Height / 2));
+        var centre = new System.Drawing.Point(area.Left + area.Width / 2, area.Top + area.Height / 2);
+        ForegroundGuard.RequirePoint(Window(), fixture.App.ProcessId, centre);
+        Mouse.MoveTo(centre);
         Mouse.MoveBy(12, 8);
         Assert.True(SpinWait.SpinUntil(() => Shown() == "shown", TimeSpan.FromSeconds(2)),
             $"Moving the pointer over the playing video did not show the controls ({Shown()}).");
@@ -428,6 +430,22 @@ internal static class ForegroundGuard
         if (!SpinWait.SpinUntil(() => OwnsForeground(processId), TimeSpan.FromSeconds(2)))
             Assert.Fail("Another process has the foreground window; no keys were sent to it.");
     }
+
+    // Pointer input lands on whatever window is under the point.
+    // While a button is held, activating a window would cancel its capture:
+    // pass activate: false to only check what lies under the point.
+    public static void RequirePoint(Window window, int processId, System.Drawing.Point point, bool activate = true)
+    {
+        if (activate) Require(window, processId);
+        GetWindowThreadProcessId(WindowFromPoint(new NativePoint { X = point.X, Y = point.Y }), out uint owner);
+        if (owner != processId)
+            Assert.Fail($"Another process's window is at {point}; no pointer input was sent to it.");
+    }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct NativePoint { public int X, Y; }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr WindowFromPoint(NativePoint point);
 
     private static bool OwnsForeground(int processId)
     {

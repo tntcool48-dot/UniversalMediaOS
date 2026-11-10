@@ -55,8 +55,7 @@ namespace UniversalMediaOS.WPF
         private const uint SWP_FRAMECHANGED = 0x0020;
         private const string TabDragFormat = "UniversalMediaOS.Tab";
 
-        private Point _tabDragStart;
-        private MediaTabViewModel? _draggedTab;
+        private readonly TabDragGesture<MediaTabViewModel> _tabDrag = new();
         private bool _isAppFullscreen;
         private WindowStyle _restoreWindowStyle;
         private WindowState _restoreWindowState;
@@ -444,28 +443,24 @@ namespace UniversalMediaOS.WPF
             Top = Math.Min(Math.Max(Top, workTopLeft.Y), workBottomRight.Y - Height);
         }
 
+        // Window-level, so they run before a header's press and after any
+        // release: a click on a tab must not leave it ready to drag later.
+        private void Window_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e) => _tabDrag.PointerPressed();
+
+        private void Window_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e) => _tabDrag.PointerReleased();
+
         private void TabHeader_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
-            _tabDragStart = e.GetPosition(this);
-            _draggedTab = (sender as FrameworkElement)?.DataContext as MediaTabViewModel;
+            if ((sender as FrameworkElement)?.DataContext is MediaTabViewModel tab)
+                _tabDrag.PressedOnHeader(tab, e.GetPosition(this));
         }
 
         private void TabHeader_MouseMove(object sender, MouseEventArgs e)
         {
-            if (e.LeftButton != MouseButtonState.Pressed || _draggedTab == null)
-            {
-                return;
-            }
-
-            var position = e.GetPosition(this);
-            if (Math.Abs(position.X - _tabDragStart.X) < SystemParameters.MinimumHorizontalDragDistance &&
-                Math.Abs(position.Y - _tabDragStart.Y) < SystemParameters.MinimumVerticalDragDistance)
-            {
-                return;
-            }
-
-            DragDrop.DoDragDrop((DependencyObject)sender, new DataObject(TabDragFormat, _draggedTab), DragDropEffects.Move);
-            _draggedTab = null;
+            var tab = _tabDrag.DragToStart(e.LeftButton == MouseButtonState.Pressed, e.GetPosition(this),
+                new Size(SystemParameters.MinimumHorizontalDragDistance, SystemParameters.MinimumVerticalDragDistance));
+            if (tab != null)
+                DragDrop.DoDragDrop((DependencyObject)sender, new DataObject(TabDragFormat, tab), DragDropEffects.Move);
         }
 
         private void TabHeader_DragOver(object sender, DragEventArgs e)
