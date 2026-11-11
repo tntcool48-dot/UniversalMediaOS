@@ -330,6 +330,79 @@ namespace UniversalMediaOS.Tests.E2E.Tests
                 "A failed download left an extension folder behind.");
         }
 
+        [Fact]
+        public void ServicesOn_PythonRemovedAfterReadinessIsReportedAndRepairRecoversIt()
+        {
+            // A venv interpreter is the only Python on PATH. Once Settings shows it Ready, its folder is moved away
+            // while the app runs, as an uninstall or a moved environment does. Refresh must say Python is missing,
+            // and once it is back, Repair must make it Ready again.
+            string venv = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "UniversalMediaOS.Tests", "python-" + Guid.NewGuid().ToString("N"));
+            string away = venv + "-away";
+            CreateVenv(venv);
+            string system = Environment.GetFolderPath(Environment.SpecialFolder.System);
+            string windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+            try
+            {
+                using var fixture = new AppFixture(mangaPagePng: null, initializeProfile: root => { EnableServices(root); SeedPinnedUBlock(root); },
+                    environment: new System.Collections.Generic.Dictionary<string, string?>
+                    {
+                        ["PATH"] = System.IO.Path.Combine(venv, "Scripts") + ";" + system + ";" + windows,
+                        ["PYTHONHOME"] = null, ["PYTHONPATH"] = null, ["VIRTUAL_ENV"] = null
+                    });
+                OpenSection(fixture, "Services");
+                // Where the pins are missing (as on the CI runner) the app installs them first.
+                Assert.True(SpinWait.SpinUntil(() => HealthText(fixture).Contains("Python scraper: Ready (ready)", StringComparison.Ordinal),
+                    TimeSpan.FromSeconds(150)), HealthText(fixture));
+
+                MoveWithRetry(venv, away);
+                SettingsButton(fixture, "Refresh").Invoke();
+                Assert.True(SpinWait.SpinUntil(() => HealthText(fixture).Contains("Python scraper: Failed (python_missing)", StringComparison.Ordinal),
+                    TimeSpan.FromSeconds(5)), HealthText(fixture));
+                Assert.Equal("Service attention needed", ServiceSummary(fixture));
+
+                MoveWithRetry(away, venv);
+                var repair = SettingsButton(fixture, "Repair services");
+                repair.Invoke();
+                Assert.True(SpinWait.SpinUntil(() => HealthText(fixture).Contains("Python scraper: Ready (ready)", StringComparison.Ordinal),
+                    TimeSpan.FromSeconds(150)), HealthText(fixture));
+                Assert.True(SpinWait.SpinUntil(() => repair.IsEnabled, TimeSpan.FromSeconds(60)), "Repair services did not finish.");
+            }
+            finally
+            {
+                foreach (string folder in new[] { venv, away })
+                    try { if (System.IO.Directory.Exists(folder)) System.IO.Directory.Delete(folder, recursive: true); } catch (Exception) { }
+            }
+        }
+
+        /// <summary>Makes a venv from the Python on this machine's PATH that also sees its installed packages.</summary>
+        private static void CreateVenv(string folder)
+        {
+            foreach (string python in new[] { "python", "py" })
+            {
+                try
+                {
+                    var start = new System.Diagnostics.ProcessStartInfo(python) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true };
+                    foreach (string argument in new[] { "-m", "venv", "--without-pip", "--system-site-packages", folder }) start.ArgumentList.Add(argument);
+                    using var process = System.Diagnostics.Process.Start(start)!;
+                    string error = process.StandardError.ReadToEnd();
+                    if (process.WaitForExit(60000) && process.ExitCode == 0 &&
+                        System.IO.File.Exists(System.IO.Path.Combine(folder, "Scripts", "python.exe"))) return;
+                }
+                catch (System.ComponentModel.Win32Exception) { }
+            }
+            throw new InvalidOperationException("This case needs Python 3.10 or newer on PATH to make a venv.");
+        }
+
+        private static void MoveWithRetry(string from, string to)
+        {
+            // Antivirus scanners can hold a just-written interpreter for a moment.
+            for (int attempt = 0; ; attempt++)
+            {
+                try { System.IO.Directory.Move(from, to); return; }
+                catch (Exception ex) when (attempt < 20 && ex is System.IO.IOException or UnauthorizedAccessException) { Thread.Sleep(250); }
+            }
+        }
+
         private static void EnableServices(string root)
         {
             string path = System.IO.Path.Combine(root, "Roaming", "UniversalMediaOS", "config.json");
