@@ -20,17 +20,17 @@ public sealed class LiveNativeSelectorTests(ITestOutputHelper output)
         string directory = Path.Combine(fixture.SandboxPath, "native-selector-media");
         Directory.CreateDirectory(directory);
         string video = Path.Combine(directory, "tones.mkv");
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         var encoded = await new PreparationProcessRunner().RunAsync("ffmpeg", [
             "-nostdin", "-hide_banner", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=160x90:rate=25",
             "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
             "-f", "lavfi", "-i", "sine=frequency=880:sample_rate=48000",
-            "-map", "0:v", "-map", "1:a", "-map", "2:a", "-t", "60", "-c:v", "mpeg4", "-c:a", "aac",
+            "-map", "0:v", "-map", "1:a", "-map", "2:a", "-t", "300", "-c:v", "mpeg4", "-c:a", "aac",
             "-metadata:s:a:0", "title=Tone 440 Hz", "-metadata:s:a:1", "title=Tone 880 Hz", "-y", video
         ], deadline.Token);
         Assert.Equal(0, encoded.ExitCode);
         File.WriteAllText(Path.Combine(directory, "caption.en.srt"),
-            "1\n00:00:00,000 --> 00:01:00,000\nSelector fixture\nSecond line\n");
+            "1\n00:00:00,000 --> 00:05:00,000\nSelector fixture\nSecond line\n");
         File.WriteAllText(Path.Combine(directory, "library-item.json"), JsonSerializer.Serialize(new
         {
             SchemaVersion = 1, WorkKey = "av:fixture:show:native-selector", UnitKey = "season:1:episode:1",
@@ -122,6 +122,12 @@ public sealed class LiveNativeSelectorTests(ITestOutputHelper output)
         Thread.Sleep(1000);
         Assert.Contains("Tone 440 Hz", Choice("Audio track")!.SelectedItem!.Text);
         Assert.False(IsPaused());
+        // Slow UI Automation stretches every step while the clip plays on. Keep
+        // a wide margin, so the last choices never meet the end of the clip.
+        var slider = Window().FindFirstDescendant(cf => cf.ByAutomationId("PlaybackSlider"))!.Patterns.RangeValue.Pattern;
+        double remaining = slider.Maximum.Value - slider.Value.Value;
+        output.WriteLine($"Clip remaining after the journey: {remaining / 1000:0.0} s of {slider.Maximum.Value / 1000:0.0} s.");
+        Assert.True(remaining >= 30_000, $"Only {remaining / 1000:0.0} s of the clip remained after the journey.");
     }
 
     private static string ReadLog(string path)
