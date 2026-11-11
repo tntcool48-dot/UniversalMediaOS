@@ -136,3 +136,35 @@ In the same probe's second process, the app started the relay on port 18777, con
 - no WebView2 browser profile (the native reader created none).
 
 While the relay ran, a real TCP connect to `localhost:18777` succeeded; after exit it was refused. The only remaining endpoint was the normal TCP `TimeWait` owned by the system (PID 0). Note: from this shell, `netstat` and .NET's listener table did not show listeners at all, so the evidence uses a real connect and `Get-NetTCPConnection` instead.
+
+### An alerted episode was announced again after a schedule drop (fixed, `1c9b63c`)
+
+**Problem.** `FavoriteMediaService.UpdateAvailability` also lowered the stored count whenever AniList reported fewer aired episodes, for example after a schedule correction. When the count came back, the monitor announced the same episode a second time. The app builds its Windows notification from the monitor's alerts, so the user would see a repeat even though the alert history deduplicated it.
+
+**Regression first.** `AnAlertedEpisodeIsNotAnnouncedAgainAfterTheAiringCountDropsAndReturns` simulates AniList reporting episode 4 aired, then not aired, then aired again, then episode 5. Before the fix it failed: episode 4 was announced again (`notification-repeat-before-20261111.trx`).
+
+**Fix.** Favorites keep the highest known count.
+
+**After.** The regression passes along with every class that touches favorites, **135/135 in 49 s** (`notification-repeat-after-20261111.trx`). That set covers notification recovery (service and UI), favorites, My List (state and UI), MAL sync, voice cast, catalog outage, Dub availability and copied-profile compatibility.
+
+This also answers "no repeat inside the 30-minute interval". A repeat needs a new, higher count, whatever the timer cadence, and the existing same-count re-check already returns nothing. The 30-minute timer itself was not run in real time (open).
+
+### A real Windows notification, confirmed without screenshots (`986375a`)
+
+The app now logs whether the Windows shell accepted the notification and Windows' notification state (`SHQueryUserNotificationState`). The live run used an isolated profile and three releasing favorites picked at run time from keyless AniList (`run-033645`). The app:
+- advanced exactly the two behind favorites (ONE PIECE 1179 → 1180; The Apothecary Diaries S3 5 → 6) and left Black Clover S2 at 6;
+- logged **"Windows notification accepted by the shell; Windows notification state: held: a full-screen app is running"**;
+- exited normally.
+
+Delivery to Windows is therefore confirmed. The visible pop-up was held by Windows because something was full-screen on the desktop. Seeing it appear remains a user step. No screenshot was taken.
+
+### Still open after this pass
+- Real-account MAL: the user's sign-in.
+- Remote Watch Together: no second machine.
+- Seeing the notification pop-up when nothing is full-screen.
+- The 30-minute timer in real time.
+- Manga "Continue" moving to the next chapter after the last page: a product choice.
+- Website-chapter page positions.
+- The one uncollected October 7 Manga closed pair.
+- Accessibility-observer player retention.
+- A longer sustained resource cycle.
