@@ -100,3 +100,39 @@ Results are under `.artifacts/implementation/build/results/` in this worktree:
 - `manga-wt-cohort-20261023.trx`
 
 Release build is in the worktree's `.artifacts/implementation/build` (about 0.9 GB). Build: zero warnings and zero errors. No user profile, permanent download or protected QA row was used. No media was downloaded.
+
+## November 11 second pass (merged code `401155b`)
+
+### Merge check
+
+A clean Release rebuild of the merged branch was made. My focused set then passed **105/105 in 3 min 52 s** under the desktop lock (`merged-401155b-focused-20261111.trx`):
+- all Manga classes, including reading progress, retention, tall page, collectibility, external reader and pagination;
+- Watch Together relay, service and two-app native UI;
+- episode alerts and notification recovery (service and UI);
+- MAL sync recovery (service and UI);
+- automatic MAL progress;
+- async lifecycle.
+
+The merge broke nothing in this item.
+
+### Manga reading progress against live MangaDex
+
+A private FlaUI probe (`.artifacts/implementation/manga-live-progress-20261111/`, source in `probe-src/`) drove the real app in an isolated profile against **live MangaDex**. It never touched the user's profile.
+- The first two recommended titles had website-only chapters (9 visible each). The probe moved on to *Kage no Jitsuryokusha ni Naritakute!*, which has native chapters.
+- It opened chapter 1 (37 pages) and scrolled in steps while live images decoded. It then closed the app normally.
+- Saved progress was chapter 1, `PageIndex` 5. That matched page 6, the top visible page. The page number was checked by file name (`x6-…png`) against MangaDex's own at-home page list, fetched with a generic client name.
+- After a new app process started on the same profile, the chapter list offered **"Continue chapter 1 from page 6"**. Choosing it opened chapter 1 with page 6 (the same file) at the top and the breadcrumb `… › Ch. 1`.
+- The earlier probe runs that failed were probe faults, not app faults. The first title had only website chapters. The probe also counted only the pages on screen, which a virtualized list does not number from 1. One of those runs had also saved page 2 correctly and restored it.
+
+**Not covered:** finishing a chapter does not move "Continue" to the next chapter. It reopens the last page read. That is a product choice, recorded as open. Website-chapter page positions are not kept.
+
+### Leftovers after a Manga read and a Watch Together relay session
+
+In the same probe's second process, the app started the relay on port 18777, connected a client as Host, and then closed while connected (exit 0). Checks afterwards:
+- no surviving app process;
+- no orphaned child process;
+- no process naming the isolated profile;
+- no new top-level `%TEMP%` entry;
+- no WebView2 browser profile (the native reader created none).
+
+While the relay ran, a real TCP connect to `localhost:18777` succeeded; after exit it was refused. The only remaining endpoint was the normal TCP `TimeWait` owned by the system (PID 0). Note: from this shell, `netstat` and .NET's listener table did not show listeners at all, so the evidence uses a real connect and `Get-NetTCPConnection` instead.
