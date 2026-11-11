@@ -1177,6 +1177,7 @@ public abstract partial class AudiovisualCatalogViewModel : ObservableObject, ID
         int season = SelectedSeason!.Number!.Value;
         var units = Episodes.Select(episode => episode.Metadata.Unit!).OrderBy(unit => unit.EpisodeNumber).ToArray();
         string? language = ToLanguageCode(PreferredLanguage);
+        string spoken = PreferredLanguage;
         long selection = _sourceSelectionVersion;
         _downloadCts?.Cancel();
         using var operation = CancellationTokenSource.CreateLinkedTokenSource(_lifecycleCts.Token);
@@ -1190,6 +1191,12 @@ public abstract partial class AudiovisualCatalogViewModel : ObservableObject, ID
         int completed = 0;
         AudiovisualUnit? currentUnit = null;
         string lastPath = string.Empty;
+        // A required language is never satisfied by another or an undeclared one: such episodes
+        // are counted as unavailable in it, and the rest of the season is still checked.
+        var unavailable = new List<AudiovisualUnit>();
+        string Missing() => unavailable.Count == 0 ? string.Empty :
+            $" {unavailable.Count} not available with {spoken} audio: " +
+            string.Join(", ", unavailable.Select(unit => $"S{season:00}E{unit.EpisodeNumber:00}")) + ".";
         try
         {
             foreach (var unit in units)
@@ -1220,6 +1227,13 @@ public abstract partial class AudiovisualCatalogViewModel : ObservableObject, ID
                     if (!Current()) return;
                     var source = await ResolveSeasonDownloadSourceAsync(request, attemptedSources, operation.Token);
                     if (!Current()) return;
+                    if (source == null && language != null && attempt == 0)
+                    {
+                        unavailable.Add(unit);
+                        break;
+                    }
+                    if (source == null)
+                        throw new InvalidOperationException("No remaining independently verified native source with the requested audio was found. Retry this season or choose Stream for the episode.");
                     attemptedSources.Add(SeasonDownloadSourceKey(source));
                     var context = new AudiovisualPlaybackContext(item.WorkKey, item.Identity, unit, item.Title, item.PosterUrl, source);
                     bool reporting = true;
@@ -1239,24 +1253,41 @@ public abstract partial class AudiovisualCatalogViewModel : ObservableObject, ID
                     }
                     finally { reporting = false; }
                 }
+                if (result == null && unavailable.Contains(unit))
+                {
+                    AppLogger.Log($"TV season S{season:00}E{unit.EpisodeNumber:00} has no verified source declaring {spoken} audio; it was not saved.", "WARNING");
+                    continue;
+                }
                 if (result == null) throw new InvalidOperationException("No usable verified source remained for this episode.");
                 completed++;
                 lastPath = result.FilePath;
                 if (!Current()) return;
             }
-            DownloadPercentage = 100;
-            DownloadStatusText = $"Saved {completed} episodes from Season {season}, including available captions. Last file: {lastPath}";
-            WeakReferenceMessenger.Default.Send(new ToastNotificationMessage($"{item.Title} · Season {season}: {completed} episodes saved."));
+            string audio = language == null ? string.Empty : $" with {spoken} audio";
+            string last = lastPath.Length == 0 ? string.Empty : $" Last file: {lastPath}";
+            if (unavailable.Count == 0)
+            {
+                DownloadPercentage = 100;
+                DownloadStatusText = $"Saved {completed} episodes from Season {season}{audio}, including available captions.{last}";
+                WeakReferenceMessenger.Default.Send(new ToastNotificationMessage($"{item.Title} · Season {season}: {completed} episodes saved."));
+            }
+            else
+            {
+                DownloadPercentage = completed * 100d / units.Length;
+                DownloadStatusText = $"Saved {completed} of {units.Length} episodes from Season {season}{audio}, including available captions.{Missing()}{last}";
+                WeakReferenceMessenger.Default.Send(new ToastNotificationMessage(
+                    $"{item.Title} · Season {season}: {completed} of {units.Length} episodes saved;{Missing()}"));
+            }
         }
         catch (OperationCanceledException) when (operation.IsCancellationRequested)
         {
             if (!_isDisposed && ReferenceEquals(_downloadCts, operation) && ReferenceEquals(SelectedItem, item))
-                DownloadStatusText = $"Season download stopped. {completed}/{units.Length} completed episodes are kept in your library.";
+                DownloadStatusText = $"Season download stopped. {completed}/{units.Length} completed episodes are kept in your library.{Missing()}";
         }
         catch (Exception ex)
         {
             AppLogger.Log($"TV season download stopped at S{season:00}E{currentUnit?.EpisodeNumber:00}: {ex.Message}", "WARNING");
-            if (Current()) DownloadStatusText = $"Stopped at S{season:00}E{currentUnit?.EpisodeNumber:00}: {ex.Message} {completed}/{units.Length} completed episodes are kept.";
+            if (Current()) DownloadStatusText = $"Stopped at S{season:00}E{currentUnit?.EpisodeNumber:00}: {ex.Message} {completed}/{units.Length} completed episodes are kept.{Missing()}";
         }
         finally
         {
@@ -1273,7 +1304,7 @@ public abstract partial class AudiovisualCatalogViewModel : ObservableObject, ID
     private static string SeasonDownloadSourceKey(AudiovisualSource source) =>
         source.Location.GetLeftPart(UriPartial.Path);
 
-    private async Task<AudiovisualSource> ResolveSeasonDownloadSourceAsync(SourceSearchRequest request,
+    private async Task<AudiovisualSource?> ResolveSeasonDownloadSourceAsync(SourceSearchRequest request,
         ISet<string> attemptedSources, CancellationToken token)
     {
         using var lookup = CancellationTokenSource.CreateLinkedTokenSource(token);
@@ -1300,7 +1331,7 @@ public abstract partial class AudiovisualCatalogViewModel : ObservableObject, ID
                 lookup.Token.ThrowIfCancellationRequested();
                 if (sources.FirstOrDefault(Usable) is { } source) return source;
             }
-            throw new InvalidOperationException("No remaining independently verified native source with the requested audio was found. Retry this season or choose Stream for the episode.");
+            return null;
         }
         catch (OperationCanceledException) when (!token.IsCancellationRequested)
         { throw new TimeoutException("Episode source search exceeded two minutes."); }

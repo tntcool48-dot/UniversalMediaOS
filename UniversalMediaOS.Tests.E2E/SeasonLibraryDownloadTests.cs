@@ -452,6 +452,42 @@ public sealed class SeasonLibraryDownloadTests
     }
 
     [Fact]
+    public async Task RequiredAudioSavesOnlyDeclaredEpisodesAndCountsTheRestAsUnavailable()
+    {
+        using var fixture = new Fixture();
+        fixture.Catalog.Items = [Episode(1), Episode(2), Episode(3), Episode(4)];
+        static AudiovisualSource Speaking(AudiovisualSource source, string language) => source with
+        { Evidence = source.Evidence! with { Audio = new() { Origin = SourceEvidenceOrigin.ObservedStream, Languages = [language] } } };
+        // E2 declares no audio and E3 declares another language: neither may be saved for an English request.
+        fixture.Catalog.Resolve = request => request.Unit!.EpisodeNumber switch
+        {
+            2 => Source(request.Unit),
+            3 => Speaking(Source(request.Unit), "es"),
+            _ => Speaking(Source(request.Unit), "en")
+        };
+        await fixture.ViewModel.OpenItemAsync(new() { Title = "Series", Identity = Identity });
+        fixture.ViewModel.PreferredLanguage = "English";
+        await fixture.ViewModel.DownloadSeasonCommand.ExecuteAsync(null);
+
+        Assert.Equal(new int?[] { 1, 2, 3, 4 }, fixture.Catalog.Requests.Select(request => request.Unit!.EpisodeNumber));
+        Assert.Equal(new[] { "/episode-1.mp4", "/episode-4.mp4" }, fixture.Handler.Locations.Select(location => location.AbsolutePath));
+        var saved = fixture.Published().Select(path => JsonDocument.Parse(File.ReadAllText(path)).RootElement).ToArray();
+        Assert.Equal(new[] { "season:1:episode:1", "season:1:episode:4" },
+            saved.Select(item => item.GetProperty("UnitKey").GetString()).Order());
+        Assert.All(saved, item => Assert.Contains("en",
+            item.GetProperty("AudioEvidence").GetProperty("Languages").EnumerateArray().Select(value => value.GetString())));
+        string status = fixture.ViewModel.DownloadStatusText;
+        Assert.Contains("Saved 2 of 4 episodes", status);
+        Assert.Contains("English", status);
+        Assert.Contains("2 not available", status);
+        Assert.Contains("S01E02", status);
+        Assert.Contains("S01E03", status);
+        Assert.DoesNotContain("S01E01", status.Split("not available")[1]);
+        Assert.False(fixture.ViewModel.IsDownloading);
+        Assert.Empty(Directory.GetDirectories(fixture.Temporary));
+    }
+
+    [Fact]
     public async Task ThreeUnavailableSourcesStopAtTheFailedEpisodeAndRetainEarlierCompletedFiles()
     {
         using var fixture = new Fixture();
