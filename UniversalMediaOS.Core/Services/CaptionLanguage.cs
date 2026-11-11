@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 
 namespace UniversalMediaOS.Core.Services;
 
@@ -71,6 +72,30 @@ public static class CaptionLanguage
         if (!IsKnown(code)) return false;
         try { return CultureInfo.GetCultureInfo(code).TextInfo.IsRightToLeft; }
         catch (CultureNotFoundException) { return false; }
+    }
+
+    /// <summary>The caption with a right-to-left mark at both ends of each cue text line. LibVLC lays every
+    /// caption line out left to right, which moves edge punctuation of a right-to-left line to the wrong end.
+    /// Null for ASS (libass lays it out itself) and for bytes that are not UTF-8, such as Windows-1256.</summary>
+    public static byte[]? MarkRightToLeftCaption(byte[] bytes)
+    {
+        string text;
+        try { text = new UTF8Encoding(false, true).GetString(bytes).TrimStart('\ufeff'); }
+        catch (DecoderFallbackException) { return null; }
+        if (text.TrimStart().StartsWith("[Script Info]", StringComparison.OrdinalIgnoreCase)) return null;
+        // Marks only cue text: the lines after a timing line, up to the blank line ending the cue.
+        const char mark = '\u200f';
+        string[] lines = text.Split('\n');
+        bool cueText = false;
+        for (int index = 0; index < lines.Length; index++)
+        {
+            string line = lines[index].TrimEnd('\r');
+            if (line.Trim().Length == 0) cueText = false;
+            else if (line.Contains("-->", StringComparison.Ordinal)) cueText = true;
+            else if (cueText)
+                lines[index] = mark + line.Trim(mark) + mark + lines[index][line.Length..];
+        }
+        return Encoding.UTF8.GetBytes(string.Join('\n', lines));
     }
 
     /// <summary>The name segment that keeps a saved caption's declared language, such as ".fr";

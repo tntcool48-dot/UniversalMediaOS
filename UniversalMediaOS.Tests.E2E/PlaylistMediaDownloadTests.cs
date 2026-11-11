@@ -295,6 +295,22 @@ public sealed class PlaylistMediaDownloadTests
     }
 
     [Fact]
+    public async Task SavedRightToLeftCaptionInALegacyCodePageIsKeptByteForByte()
+    {
+        // Arabic SubRip files often use Windows-1256; decoding them as UTF-8 would replace every letter.
+        using var fixture = new Fixture();
+        fixture.Handler.Text("video.m3u8", Leaf());
+        fixture.Handler.Bytes("one.ts", new byte[1000]);
+        fixture.Handler.Bytes("two.ts", new byte[1000]);
+        byte[] codePage = [.. Encoding.ASCII.GetBytes("1\r\n00:00:01,000 --> 00:00:02,000\r\n"), 0xE5, 0xD0, 0xC7, 0x2E, 0x0D, 0x0A];
+        fixture.Handler.Bytes("arabic.srt", codePage);
+        var source = Source() with { Subtitles = [new MediaSubtitleTrack("https://93.184.216.34/arabic.srt", "Arabic", "ar")] };
+        var result = await fixture.Service.DownloadTemporaryAsync(source, Context(source));
+        try { Assert.Equal(codePage, File.ReadAllBytes(Assert.Single(result.CaptionPaths))); }
+        finally { result.Lease.Dispose(); }
+    }
+
+    [Fact]
     public async Task CheckedRenditionRetainsBothAudioLanguagesAndDoesNotFetchOtherVideo()
     {
         using var fixture = new Fixture();
