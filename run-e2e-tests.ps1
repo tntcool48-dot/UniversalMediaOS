@@ -17,12 +17,21 @@ if ($FullSuite -and $hasFilter) {
 if (-not $FullSuite -and -not $hasFilter) {
     throw "Select -Filter for the affected checks, or explicitly choose -FullSuite for a full checkpoint."
 }
+# Windows PowerShell 5.1 turns each stderr line of a native command into an error record when the output is
+# redirected; with "Stop" the first one (a failing test's [FAIL] line) aborted the launcher. dotnet's own exit code
+# decides success instead.
+function Invoke-Native([string]$Command, [string[]]$Arguments) {
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try { & $Command @Arguments 2>&1 | ForEach-Object { "$_" } }
+    finally { $ErrorActionPreference = $previous }
+}
 $artifactsRoot = [System.IO.Path]::GetFullPath($ArtifactsPath)
 $configurationFolder = $Configuration.ToLowerInvariant()
 $testAssembly = Join-Path $artifactsRoot "bin\UniversalMediaOS.Tests.E2E\$configurationFolder\UniversalMediaOS.Tests.E2E.dll"
 
 if (-not $NoBuild) {
-    dotnet build (Join-Path $PSScriptRoot "UniversalMediaOS.sln") -c $Configuration --artifacts-path $artifactsRoot --nologo --verbosity minimal
+    Invoke-Native dotnet @("build", (Join-Path $PSScriptRoot "UniversalMediaOS.sln"), "-c", $Configuration, "--artifacts-path", $artifactsRoot, "--nologo", "--verbosity", "minimal")
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
@@ -43,7 +52,7 @@ try {
     $env:UNIVERSAL_MEDIA_OS_EXE = $ExecutablePath
     $testArguments = @("test", $testAssembly, "--nologo", "--logger", "console;verbosity=minimal", "--logger", "trx;LogFileName=recovery-e2e.trx", "--ResultsDirectory", (Join-Path $artifactsRoot "results"))
     if ($hasFilter) { $testArguments += @("--filter", $Filter) }
-    & dotnet @testArguments
+    Invoke-Native dotnet $testArguments
     $testExitCode = $LASTEXITCODE
 }
 finally {
