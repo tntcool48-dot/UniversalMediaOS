@@ -922,8 +922,13 @@ def launch_browser():
         print("[scraper] DrissionPage not available.", file=sys.stderr)
         return None
     cleanup_old_scraper_profiles()
-    os.makedirs(PROFILE_ROOT, exist_ok=True)
-    profile_dir = tempfile.mkdtemp(prefix="umos_scraper_", dir=PROFILE_ROOT)
+    # The app passes a folder it owns for this run and removes it even when it kills the run.
+    owned_root = os.environ.get("UMOS_SCRAPER_PROFILE_ROOT", "").strip()
+    if owned_root and not os.path.isabs(owned_root):
+        raise ValueError("UMOS_SCRAPER_PROFILE_ROOT must be an absolute path")
+    profile_root = owned_root or PROFILE_ROOT
+    os.makedirs(profile_root, exist_ok=True)
+    profile_dir = tempfile.mkdtemp(prefix="umos_scraper_", dir=profile_root)
     try:
         opts = ChromiumOptions()
         try:
