@@ -176,7 +176,9 @@ namespace UniversalMediaOS.Core.Services
                         });
                     }
 
-                    if (available > 0 && available != previous)
+                    // Keep the highest known count: a temporary drop in AniList's airing schedule would
+                    // otherwise announce the same episode again when it returns.
+                    if (available > previous)
                     {
                         record.Progress = $"Sub {available}";
                         changed = true;

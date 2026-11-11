@@ -125,6 +125,28 @@ public sealed class EpisodeNotificationRecoveryTests
     }
 
     [Fact]
+    public async Task AnAlertedEpisodeIsNotAnnouncedAgainAfterTheAiringCountDropsAndReturns()
+    {
+        using var profile = new Profile(1);
+        int nextEpisode = 5;
+        using var server = new MockHttpServer(aniListFeed: request => (200, Available(ReadIds(request), nextEpisode)));
+        server.Start();
+        var monitor = profile.Monitor(server);
+        Assert.Equal(4, Assert.Single(await monitor.CheckSafelyAsync()).AvailableEpisode);
+
+        // AniList briefly lists episode 4 as not yet aired (a schedule correction), then aired again.
+        nextEpisode = 4;
+        Assert.Empty(await monitor.CheckSafelyAsync());
+        nextEpisode = 5;
+        Assert.Empty(await monitor.CheckSafelyAsync());
+        Assert.Equal("Sub 4", Assert.Single(profile.Favorites.GetFavorites()).Progress);
+
+        nextEpisode = 6;
+        var next = Assert.Single(await monitor.CheckSafelyAsync());
+        Assert.Equal((4, 5), (next.PreviousEpisode, next.AvailableEpisode));
+    }
+
+    [Fact]
     public async Task UnknownAiringCountPreservesKnownAvailabilityWithoutAnAlert()
     {
         using var profile = new Profile(2);
