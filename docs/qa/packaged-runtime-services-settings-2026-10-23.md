@@ -1,4 +1,4 @@
-# Packaged runtime, services and Settings action states — October 23–24, 2026
+# Packaged runtime, services and Settings action states — October 23–24 and November 11, 2026
 
 Part of the open "Qualify remaining packaged runtime/CLI compatibility, service startup/shutdown and Settings accessibility/action states" item. Branch **claude/packaged-runtime-f0b706**, cut from **e744dcd** (the green f0937c4 checkpoint plus its record). Every app run used its own AppFixture or probe profile (`UNIVERSAL_MEDIA_OS_DATA_ROOT`) under the shared desktop lock; the user's profile, %APPDATA% data and downloads were not touched. Evidence (TRX, probe JSON, logs) is in `.artifacts/implementation/packaged-runtime-20261023/` of the main checkout.
 
@@ -107,16 +107,53 @@ UI Automation's `FindAll` from the list element returns none of its rows while t
 
 The user accepted the proposed exclusion on **October 24, 2026**. `T2_Settings_04_Low_Memory_Resource_Boundary` stays skipped and is never counted. The behavior it names no longer exists: recovery commit **182da1b** removed the startup RAM check (`SystemResourceCheck.PerformStartupCheck`) and Settings' "Current Resource load" line. `SystemResourceCheck` is now used only by its own unit tests; no app code reads available memory or reacts to it. A real low-memory condition (for example a Job Object memory cap on the app process) would test .NET out-of-memory failure in whatever code allocates first, not a Settings behavior, and would not repeat reliably. Save's safety under failure (a failed replace leaves `config.json` byte-identical) is already covered by `T2_Settings_03_Settings_Lock_Collision`. Bringing a memory check back would be a product decision. The skip reason and the [skip inventory](skipped-test-inventory-2026-10-05.md) now say this.
 
+## 8. Second pass on the merged code — November 11, 2026
+
+The first wave's ten branches were merged into `codex/app-recovery` at **401155b** (not pushed) and this branch was fast-forwarded to it. Everything below tests **401155b plus this branch's new commits**; the second wave's other branches are not merged. The merged code built with 0 warnings, and the Python suite passed before any change.
+
+**Defect: services that stopped during use stayed reported as fine, and Repair could not bring the HLS proxy back.**
+
+- *Python.* Preparation remembered only the bare name `python.exe`. An interpreter removed or moved after Ready (an uninstall, a deleted venv) went unnoticed: Settings kept "Ready" and every scraper launch failed until a manual Repair. Preparation now keeps the interpreter's own path (`sys.executable`) and launches exactly that interpreter. A health refresh reports **Failed (python_missing)** once its file is gone, the next scraper use prepares again instead of launching it, and Repair recovers when it is back.
+- *HLS proxy.* Repair never restarted a proxy that had stopped, so "Offline" stayed until the app restarted. Repair now starts it again. Restarting clears the proxy's sessions, so an open native player still needs its own Retry or reopen.
+
+| Check | Before | After |
+| --- | --- | --- |
+| `ServiceRecoveryTests` (view model, real HLS proxy, fake Python runner): proxy stopped → Offline → Repair → listening and answering HTTP; interpreter removed → python_missing → next use prepares → Repair → Ready | **2 failed** (Offline kept; Ready kept) | **2 / 2**; with the preparation, proxy and dependency classes **69 / 69** |
+| `ServicesOn_PythonRemovedAfterReadinessIsReportedAndRepairRecoversIt` (real app): a venv is the only Python; after Ready its folder is moved away → Refresh → moved back → Repair | **Fail** on package 868d088: still "Python scraper: Ready (ready)" | Pass, 18 s |
+
+A proxy that dies on its own could not be caused from outside without administrator rights (http.sys), so its death is simulated in-process by closing the listener.
+
+**Settings in Arabic (right to left): no defect found.** `Settings_InArabicMirrorsAndKeepsEverySectionReachableNamedAndUnclipped` switches the app to Arabic and checks all eight sections: the sidebar is on the right, and every visible control is named, inside the view, overlapping no other control, and reached by Tab from its section button without an unnamed stop; no visible text is cut off at the edges. It passed on its first run (36 s), so it stays as a regression guard and nothing in the app changed.
+
+**Defect: the test launcher aborted when Windows PowerShell 5.1 redirected its output.** Each line dotnet wrote to stderr became an error record, and with `$ErrorActionPreference = "Stop"` the first one (a failing test's `[FAIL]` line) ended the launcher with `NativeCommandError` instead of returning dotnet's exit code. Both dotnet calls now pass native stderr through as output, and dotnet's exit code decides the result. `tools/tests/test_e2e_launcher.py` runs the launcher, redirected inside PowerShell 5.1, against a stand-in dotnet that writes to both streams and exits 3: it failed before (`NativeCommandError`) and now returns 3 with both lines kept.
+
+**Packaged journeys on the merged code.** Package **558e8be** (framework-dependent Release, 1,362 files / 417,757,716 bytes, 200 source inputs, roll-forward Major) ran 16 journeys: the 9 candidate journeys, the 5 Settings journeys from the first pass, and the two above.
+
+| Machine | Result | App processes observed |
+| --- | --- | --- |
+| .NET 9 installed | **16 / 16**, 5 min 41 s (`packaged-558e8be-net9.trx`) | 12, all on `Microsoft.NETCore.App\9.0.12` |
+| Only .NET 10 (the app's `DOTNET_ROOT` is a private folder holding only 10.0.11) | **16 / 16**, 5 min 55 s (`packaged-558e8be-net10only.trx`) | 12, all on the private `10.0.11` |
+
+Afterwards `--verify` reported the package unchanged.
+
+**Real Python 3.9 and 3.14.** python.org's Windows embeddable builds were unpacked into this worktree's `.artifacts` folder, with no system install: 3.9.13 (8,570,740 bytes, SHA-256 `938a1f3b…f5f5e4`) and 3.14.10 (12,619,664 bytes, SHA-256 `90905e64…ea4159`). They were downloaded over HTTPS from python.org; their published signatures were not verified. pip was added to the 3.14 folder with PyPA's `get-pip.py` (pip 26.3), since embeddable builds ship without it.
+
+| Interpreter | Packaged 558e8be with only it on PATH | Close |
+| --- | --- | --- |
+| 3.9.13 | **Failed (python_too_old)** at 0.8 s; no pip attempted | normal, 0.16 s |
+| 3.14.10 | all five imports missing → the app's own pip install → **Ready at 12.3 s**, exact pins installed | normal, 0.12 s |
+
+On 3.14.10 the whole Python suite (now 245 tests after the merge) passes **245 / 245**.
+
 ## What remains open
 
-- **Narrator speech (waits on the user).** UI Automation names, focus and Tab order are verified; what Narrator actually says is not. `.artifacts/packaged-runtime/narrator-check/Start-NarratorCheck.ps1` in the worktree starts the packaged 8ab223f app in a fresh isolated profile.
-- **Real older or newer interpreters.** A real Python 3.9 (`python_too_old`) and 3.14 were not run; each needs a download.
-- **Product decisions:** detecting qBittorrent outside its two installer locations; bringing back a memory check. (.NET roll-forward and the low-memory exclusion were decided on October 24.)
+- **Narrator speech (left with the user).** UI Automation names, focus and Tab order are verified in English and Arabic; what Narrator actually says is not. `.artifacts/packaged-runtime/narrator-check/Start-NarratorCheck.ps1` in the worktree starts the published package in a fresh isolated profile.
+- **qBittorrent automatic start (left with the user).** It only runs for a copy in Program Files or `%LOCALAPPDATA%\qBittorrent`; portable or Scoop installs are not detected.
+- **An open player across a proxy restart.** Repair restarts a stopped HLS proxy, but its sessions are cleared; whether a player's own Retry then re-registers its stream is a player behavior and was not tested here.
 - **Future .NET majors** (11 and later) are untested; only 10.0.11 ran.
-- **Services stopping during use.** Startup failure and slowness are covered for Python, FFmpeg and uBlock. By code inspection, an interpreter removed while the app runs keeps a cached Ready until Repair, and Repair does not restart an HLS proxy that failed to start; neither could be triggered realistically here. qBittorrent going offline during a download belongs to the Downloads placeholder.
-- **Arabic/RTL focus and speech** in Settings were not exercised.
+- **Product decision:** bringing back a memory check (the low-memory placeholder stays excluded).
 
 ## Notes for the release gate
 
 - `tools/write-release-manifest.py` now names "Python 3.10 or newer" (it said 3.12) and ".NET 9 Windows Desktop runtime (a newer major when 9 is missing)", and writes the roll-forward policy into each identity.
-- `run-e2e-tests.ps1` stops at the first line dotnet writes to stderr when its output is redirected inside Windows PowerShell 5.1 (`$ErrorActionPreference = "Stop"`); run it through `powershell -File … > log 2>&1` from another shell.
+- `run-e2e-tests.ps1` now finishes and returns dotnet's exit code when Windows PowerShell 5.1 redirects its output (section 8).

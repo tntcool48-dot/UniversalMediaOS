@@ -319,6 +319,7 @@ public sealed class PythonPreparationTests
             if (arguments[0] == "--version") return new(0, VersionFor?.Invoke(executable) ?? VersionOutput);
             if (arguments[0] == "-m") { InstallArguments = arguments.ToArray(); return new(PipExit, ""); }
             if (arguments[1].StartsWith("import ast", StringComparison.Ordinal)) return new(0, "");
+            if (arguments[1].StartsWith("import sys; print(sys.executable)", StringComparison.Ordinal)) return new(0, "");
             ImportProbeExecutables.Add(executable);
             return new(0, await probe(++Probes, token));
         }

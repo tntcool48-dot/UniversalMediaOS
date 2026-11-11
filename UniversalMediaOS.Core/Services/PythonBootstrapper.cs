@@ -50,14 +50,30 @@ public sealed class PythonBootstrapper : IDisposable
 
     public event EventHandler? StateChanged;
     public PythonPreparationSnapshot Snapshot { get { lock (_gate) return _snapshot; } }
-    public bool IsAvailable => Snapshot.State == PythonPreparationState.Ready && File.Exists(GetScraperPath());
+    public bool IsAvailable => Snapshot.State == PythonPreparationState.Ready && InterpreterPresent() && File.Exists(GetScraperPath());
     public bool IsBookScraperAvailable => Snapshot.State == PythonPreparationState.Ready && File.Exists(GetBookScraperPath());
     public bool IsAudiovisualScraperAvailable => Snapshot.State == PythonPreparationState.Ready && File.Exists(GetAudiovisualScraperPath());
     public string GetScraperPath() => Path.Combine(_scraperDir, Scripts[0]);
     public string GetBookScraperPath() => Path.Combine(_scraperDir, Scripts[1]);
     public string GetAudiovisualScraperPath() => Path.Combine(_scraperDir, Scripts[2]);
     // Compatibility accessor: health checks no longer launch synchronous Python probes.
-    public string? ResolvePythonExecutable() => Snapshot.State == PythonPreparationState.Ready ? _resolvedPython : null;
+    public string? ResolvePythonExecutable() => Snapshot.State == PythonPreparationState.Ready && InterpreterPresent() ? _resolvedPython : null;
+
+    /// <summary>The prepared interpreter's file is still there (a bare name cannot be checked without a launch).</summary>
+    private bool InterpreterPresent() => _resolvedPython is { } python && (!Path.IsPathRooted(python) || File.Exists(python));
+
+    /// <summary>Reports Python as missing when the interpreter that was prepared has since been removed or moved.
+    /// Cheap: it checks a file, launches nothing. Returns whether Python is still usable.</summary>
+    public bool ConfirmInterpreterPresent()
+    {
+        lock (_gate)
+        {
+            if (_snapshot.State != PythonPreparationState.Ready || InterpreterPresent()) return _snapshot.State == PythonPreparationState.Ready;
+        }
+        AppLogger.Log($"[Python] The prepared interpreter is gone: {_resolvedPython}", "WARNING");
+        SetState(PythonPreparationState.Failed, "python_missing", []);
+        return false;
+    }
 
     public Task EnsureScraperReadyAsync(CancellationToken token = default, bool forceRefresh = false)
     {
@@ -68,7 +84,7 @@ public sealed class PythonBootstrapper : IDisposable
             if (_preparationTask is { IsCompleted: false }) return _preparationTask.WaitAsync(token);
             string? revision = Revision(_sourceDir);
             if (!forceRefresh && revision != null && _snapshot.State == PythonPreparationState.Ready && _readyRevision == revision &&
-                revision == Revision(_scraperDir)) return Task.CompletedTask;
+                revision == Revision(_scraperDir) && InterpreterPresent()) return Task.CompletedTask;
             _preparationCts?.Dispose();
             _preparationCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
             _preparationCts.CancelAfter(_budget);
@@ -104,7 +120,14 @@ public sealed class PythonBootstrapper : IDisposable
                     // The pins (curl_cffi 0.15.0 and its dependencies) require 3.10; an older one can never install them.
                     string minor = new(version["Python 3.".Length..].TakeWhile(char.IsAsciiDigit).ToArray());
                     if (!int.TryParse(minor, out int parsed) || parsed < MinimumPythonMinor) { tooOld = true; continue; }
-                    _resolvedPython = candidate; break;
+                    // Keep the interpreter's own path, so a later launch cannot pick another one from PATH and its
+                    // removal can be noticed. A bare name stays when it cannot be read.
+                    using var where = CancellationTokenSource.CreateLinkedTokenSource(token);
+                    where.CancelAfter(TimeSpan.FromSeconds(3));
+                    var location = await _runner.RunAsync(candidate, ["-c", "import sys; print(sys.executable)"], where.Token).ConfigureAwait(false);
+                    string path = location.Output.Trim();
+                    _resolvedPython = location.ExitCode == 0 && Path.IsPathFullyQualified(path) && File.Exists(path) ? path : candidate;
+                    break;
                 }
                 catch (OperationCanceledException) when (!token.IsCancellationRequested) { }
                 catch (System.ComponentModel.Win32Exception) { }
