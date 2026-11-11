@@ -1,7 +1,9 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
@@ -43,9 +45,14 @@ namespace UniversalMediaOS.Core.OtherMedia
         public MediaSubtitleTrack[]? Subtitles { get; init; }
     }
 
-    public class AudiovisualScraperEngine
+    public class AudiovisualScraperEngine : IDisposable
     {
         private readonly PythonBootstrapper _python;
+        // Runs still in progress, so closing the app can stop them, and every run folder not yet deleted
+        // (a browser that is still exiting can hold its files past a run's own cleanup).
+        private readonly ConcurrentDictionary<Process, string> _running = new();
+        private readonly ConcurrentDictionary<string, byte> _undeletedProfileRoots = new(StringComparer.OrdinalIgnoreCase);
+        private readonly CancellationTokenSource _lifetime = new();
 
         public bool IsAvailable => _python.IsAudiovisualScraperAvailable;
 
@@ -129,6 +136,7 @@ namespace UniversalMediaOS.Core.OtherMedia
             string mode,
             params string[] arguments)
         {
+            _lifetime.Token.ThrowIfCancellationRequested();
             await _python.EnsureScraperReadyAsync(externalToken);
 
             string? pythonExe = _python.ResolvePythonExecutable();
@@ -140,7 +148,7 @@ namespace UniversalMediaOS.Core.OtherMedia
                 throw new FileNotFoundException($"audiovisual_scraper.py not found at: {scraperPath}");
 
             using var timeoutCts = new CancellationTokenSource(timeoutMs);
-            using var linked = CancellationTokenSource.CreateLinkedTokenSource(externalToken, timeoutCts.Token);
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(externalToken, timeoutCts.Token, _lifetime.Token);
 
             var psi = new ProcessStartInfo
             {
@@ -164,9 +172,11 @@ namespace UniversalMediaOS.Core.OtherMedia
             string profileRoot = Path.Combine(AppDataPaths.LocalBaseDirectory, "UniversalMediaOS", "BrowserProfiles",
                 "umos_av_run_" + Guid.NewGuid().ToString("N"));
             psi.Environment["UMOS_AV_PROFILE_ROOT"] = profileRoot;
+            _undeletedProfileRoots[profileRoot] = 0;
 
             using var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
             proc.Start();
+            _running[proc] = profileRoot;
             try
             {
                 var stdoutTask = proc.StandardOutput.ReadToEndAsync(linked.Token);
@@ -199,11 +209,66 @@ namespace UniversalMediaOS.Core.OtherMedia
             }
             finally
             {
-                await RemoveProfileRootAsync(proc, profileRoot);
+                if (await RemoveProfileRootAsync(proc, profileRoot)) _undeletedProfileRoots.TryRemove(profileRoot, out _);
+                else _ = RemoveLaterAsync(profileRoot);
+                _running.TryRemove(proc, out _);
             }
         }
 
-        private static async Task RemoveProfileRootAsync(Process proc, string profileRoot)
+        /// <summary>Closing the app stops lookups still running, which would otherwise outlive it and start
+        /// browsers on their own, and removes their browser profiles. Only this engine's run folders are touched.</summary>
+        public void Dispose()
+        {
+            if (_lifetime.IsCancellationRequested) return;
+            _lifetime.Cancel();
+            foreach (Process proc in _running.Keys.ToArray())
+            {
+                try
+                {
+                    proc.Kill(entireProcessTree: true);
+                    proc.WaitForExit(3000);
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException) { }
+            }
+
+            foreach (string profileRoot in _undeletedProfileRoots.Keys.ToArray())
+            {
+                for (int attempt = 0; !TryDeleteProfileRoot(profileRoot) && attempt < 10; attempt++)
+                {
+                    Thread.Sleep(200);
+                }
+            }
+            GC.SuppressFinalize(this);
+        }
+
+        // A browser that is still exiting holds its files for a while: keep trying, and again when the app closes.
+        private async Task RemoveLaterAsync(string profileRoot)
+        {
+            for (int attempt = 0; attempt < 30 && !_lifetime.IsCancellationRequested; attempt++)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+                if (TryDeleteProfileRoot(profileRoot))
+                {
+                    _undeletedProfileRoots.TryRemove(profileRoot, out _);
+                    return;
+                }
+            }
+        }
+
+        private static bool TryDeleteProfileRoot(string profileRoot)
+        {
+            try
+            {
+                if (Directory.Exists(profileRoot)) Directory.Delete(profileRoot, recursive: true);
+                return true;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return false;
+            }
+        }
+
+        private static async Task<bool> RemoveProfileRootAsync(Process proc, string profileRoot)
         {
             try
             {
@@ -213,22 +278,16 @@ namespace UniversalMediaOS.Core.OtherMedia
             }
             catch (Exception ex) when (ex is OperationCanceledException or InvalidOperationException) { }
 
-            for (int attempt = 0; Directory.Exists(profileRoot); attempt++)
+            for (int attempt = 0; !TryDeleteProfileRoot(profileRoot); attempt++)
             {
-                try
+                if (attempt >= 10)
                 {
-                    Directory.Delete(profileRoot, recursive: true);
+                    AppLogger.Log("[AudiovisualScraperEngine] Browser profile still in use; removing it once released.", "WARNING");
+                    return false;
                 }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                {
-                    if (attempt >= 10)
-                    {
-                        AppLogger.Log($"[AudiovisualScraperEngine] Browser profile cleanup failed: {ex.GetType().Name}", "WARNING");
-                        return;
-                    }
-                    await Task.Delay(200);
-                }
+                await Task.Delay(200);
             }
+            return true;
         }
     }
 }

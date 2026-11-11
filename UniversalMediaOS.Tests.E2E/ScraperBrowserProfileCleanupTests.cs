@@ -51,6 +51,85 @@ public sealed class ScraperBrowserProfileCleanupTests
         Assert.True(SpinWait.SpinUntil(() => fixture.Profiles().Length == 0, TimeSpan.FromSeconds(10)));
     }
 
+    [Fact]
+    public async Task ClosingTheAppStopsARunningLookupAndRemovesItsProfile()
+    {
+        // October 24 real app: closing it during Movies "Find sources" left the scraper processes running on their
+        // own, launching Chromium after the app had exited, and left their run folders behind. App.OnExit disposes
+        // the service container that owns the engine.
+        using var fixture = new Fixture();
+        var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
+        Microsoft.Extensions.DependencyInjection.ServiceCollectionServiceExtensions.AddSingleton(services, _ => fixture.Engine);
+        var provider = Microsoft.Extensions.DependencyInjection.ServiceCollectionContainerBuilderExtensions.BuildServiceProvider(services);
+        var engine = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<AudiovisualScraperEngine>(provider);
+        Task lookup = engine.ResolveAsync("https://player.invalid/embed/movie/tt0013442");
+        Assert.True(SpinWait.SpinUntil(() => fixture.Profiles().Length == 1 &&
+            File.Exists(Path.Combine(fixture.Profiles()[0], "pid")), TimeSpan.FromSeconds(20)));
+        string profile = fixture.Profiles()[0];
+        int pid = int.Parse(File.ReadAllText(Path.Combine(profile, "pid")));
+        try
+        {
+            provider.Dispose();
+
+            Assert.True(SpinWait.SpinUntil(() => !IsRunning(pid), TimeSpan.FromSeconds(10)), "The lookup outlived the app.");
+            Assert.True(SpinWait.SpinUntil(() => fixture.Runs().Length == 0, TimeSpan.FromSeconds(10)),
+                "Left behind: " + string.Join(", ", fixture.Runs()));
+            await Task.WhenAny(lookup, Task.Delay(TimeSpan.FromSeconds(10)));
+            Assert.True(lookup.IsCompleted, "The lookup task must end when the app closes.");
+        }
+        finally
+        {
+            if (IsRunning(pid)) System.Diagnostics.Process.GetProcessById(pid).Kill(entireProcessTree: true);
+        }
+    }
+
+    [Fact]
+    public async Task ProfileStillHeldWhenItsLookupEndsIsRemovedWhenTheAppCloses()
+    {
+        // October 24 real app: after a normal Movies "Find sources", one run folder survived the app's close.
+        // A browser that is still exiting can hold its profile files after the lookup's own cleanup gives up.
+        using var fixture = new Fixture();
+        var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
+        Microsoft.Extensions.DependencyInjection.ServiceCollectionServiceExtensions.AddSingleton(services, _ => fixture.Engine);
+        var provider = Microsoft.Extensions.DependencyInjection.ServiceCollectionContainerBuilderExtensions.BuildServiceProvider(services);
+        var engine = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<AudiovisualScraperEngine>(provider);
+        Task lookup = engine.ResolveAsync("https://player.invalid/embed/movie/finish");
+        Assert.True(SpinWait.SpinUntil(() => fixture.Profiles().Length == 1 &&
+            File.Exists(Path.Combine(fixture.Profiles()[0], "pid")), TimeSpan.FromSeconds(20)));
+        using (new FileStream(Path.Combine(fixture.Profiles()[0], "Cookies"), FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            await lookup;
+        }
+        Assert.NotEmpty(fixture.Runs());
+
+        provider.Dispose();
+
+        Assert.True(SpinWait.SpinUntil(() => fixture.Runs().Length == 0, TimeSpan.FromSeconds(10)),
+            "Left behind: " + string.Join(", ", fixture.Runs()));
+    }
+
+    [Fact]
+    public async Task ProfileHeldPastItsLookupIsRemovedOnceReleasedWithoutClosingTheApp()
+    {
+        using var fixture = new Fixture();
+        Task lookup = fixture.Engine.ResolveAsync("https://player.invalid/embed/movie/finish");
+        Assert.True(SpinWait.SpinUntil(() => fixture.Profiles().Length == 1 &&
+            File.Exists(Path.Combine(fixture.Profiles()[0], "pid")), TimeSpan.FromSeconds(20)));
+        using (new FileStream(Path.Combine(fixture.Profiles()[0], "Cookies"), FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            await lookup;
+        }
+
+        Assert.True(SpinWait.SpinUntil(() => fixture.Runs().Length == 0, TimeSpan.FromSeconds(10)),
+            "Left behind: " + string.Join(", ", fixture.Runs()));
+    }
+
+    private static bool IsRunning(int pid)
+    {
+        try { return !System.Diagnostics.Process.GetProcessById(pid).HasExited; }
+        catch (ArgumentException) { return false; }
+    }
+
     private sealed class Fixture : IDisposable
     {
         private readonly string _root = Path.Combine(Path.GetTempPath(), "UniversalMediaOS.ScraperProfileTests", Guid.NewGuid().ToString("N"));
@@ -76,7 +155,10 @@ public sealed class ScraperBrowserProfileCleanupTests
                 profile = tempfile.mkdtemp(prefix='umos_av_', dir=root)
                 with open(os.path.join(profile, 'Cookies'), 'w') as handle:
                     handle.write('browser state')
-                time.sleep(60)
+                with open(os.path.join(profile, 'pid'), 'w') as handle:
+                    handle.write(str(os.getpid()))
+                # 'finish' lookups end on their own after a short extraction; others run until stopped.
+                time.sleep(2 if 'finish' in sys.argv[2] else 60)
                 print(json.dumps({'error': 'all_sources_failed'}))
                 """;
             File.WriteAllText(Path.Combine(source, "audiovisual_scraper.py"), script);
@@ -94,6 +176,12 @@ public sealed class ScraperBrowserProfileCleanupTests
                     .Where(path => Path.GetFileName(path).StartsWith("umos_av_", StringComparison.Ordinal) &&
                         !Path.GetFileName(path).StartsWith("umos_av_run_", StringComparison.Ordinal)).ToArray()
                 : [];
+        }
+
+        public string[] Runs()
+        {
+            string browserProfiles = Path.Combine(_root, "profile", "Local", "UniversalMediaOS", "BrowserProfiles");
+            return Directory.Exists(browserProfiles) ? Directory.GetDirectories(browserProfiles) : [];
         }
 
         public void Dispose()

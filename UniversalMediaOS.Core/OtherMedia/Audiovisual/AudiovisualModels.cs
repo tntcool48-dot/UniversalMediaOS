@@ -73,6 +73,9 @@ public sealed record AudiovisualIdentity
 
     public int? Year { get; init; }
 
+    // Every release year the catalog entity itself records (premiere, other countries); Year is the earliest.
+    public IReadOnlyList<int> ReleaseYears { get; init; } = Array.Empty<int>();
+
     public int? TmdbId { get; init; }
 
     public string ImdbId { get; init; } = string.Empty;
@@ -135,6 +138,10 @@ public sealed record AudiovisualSource
     public string Rights { get; init; } = string.Empty;
 
     public string ContentType { get; init; } = string.Empty;
+
+    // The source's own declared running time (an Archive file's length). Shown on its card so another cut is
+    // visible before playing; it is never identity evidence.
+    public double? DurationSeconds { get; init; }
 
     // Advertised rendition whose bytes passed the scraper's media check.
     public string ValidatedHlsVariant { get; init; } = string.Empty;

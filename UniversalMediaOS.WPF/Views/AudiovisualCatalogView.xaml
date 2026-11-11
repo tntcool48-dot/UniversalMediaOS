@@ -594,6 +594,10 @@
                                                 <TextBlock Text="{Binding LanguageText}"
                                                            Style="{StaticResource CaptionText}"
                                                            Margin="0,3,0,0"/>
+                                                <TextBlock Text="{Binding RuntimeText}"
+                                                           Style="{StaticResource CaptionText}"
+                                                           Margin="0,3,0,0"
+                                                           Visibility="{Binding HasRuntime, Converter={StaticResource BoolToVisibility}}"/>
                                                 <TextBlock Text="{Binding RightsText}"
                                                            Style="{StaticResource CaptionText}"
                                                            Foreground="{DynamicResource TextMuted}"

@@ -23,6 +23,8 @@ internal sealed class WikidataMetadataClient : IAudiovisualMetadataClient
     // automatically include their ancestors. Keep discovery and parsing aligned.
     private static readonly string[] AnimatedFilmTypes = ["Q202866", "Q20650540", "Q29168811", "Q17517379"];
     private static readonly string[] FilmTypes = ["Q11424", "Q24869", .. AnimatedFilmTypes];
+    // One shared array per distinct set of years, so two reads of the same film remain equal records.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, int[]> ReleaseYearSets = new(StringComparer.Ordinal);
 
     public WikidataMetadataClient(ProviderRequestCoordinator requests, Uri? baseUri = null,
         bool includePosters = false, TimeSpan? posterBudget = null)
@@ -198,13 +200,16 @@ internal sealed class WikidataMetadataClient : IAudiovisualMetadataClient
         string title = labels.TryGetProperty("en", out var english) ? Text(english, "value") : "";
         if (title.Length == 0 && labels.TryGetProperty("mul", out var shared)) title = Text(shared, "value");
         if (string.IsNullOrWhiteSpace(title)) return null;
-        int? year = Values(entity, "P577").Select(v =>
+        // A film can have several recorded releases (premiere, other countries); the earliest is shown.
+        int[] releaseYears = Values(entity, "P577").Select(v =>
         {
             string date = Text(v, "time");
             return v.TryGetProperty("precision", out var precision) && precision.GetInt32() >= 9 &&
                 date.Length >= 5 && date[0] == '+' && int.TryParse(date.AsSpan(1, 4), out int parsed) && parsed > 0
                 ? (int?)parsed : null;
-        }).Where(y => y != null).DefaultIfEmpty().Min();
+        }).Where(y => y != null).Select(y => y!.Value).Distinct().Order().ToArray();
+        releaseYears = releaseYears.Length == 0 ? Array.Empty<int>() : ReleaseYearSets.GetOrAdd(string.Join(',', releaseYears), _ => releaseYears);
+        int? year = releaseYears.Length == 0 ? null : releaseYears[0];
         string[] imdbIds = Values(entity, "P345").Where(v => v.ValueKind == JsonValueKind.String)
             .Select(v => v.GetString()!).Where(v => Regex.IsMatch(v, @"\Att[0-9]+\z")).Distinct().ToArray();
         if (imdbIds.Length > 1) return null;
@@ -220,7 +225,7 @@ internal sealed class WikidataMetadataClient : IAudiovisualMetadataClient
             Identity = new()
             {
                 PrimaryId = new("wikidata", "item", id), Kind = kind,
-                ContentForm = AudiovisualContentForm.Feature, Title = title, Year = year,
+                ContentForm = AudiovisualContentForm.Feature, Title = title, Year = year, ReleaseYears = releaseYears,
                 ImdbId = imdb, IsAnimated = animated ? true : null,
                 AlternateTitles = ReadAliases(entity, title)
             },
