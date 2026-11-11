@@ -97,6 +97,10 @@ namespace UniversalMediaOS.WPF.Helpers
                 data.dwInfoFlags = NotifyInfoFlag | NotifyRespectQuietTime;
                 data.uTimeoutOrVersion = 10000;
                 bool shown = Shell_NotifyIconW(NotifyIconModify, ref data);
+                // Windows holds the pop-up while a full-screen app, presentation or quiet time is active;
+                // the log says which, so a missing pop-up is not mistaken for a failed delivery.
+                AppLogger.Log($"Windows notification {(shown ? "accepted by the shell" : "rejected by the shell")}; " +
+                              $"Windows notification state: {DescribeNotificationState()}.", shown ? "INFO" : "WARNING");
                 if (!shown)
                 {
                     DeleteIconLocked();
@@ -174,6 +178,28 @@ namespace UniversalMediaOS.WPF.Helpers
             szInfoTitle = string.Empty
         };
 
+        private static string DescribeNotificationState()
+        {
+            try
+            {
+                return SHQueryUserNotificationState(out int state) != 0 ? "unknown" : state switch
+                {
+                    1 => "no user signed in",
+                    2 => "held: a full-screen app is running",
+                    3 => "held: a full-screen Direct3D app is running",
+                    4 => "held: presentation mode",
+                    5 => "showing pop-ups",
+                    6 => "held: quiet time",
+                    7 => "held: a Windows Store app is in front",
+                    _ => $"unknown ({state})"
+                };
+            }
+            catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException)
+            {
+                return "unknown";
+            }
+        }
+
         private static string Truncate(string value, int maxLength) =>
             value.Length <= maxLength ? value : value[..maxLength];
 
@@ -210,6 +236,10 @@ namespace UniversalMediaOS.WPF.Helpers
         [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool Shell_NotifyIconW(uint dwMessage, ref NotifyIconData lpData);
+
+        [DllImport("shell32.dll")]
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+        private static extern int SHQueryUserNotificationState(out int state);
 
         [DllImport("user32.dll", CharSet = CharSet.Unicode)]
         [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
