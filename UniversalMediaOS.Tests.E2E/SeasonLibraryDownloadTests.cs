@@ -6,6 +6,7 @@ using System.Text.Json;
 using CommunityToolkit.Mvvm.Messaging;
 using UniversalMediaOS.Core.Archiving;
 using UniversalMediaOS.Core.Configuration;
+using UniversalMediaOS.Core.Helpers;
 using UniversalMediaOS.Core.OtherMedia;
 using UniversalMediaOS.Core.OtherMedia.Books;
 using UniversalMediaOS.WPF;
@@ -551,6 +552,7 @@ public sealed class SeasonLibraryDownloadTests
     private sealed class Fixture : IDisposable
     {
         private readonly string _root = Path.Combine(Path.GetTempPath(), "UniversalMediaOS.SeasonLibraryTests", Guid.NewGuid().ToString("N"));
+        public string Root => _root;
         public string Temporary => Path.Combine(_root, "temporary");
         public string Permanent => Path.Combine(_root, "permanent");
         public Catalog Catalog { get; } = new();
@@ -597,6 +599,105 @@ public sealed class SeasonLibraryDownloadTests
     private sealed class TestViewModel(IAudiovisualCatalogService catalog, AudiovisualLibraryService library,
         AuthorizedMediaDownloadService download, OtherMediaSourceSafetyService safety, IDialogService dialog, IExternalLauncher launcher)
         : AudiovisualCatalogViewModel(catalog, library, download, safety, dialog, launcher);
+    /// <summary>Delete removes the media, the caption files saved with it and its saved record, and nothing else:
+    /// not another episode's files in the same season folder, and not a user's own file beside them.</summary>
+    [Fact]
+    public async Task DeleteRemovesASavedEpisodeWithItsCaptionsAndRecordOnly()
+    {
+        using var fixture = new Fixture();
+        string vtt = "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nA saved caption\n";
+        var oneSource = Source(Unit()) with { Subtitles = [new("https://93.184.216.34/one.vtt") { InlineVtt = vtt, Language = "en" }] };
+        var twoSource = Source(Unit(2)) with { Subtitles = [new("https://93.184.216.34/two.vtt") { InlineVtt = vtt, Language = "en" }] };
+        var one = await fixture.Download.DownloadLibraryAsync(oneSource, Context(oneSource));
+        var two = await fixture.Download.DownloadLibraryAsync(twoSource, Context(twoSource));
+        string season = Path.GetDirectoryName(Path.GetDirectoryName(one.FilePath)!)!;
+        Assert.Equal(season, Path.GetDirectoryName(Path.GetDirectoryName(two.FilePath)!));
+        string userFile = Path.Combine(season, "keep.txt");
+        File.WriteAllText(userFile, "user data");
+        var dialog = new ConfirmingDialog();
+        using var queue = new DownloadQueueService(Path.Combine(fixture.Permanent, "queue.json"), new IdleExecutor());
+        var downloads = new DownloadsViewModel(queue, fixture.Config, dialog, new Launcher(), new LocalBookImportService());
+        await downloads.RefreshDownloadsCommand.ExecuteAsync(null);
+
+        await downloads.DeleteFileCommand.ExecuteAsync(downloads.InstalledFiles.Single(row => row.FullPath == one.FilePath));
+
+        Assert.Empty(dialog.Errors);
+        Assert.All(one.CaptionPaths.Append(one.FilePath).Append(one.MetadataPath),
+            path => Assert.False(File.Exists(path), path + " was left behind."));
+        Assert.False(Directory.Exists(Path.GetDirectoryName(one.FilePath)), "The deleted episode's own folder was left behind.");
+        Assert.All(two.CaptionPaths.Append(two.FilePath).Append(two.MetadataPath), path => Assert.True(File.Exists(path), path));
+        Assert.Equal("user data", File.ReadAllText(userFile));
+        Assert.Equal(two.FilePath, Assert.Single(downloads.InstalledFiles).FullPath);
+    }
+
+    /// <summary>Season-torrent episodes share a folder with their sidecar captions. Delete removes the episode's own
+    /// sidecars ("Show - 01.en.srt") but not a longer-named neighbour's ("Show - 01.5.en.srt").</summary>
+    [Fact]
+    public async Task DeleteRemovesATorrentEpisodesOwnSidecarCaptionsOnly()
+    {
+        using var fixture = new Fixture();
+        string folder = Path.Combine(fixture.Permanent, "Show Season 1");
+        Directory.CreateDirectory(folder);
+        string[] own = ["Show - 01.mkv", "Show - 01.srt", "Show - 01.en.srt", "Show - 01.English.forced.ass"];
+        string[] others = ["Show - 01.5.mkv", "Show - 01.5.en.srt", "Show - 02.mkv", "Show - 02.en.srt", "Show - 01 notes.txt"];
+        foreach (string name in own.Concat(others)) await File.WriteAllBytesAsync(Path.Combine(folder, name), [1, 2, 3]);
+        var dialog = new ConfirmingDialog();
+        using var queue = new DownloadQueueService(Path.Combine(fixture.Permanent, "queue.json"), new IdleExecutor());
+        var downloads = new DownloadsViewModel(queue, fixture.Config, dialog, new Launcher(), new LocalBookImportService());
+        await downloads.RefreshDownloadsCommand.ExecuteAsync(null);
+
+        await downloads.DeleteFileCommand.ExecuteAsync(downloads.InstalledFiles.Single(row => row.FullPath.EndsWith("Show - 01.mkv")));
+
+        Assert.Empty(dialog.Errors);
+        Assert.All(own, name => Assert.False(File.Exists(Path.Combine(folder, name)), name + " was left behind."));
+        Assert.All(others, name => Assert.True(File.Exists(Path.Combine(folder, name)), name + " was deleted."));
+    }
+
+    /// <summary>A library copy and the temporary watch it was saved from are separate files: deleting the copy must
+    /// leave the open watch's file alone. A file inside a temporary watch folder itself is refused and kept.</summary>
+    [Fact]
+    public async Task DeleteNeverRemovesAFileATemporaryWatchStillOwns()
+    {
+        using var fixture = new Fixture();
+        var source = Source(Unit());
+        var watch = await fixture.Download.DownloadTemporaryAsync(source, Context(source));
+        using var lease = watch.Lease;
+        var saved = await fixture.Download.DownloadLibraryAsync(source, Context(source));
+        var dialog = new ConfirmingDialog();
+        using var queue = new DownloadQueueService(Path.Combine(fixture.Permanent, "queue.json"), new IdleExecutor());
+        var downloads = new DownloadsViewModel(queue, fixture.Config, dialog, new Launcher(), new LocalBookImportService());
+        await downloads.RefreshDownloadsCommand.ExecuteAsync(null);
+        await downloads.DeleteFileCommand.ExecuteAsync(downloads.InstalledFiles.Single(row => row.FullPath == saved.FilePath));
+        Assert.Empty(dialog.Errors);
+        Assert.False(File.Exists(saved.FilePath));
+        Assert.True(File.Exists(watch.FilePath), "Deleting the library copy removed the temporary watch's file.");
+
+        string? previousRoot = Environment.GetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable);
+        Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, fixture.Root);
+        try
+        {
+            string appLocal = Path.Combine(AppDataPaths.LocalBaseDirectory, "UniversalMediaOS");
+            string watched = Path.Combine(appLocal, "TemporaryMediaWatch", Guid.NewGuid().ToString("N"), "media.mp4");
+            Directory.CreateDirectory(Path.GetDirectoryName(watched)!);
+            await File.WriteAllBytesAsync(watched, [1, 2, 3]);
+            fixture.Config.SetSetting("DownloadDirectory", appLocal);
+            await downloads.RefreshDownloadsCommand.ExecuteAsync(null);
+            var row = downloads.InstalledFiles.SingleOrDefault(item => item.FullPath == watched);
+            if (row != null) await downloads.DeleteFileCommand.ExecuteAsync(row);
+            Assert.True(File.Exists(watched), "Delete removed a file inside a temporary watch folder.");
+        }
+        finally { Environment.SetEnvironmentVariable(AppDataPaths.DataRootEnvironmentVariable, previousRoot); }
+    }
+
+    private sealed class ConfirmingDialog : IDialogService
+    {
+        public List<string> Errors { get; } = [];
+        public (bool DialogResult, SelectedSourceTier SelectedTier) ShowSourceSelection() => (false, SelectedSourceTier.None);
+        public bool ShowConfirmDialog(string message, string title) => true;
+        public void ShowErrorDialog(string message, string title) => Errors.Add(message);
+        public void ShowInfoDialog(string message, string title) { }
+    }
+
     private sealed class Dialog : IDialogService
     {
         public (bool DialogResult, SelectedSourceTier SelectedTier) ShowSourceSelection() => (false, SelectedSourceTier.None);

@@ -49,6 +49,52 @@ public sealed partial class AuthorizedMediaDownloadService
         { return null; }
     }
 
+    private static readonly string[] CaptionExtensions = [".vtt", ".srt", ".ass", ".ssa"];
+
+    /// <summary>Deletes one downloaded item: its media file first, so a locked or protected file stops before anything
+    /// else is removed, then the caption files and saved record that belong to it, and never another item's files.
+    /// A saved item's own revision folder is removed once empty. A file inside a temporary watch folder is refused:
+    /// its player tab owns it, and closing that tab removes it.</summary>
+    public static IReadOnlyList<string> DeleteDownloadedItem(string mediaPath)
+    {
+        string fullPath = Path.GetFullPath(mediaPath);
+        string appLocal = Path.Combine(AppDataPaths.LocalBaseDirectory, "UniversalMediaOS");
+        foreach (string watchRoot in new[] { "TemporaryMediaWatch", "TemporaryWatch" })
+            if (fullPath.StartsWith(Path.GetFullPath(Path.Combine(appLocal, watchRoot)) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("This file belongs to a temporary watch. Close its player tab; the app removes it then.");
+        string directory = Path.GetDirectoryName(fullPath)!;
+        var saved = ReadLibraryPlayback(fullPath);
+        string[] companions = saved != null
+            ? [.. saved.CaptionPaths, Path.Combine(directory, "library-item.json")]
+            : SidecarCaptions(fullPath);
+        File.Delete(fullPath);
+        var deleted = new List<string> { fullPath };
+        foreach (string companion in companions)
+        {
+            if (!File.Exists(companion)) continue;
+            File.Delete(companion);
+            deleted.Add(companion);
+        }
+        if (saved != null && !Directory.EnumerateFileSystemEntries(directory).Any()) Directory.Delete(directory);
+        return deleted;
+    }
+
+    /// <summary>A sidecar caption belongs to the file whose name is its longest prefix: "Show - 01.en.srt" is
+    /// "Show - 01.mkv"'s, while "Show - 01.5.en.srt" belongs to "Show - 01.5.mkv".</summary>
+    private static string[] SidecarCaptions(string mediaPath)
+    {
+        string directory = Path.GetDirectoryName(mediaPath)!;
+        string[] files = Directory.GetFiles(directory);
+        string[] owners = files.Where(path => !CaptionExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase))
+            .Select(path => Path.GetFileNameWithoutExtension(path) + ".").ToArray();
+        string own = Path.GetFileNameWithoutExtension(mediaPath) + ".";
+        return files.Where(path => CaptionExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase))
+            .Where(path => owners.Where(owner => Path.GetFileName(path).StartsWith(owner, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(owner => owner.Length).FirstOrDefault() is { } longest &&
+                longest.Equals(own, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+    }
+
     public async Task<LibraryMediaDownloadResult?> FindLibraryDownloadAsync(AudiovisualPlaybackContext context,
         string? preferredLanguage = null, CancellationToken token = default)
     {
