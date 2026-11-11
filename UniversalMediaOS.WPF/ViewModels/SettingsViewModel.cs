@@ -594,6 +594,12 @@ namespace UniversalMediaOS.WPF.ViewModels
         [RelayCommand]
         private async Task RepairServicesAsync()
         {
+            // A proxy that stopped while the app ran starts again (no-op while it is listening).
+            if (!_hlsProxy.IsRunning)
+            {
+                AppLogger.Log("[Services] Repair is restarting the HLS proxy.");
+                _hlsProxy.Start();
+            }
             await Task.WhenAll(Task.Run(() => _dependencies.EnsureDependenciesAsync()),
                 _python.EnsureScraperReadyAsync(forceRefresh: true));
             RefreshServiceHealth();
@@ -602,6 +608,7 @@ namespace UniversalMediaOS.WPF.ViewModels
         [RelayCommand]
         private void RefreshServiceHealth()
         {
+            _python.ConfirmInterpreterPresent();
             var preparation = _python.Snapshot;
             bool scraperReady = _python.IsAvailable;
             string scraper = preparation.State + " (" + preparation.DiagnosticCode + ")" +

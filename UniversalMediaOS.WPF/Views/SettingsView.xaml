@@ -645,7 +645,7 @@
                                 <TextBlock Text="{Binding ServiceHealthText}" Foreground="{DynamicResource TextSecondary}" FontFamily="Consolas" FontSize="12" TextWrapping="Wrap"/>
                                 <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Top">
                                     <Button Content="{helpers:Loc Refresh}" Command="{Binding RefreshServiceHealthCommand}" Style="{StaticResource SecondaryButton}" ToolTip="Refresh detected local service health."/>
-                                    <Button Content="Repair services" Command="{Binding RepairServicesCommand}" Style="{StaticResource SecondaryButton}" Margin="0,8,0,0" ToolTip="Prepare Python, verify FFmpeg, and retry uBlock installation. FFmpeg must be installed separately if missing."/>
+                                    <Button Content="Repair services" Command="{Binding RepairServicesCommand}" Style="{StaticResource SecondaryButton}" Margin="0,8,0,0" ToolTip="Prepare Python, restart the HLS proxy if it stopped, verify FFmpeg, and retry uBlock installation. FFmpeg must be installed separately if missing."/>
                                 </StackPanel>
                             </Grid>
                         </Border>
