@@ -102,6 +102,84 @@ namespace UniversalMediaOS.Tests.E2E.Tests
             Assert.True(problems.Count == 0, string.Join(Environment.NewLine, problems));
         }
 
+        [Fact]
+        public void Settings_InArabicMirrorsAndKeepsEverySectionReachableNamedAndUnclipped()
+        {
+            // Arabic lays the app out right to left. In every Settings section the sidebar must sit on the right, and
+            // each visible control must have a name, stay inside the view, overlap no other control and be reached
+            // by Tab from its section button without an unnamed stop.
+            using var fixture = new AppFixture();
+            OpenSection(fixture, "Language");
+            var language = SettingsRoot(fixture).FindFirstDescendant(cf => cf.ByControlType(ControlType.ComboBox))!.AsComboBox();
+            language.Select("Arabic");
+            Assert.True(SpinWait.SpinUntil(() => System.Linq.Enumerable.Any(SettingsRoot(fixture).FindAllDescendants(
+                cf => cf.ByControlType(ControlType.Button)), button => button.Name == "المظهر"), TimeSpan.FromSeconds(5)), "Settings did not switch to Arabic.");
+
+            var settings = SettingsRoot(fixture);
+            var bounds = settings.BoundingRectangle;
+            // The sidebar's buttons come first in the view; a left-to-right label would mean the switch did not apply.
+            var sections = System.Linq.Enumerable.ToArray(System.Linq.Enumerable.Take(settings.FindAllDescendants(cf => cf.ByControlType(ControlType.Button)), 8));
+            var problems = new System.Collections.Generic.List<string>();
+            foreach (var section in sections)
+                if (section.BoundingRectangle.Left < bounds.Left + bounds.Width / 2)
+                    problems.Add($"Section button '{section.Name}' stays on the left in right-to-left layout.");
+
+            foreach (var section in sections)
+            {
+                section.AsButton().Invoke();
+                Thread.Sleep(300);
+                var visible = System.Linq.Enumerable.ToList(System.Linq.Enumerable.Where(settings.FindAllDescendants(),
+                    control => control.Properties.IsKeyboardFocusable.ValueOrDefault && control.IsEnabled &&
+                               !control.Properties.IsOffscreen.ValueOrDefault &&
+                               !System.Linq.Enumerable.Any(sections, button => fixture.Automation.Compare(button, control)) &&
+                               control.ControlType is not (ControlType.Thumb or ControlType.ScrollBar or ControlType.Pane or ControlType.Group or ControlType.Custom)));
+                for (int i = 0; i < visible.Count; i++)
+                {
+                    var rect = visible[i].BoundingRectangle;
+                    if (string.IsNullOrWhiteSpace(visible[i].Name)) problems.Add($"{section.Name}: unnamed {Describe(visible[i])}.");
+                    if (rect.Left < bounds.Left - 1 || rect.Right > bounds.Right + 1)
+                        problems.Add($"{section.Name}: {Describe(visible[i])} is cut off at {rect} (view {bounds}).");
+                    for (int j = i + 1; j < visible.Count; j++)
+                    {
+                        var other = visible[j].BoundingRectangle;
+                        double overlapX = Math.Min(rect.Right, other.Right) - Math.Max(rect.Left, other.Left);
+                        double overlapY = Math.Min(rect.Bottom, other.Bottom) - Math.Max(rect.Top, other.Top);
+                        if (overlapX > 2 && overlapY > 2)
+                            problems.Add($"{section.Name}: {Describe(visible[i])} overlaps {Describe(visible[j])}.");
+                    }
+                }
+
+                // Visible text must not run past the view's edges either (a mirrored layout can push it off).
+                foreach (var text in settings.FindAllDescendants(cf => cf.ByControlType(ControlType.Text)))
+                {
+                    if (text.Properties.IsOffscreen.ValueOrDefault || string.IsNullOrWhiteSpace(text.Name)) continue;
+                    var rect = text.BoundingRectangle;
+                    if (rect.Width > 0 && (rect.Left < bounds.Left - 1 || rect.Right > bounds.Right + 1))
+                        problems.Add($"{section.Name}: text '{text.Name}' is cut off at {rect} (view {bounds}).");
+                }
+
+                FocusWithKeyboard(fixture, section);
+                var reached = new System.Collections.Generic.List<AutomationElement>();
+                for (int press = 0; press < 80; press++)
+                {
+                    FlaUI.Core.Input.Keyboard.Type(FlaUI.Core.WindowsAPI.VirtualKeyShort.TAB);
+                    Thread.Sleep(60);
+                    var focused = fixture.Automation.FocusedElement();
+                    if (focused == null) { problems.Add($"{section.Name}: focus went nowhere."); break; }
+                    if (System.Linq.Enumerable.Any(sections, button => fixture.Automation.Compare(button, focused))) continue;
+                    if (!IsWithin(settings, focused)) break;
+                    if (System.Linq.Enumerable.Any(reached, seen => fixture.Automation.Compare(seen, focused)))
+                    { problems.Add($"{section.Name}: Tab returned to {Describe(focused)}."); break; }
+                    if (string.IsNullOrWhiteSpace(focused.Name)) problems.Add($"{section.Name}: unnamed Tab stop {Describe(focused)}.");
+                    reached.Add(focused);
+                }
+                foreach (var control in visible)
+                    if (!System.Linq.Enumerable.Any(reached, seen => fixture.Automation.Compare(seen, control)))
+                        problems.Add($"{section.Name}: Tab never reached {Describe(control)}.");
+            }
+            Assert.True(problems.Count == 0, string.Join(Environment.NewLine, System.Linq.Enumerable.Distinct(problems)));
+        }
+
         /// <summary>The section buttons in the Settings sidebar (188 px wide at 100% scale).</summary>
         private static bool IsNavigation(AutomationElement settings, AutomationElement element) =>
             element.ControlType == ControlType.Button && Array.IndexOf(SettingsSections, element.Name) >= 0 &&
